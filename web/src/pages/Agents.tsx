@@ -25,7 +25,7 @@ export function Agents() {
         <div>
           <h1 className="page-title">Agent</h1>
           <p className="page-sub" style={{ margin: 0 }}>
-            在线：保持着实时连接（如值守进程）；活跃：10 分钟内有请求；空闲：2 小时内出现过；离线：更久没出现，或值守进程断线超过 2 分钟。下线和重新上线都会通知你。
+            在线：保持着实时连接（如值守进程）；活跃：10 分钟内有请求；空闲：2 小时内出现过；离线：更久没出现，或值守进程断线超过 2 分钟。下线和重新上线都会通知你。每个身份绑定在一台机器的一个工作目录上，不能换绑，需要换位置时在这里解绑。
           </p>
         </div>
         <button className="btn primary" onClick={() => go('invite')}>
@@ -67,6 +67,9 @@ export function Agents() {
                     <td>
                       <b>{a.name}</b>
                       <div className="faint">{a.id}</div>
+                      <div className="faint bind-label" title={a.binding ? `绑定于 ${a.binding.at.replace('T', ' ').slice(0, 16)}` : undefined}>
+                        {a.binding ? `绑定：${a.binding.label}` : '未绑定'}
+                      </div>
                     </td>
                     <td>
                       {PLATFORM_LABEL[a.platform] ?? a.platform}
@@ -75,6 +78,7 @@ export function Agents() {
                       </div>
                     </td>
                     <td>
+                      {a.projects.length === 0 && <span className="faint">未加入项目</span>}
                       {a.projects.map((pr) => (
                         <div key={pr.id}>
                           {pr.id} {pr.tags.length > 0 && <span className="faint">· {pr.tags.join('、')}</span>}
@@ -95,6 +99,23 @@ export function Agents() {
                         <button className="btn small" onClick={() => toggle(a)}>
                           {a.status === 'active' ? '停用' : '启用'}
                         </button>
+                        {a.binding && (
+                          <button
+                            className="btn small"
+                            onClick={async () => {
+                              if (!confirm(`解除 ${a.name} 与「${a.binding!.label}」的绑定？\n解绑后它可以在新的位置使用，原位置也可以创建新身份。`)) return;
+                              try {
+                                await post(`/agents/${a.id}/unbind`);
+                                toast(`已解绑 ${a.name}`);
+                                refresh();
+                              } catch (err) {
+                                toast((err as Error).message, true);
+                              }
+                            }}
+                          >
+                            解绑
+                          </button>
+                        )}
                         <button
                           className="btn small"
                           onClick={async () => {

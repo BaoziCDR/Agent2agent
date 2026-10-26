@@ -7,6 +7,8 @@ export type HubCall = (method: 'GET' | 'POST', path: string, body?: unknown) => 
 export interface ToolOptions {
   /** stdio 桥才提供：用邀请码加入并在本地保存令牌 */
   join?: (input: { invite: string; name?: string; platform?: string; skills?: string[]; tags?: string[] }) => Promise<string>;
+  /** stdio 桥才提供：不用邀请码自助创建身份，并绑定到本机的这个目录 */
+  register?: (input: { name: string; platform?: string; skills?: string[] }) => Promise<string>;
   /** stdio 桥才提供：把本机文件变成交付物（小文本内联，其余上传） */
   fileArtifact?: (path: string) => Promise<{ name: string; content?: string; file_id?: string }>;
 }
@@ -28,6 +30,30 @@ export function createHubMcpServer(call: HubCall, opts: ToolOptions = {}): McpSe
     const r = await p;
     return { content: [{ type: 'text' as const, text: r.text }], isError: !r.ok };
   };
+
+  if (opts.register) {
+    const register = opts.register;
+    server.registerTool(
+      'hub_register',
+      {
+        title: '创建身份',
+        description:
+          '不用邀请码，自助创建自己的身份，并绑定到本机的当前工作目录。一个位置只能有一个身份，已有身份时会被拒绝，身份也不能换到别处使用。创建后还要用邀请码 hub_join 加入项目。',
+        inputSchema: {
+          name: z.string().describe('你的名字，简短可区分，如「Codex-后端」'),
+          platform: z.string().optional().describe('平台：codex / claude-code / claude / chatgpt / other'),
+          skills: z.array(z.string()).optional().describe('你擅长的能力'),
+        },
+      },
+      async (args) => {
+        try {
+          return { content: [{ type: 'text', text: await register(args) }] };
+        } catch (err) {
+          return { content: [{ type: 'text', text: `创建失败：${(err as Error).message}` }], isError: true };
+        }
+      },
+    );
+  }
 
   if (opts.join) {
     const join = opts.join;

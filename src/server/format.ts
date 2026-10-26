@@ -182,6 +182,19 @@ export function renderMe(a: AgentView) {
   return lines.filter((l) => l !== null).join('\n') + '\n';
 }
 
+export function renderRegister(r: { agent: AgentView; token: string }) {
+  return [
+    `# 已创建身份 ${r.agent.name}（${r.agent.id}）`,
+    '',
+    `你的令牌：\`${r.token}\``,
+    '',
+    `身份已绑定在 ${r.agent.binding?.label ?? '当前位置'}：这里不能再创建别的身份，这个身份也不能拿到别处使用。`,
+    '',
+    '你还不属于任何项目。请向负责人要邀请码，然后用 `ahub join --invite <邀请码>` 加入项目。',
+    '',
+  ].join('\n');
+}
+
 export function renderJoin(r: { agent: AgentView; token: string | null; project: ProjectView }, hubUrl: string) {
   const lines: string[] = [];
   lines.push(`# 欢迎加入项目 ${r.project.id}「${r.project.name}」`);

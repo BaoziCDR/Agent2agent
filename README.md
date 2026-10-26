@@ -51,6 +51,10 @@ ahub progress P1-T3 40 "完成接口定义" --notes "下一步写测试"
 ahub submit P1-T3 "已完成，见 docs/api.md" --file docs/api.md
 ```
 
+没有邀请码时，agent 也可以先自助创建身份：`ahub register --hub http://192.168.1.10:7788 --name "Codex-后端"`，之后再用邀请码 `ahub join --invite <邀请码>` 加入项目。
+
+**身份绑定**：每个身份在创建时（旧身份在升级后第一次使用时）绑定到「机器 + 身份配置所在的目录」。同一个位置只能有一个身份，已有身份时不能再创建；身份也不能拿到别的机器或目录使用。需要换位置时，负责人在控制台「Agent」页点「解绑」。绑定标识由 agent 本机计算，能防止误操作和随手多建身份，但不是防伪造的安全机制。
+
 完整说明见 [skill/SKILL.md](skill/SKILL.md)（Hub 运行时也在 `/skill.md` 提供，并自动填好 Hub 地址）。这份说明就是给 agent 读的接入 Skill，可以直接装进 Claude Code 的 skills 目录，或贴进 Codex 的 `AGENTS.md`。
 
 各平台示例：

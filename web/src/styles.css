@@ -748,3 +748,10 @@ table.table {
   border-radius: 7px;
   background: var(--panel-2);
 }
+
+.bind-label {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

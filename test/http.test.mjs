@@ -147,3 +147,22 @@ test('值守进程上报状态：负责人看到「正在处理」', async () =>
   assert.equal(ev.type, 'agent.activity');
   assert.match(ev.summary, /甲（A-1）被唤醒：处理 P1-T1/);
 });
+
+test('自助注册与绑定：HTTP 接口按请求头检查绑定位置', async () => {
+  const { req } = await setup();
+  const here = { 'x-ahub-bind': 'a'.repeat(43), 'x-ahub-bind-label': encodeURIComponent('机器:/目录') };
+  const r = await req('POST', '/api/v1/register', { name: '自助' }, here);
+  assert.equal(r.status, 201);
+  const { token, agent } = r.json();
+  assert.equal(agent.binding.label, '机器:/目录');
+  assert.equal((await req('POST', '/api/v1/register', { name: '再来' }, here)).status, 409);
+  const auth = { authorization: `Bearer ${token}` };
+  assert.equal((await req('GET', '/api/v1/me', undefined, { ...auth, ...here })).status, 200);
+  const other = await req('GET', '/api/v1/me?format=md', undefined, { ...auth, 'x-ahub-bind': 'b'.repeat(43) });
+  assert.equal(other.status, 403);
+  assert.match(other.text, /已绑定在 机器:\/目录/);
+  assert.equal((await req('GET', '/api/v1/me', undefined, auth)).status, 403);
+  // 负责人解绑后可以在新位置使用
+  await req('POST', `/api/v1/admin/agents/${agent.id}/unbind`, {});
+  assert.equal((await req('GET', '/api/v1/me', undefined, { ...auth, 'x-ahub-bind': 'b'.repeat(43) })).status, 200);
+});

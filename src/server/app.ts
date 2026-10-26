@@ -4,8 +4,8 @@ import { createReadStream, existsSync, mkdirSync, readFileSync, writeFileSync } 
 import { networkInterfaces } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { type Actor, type AgentRow, Hub, HubError, agentCode } from './hub.js';
-import { renderInbox, renderJoin, renderMe, renderTask, renderTaskList } from './format.js';
+import { type Actor, type AgentRow, type Binding, Hub, HubError, agentCode } from './hub.js';
+import { renderInbox, renderJoin, renderMe, renderRegister, renderTask, renderTaskList } from './format.js';
 import { handleMcpRequest } from './mcp-http.js';
 import type { HubEvent, Part } from '../shared/model.js';
 
@@ -40,6 +40,23 @@ function tokenOf(req: FastifyRequest): string | null {
   return q ?? null;
 }
 
+/** 绑定标识：命令行和 MCP 桥在每个请求的头里带上；注册/加入时也可以放在请求体里。 */
+function bindingOf(req: FastifyRequest, body?: Record<string, unknown>): Binding | null {
+  const key = (req.headers['x-ahub-bind'] as string | undefined) ?? (typeof body?.bind_key === 'string' ? body.bind_key : undefined);
+  if (!key) return null;
+  if (!/^[A-Za-z0-9_-]{16,128}$/.test(key)) throw new HubError(400, 'invalid', '绑定标识格式不对');
+  let label = typeof body?.bind_label === 'string' ? body.bind_label : '';
+  const h = req.headers['x-ahub-bind-label'] as string | undefined;
+  if (!label && h) {
+    try {
+      label = decodeURIComponent(h);
+    } catch {
+      label = h;
+    }
+  }
+  return { key, label: label.slice(0, 200) };
+}
+
 function wantsMarkdown(req: FastifyRequest) {
   const q = req.query as Q;
   if (q?.format === 'md') return true;
@@ -71,11 +88,17 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
   });
 
   // ── 鉴权 ──
-  const requireAgent = async (req: FastifyRequest) => {
+  /** 校验 agent 令牌和绑定位置；成功时记录出现。 */
+  const authAgentReq = (req: FastifyRequest, message = '缺少或无效的 agent 令牌'): AgentRow => {
     const token = tokenOf(req);
     const agent = token ? hub.authAgent(token) : null;
-    if (!agent) throw new HubError(401, 'unauthorized', '缺少或无效的 agent 令牌');
+    if (!agent) throw new HubError(401, 'unauthorized', message);
+    hub.checkBinding(agent, bindingOf(req));
     hub.touchAgent(agent);
+    return agent;
+  };
+  const requireAgent = async (req: FastifyRequest) => {
+    const agent = authAgentReq(req);
     req.agent = agent;
     const ack = (req.query as Q)?.ack ?? (req.headers['x-ahub-ack'] as string | undefined);
     if (ack !== undefined && /^\d+$/.test(ack)) hub.ack(agent, Number(ack));
@@ -102,6 +125,8 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
     const token = tokenOf(req);
     const existing = token ? hub.authAgent(token) : null;
     if (token && !existing) throw new HubError(401, 'unauthorized', '令牌无效；新身份加入时不要带令牌');
+    const bind = bindingOf(req, body);
+    if (existing) hub.checkBinding(existing, bind);
     const r = hub.join(
       {
         invite: str(body.invite) ?? '',
@@ -113,9 +138,28 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
         tags: strArr(body.tags),
       },
       existing,
+      bind,
     );
     reply.status(201);
     return send(req, reply, { agent: r.agent, token: r.token, project: r.project }, () => renderJoin(r, publicUrl(req)));
+  });
+
+  // 不需要邀请码的自助注册：创建并绑定身份；加入项目仍需邀请码
+  app.post('/api/v1/register', async (req, reply) => {
+    const body = (req.body ?? {}) as B;
+    if (tokenOf(req)) throw new HubError(400, 'invalid', '已经有身份了，不能再注册新身份');
+    const r = hub.register(
+      {
+        name: str(body.name),
+        platform: str(body.platform),
+        tier: str(body.tier),
+        description: str(body.description),
+        skills: strArr(body.skills),
+      },
+      bindingOf(req, body),
+    );
+    reply.status(201);
+    return send(req, reply, r, () => renderRegister(r));
   });
 
   app.register(async (agentApi) => {
@@ -282,14 +326,7 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
     const token = tokenOf(req);
     let uploader: string | null = null;
     if (token && hub.isOwnerToken(token)) uploader = 'owner';
-    else {
-      const agent = token ? hub.authAgent(token) : null;
-      if (agent) {
-        hub.touchAgent(agent);
-        uploader = agentCode(agent.id);
-      }
-    }
-    if (!uploader) throw new HubError(401, 'unauthorized', '缺少或无效的令牌');
+    else uploader = agentCode(authAgentReq(req, '缺少或无效的令牌').id);
     if (!Buffer.isBuffer(req.body)) throw new HubError(400, 'invalid', '请用 Content-Type: application/octet-stream 上传文件内容');
     const q = req.query as Q;
     const name = q.name ?? (req.headers['x-file-name'] ? decodeURIComponent(String(req.headers['x-file-name'])) : 'file');
@@ -317,11 +354,8 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
 
   // ── MCP（Streamable HTTP，无状态） ──
   app.all('/mcp', async (req, reply) => {
-    const token = tokenOf(req);
-    const agent = token ? hub.authAgent(token) : null;
-    if (!agent) throw new HubError(401, 'unauthorized', '缺少或无效的 agent 令牌（用 Authorization: Bearer 或 ?token=）');
-    hub.touchAgent(agent);
-    await handleMcpRequest(app, req, reply, token!);
+    authAgentReq(req, '缺少或无效的 agent 令牌（用 Authorization: Bearer 或 ?token=）');
+    await handleMcpRequest(app, req, reply, tokenOf(req)!, bindingOf(req));
   });
 
   // ── 负责人接口 ──
@@ -380,6 +414,7 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
         tier: str(b.tier),
       });
     });
+    admin.post(`${A}/agents/:id/unbind`, async (req) => hub.unbindAgent((req.params as { id: string }).id));
     admin.post(`${A}/agents/:id/reset-token`, async (req) => ({ token: hub.resetAgentToken((req.params as { id: string }).id) }));
 
     admin.get(`${A}/invites`, async (req) => hub.listInvites((req.query as Q).project));

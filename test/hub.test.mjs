@@ -237,3 +237,41 @@ test('在线状态：守护进程断线超过宽限期就算离线', () => {
   assert.equal(hub.sweepPresence(), 1);
   assert.match(hub.eventsForOwner({ limit: 1 })[0].summary, /断开了连接/);
 });
+
+test('自助注册：不用邀请码创建身份并绑定，同一位置不能再创建', () => {
+  const { hub, inv } = setup();
+  const here = { key: 'k'.repeat(43), label: 'mac:/work/a' };
+  const r = hub.register({ name: '自助甲', platform: 'codex' }, here);
+  assert.match(r.token, /^ahub_/);
+  assert.deepEqual(r.agent.projects, []);
+  assert.equal(r.agent.binding.label, 'mac:/work/a');
+  assert.throws(() => hub.register({ name: '自助乙' }, here), /已经绑定了身份 自助甲（A-1）/);
+  assert.throws(() => hub.join({ invite: inv.code, name: '丙' }, null, here), /已经绑定了身份/);
+  assert.throws(() => hub.register({ name: '无绑定' }, null), /绑定标识/);
+  // 用邀请码加入项目后才有项目
+  const row = hub.authAgent(r.token);
+  assert.equal(hub.join({ invite: inv.code }, row, here).agent.projects.length, 1);
+  assert.ok(hub.eventsForOwner({ limit: 5 }).some((e) => e.type === 'agent.registered'));
+});
+
+test('绑定：不能换绑；旧身份第一次带标识时绑定；负责人解绑后可以换位置', () => {
+  const { hub, join } = setup();
+  const a = join('甲'); // 旧方式加入，没有绑定
+  const here = { key: 'h'.repeat(43), label: 'mac:/work/a' };
+  const there = { key: 't'.repeat(43), label: 'pc:/work/b' };
+  hub.checkBinding(hub.authAgent(a.token), null); // 未绑定、没带标识：放行
+  hub.checkBinding(hub.authAgent(a.token), here); // 第一次带标识：绑定
+  assert.equal(hub.listAgents()[0].binding.label, 'mac:/work/a');
+  assert.ok(hub.eventsForOwner({ limit: 1 })[0].type === 'agent.bound');
+  hub.checkBinding(hub.authAgent(a.token), here);
+  assert.throws(() => hub.checkBinding(hub.authAgent(a.token), there), /已绑定在 mac:\/work\/a，不能在这里使用/);
+  assert.throws(() => hub.checkBinding(hub.authAgent(a.token), null), /已绑定/);
+  const b = join('乙');
+  assert.throws(() => hub.checkBinding(hub.authAgent(b.token), here), /这个位置已经绑定了身份 甲/);
+
+  hub.unbindAgent(a.agent.id);
+  assert.equal(hub.listAgents()[0].binding, null);
+  hub.checkBinding(hub.authAgent(a.token), there);
+  assert.equal(hub.listAgents()[0].binding.label, 'pc:/work/b');
+  assert.throws(() => hub.unbindAgent(b.agent.id), /还没有绑定/);
+});

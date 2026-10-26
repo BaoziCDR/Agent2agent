@@ -27,7 +27,10 @@ CREATE TABLE IF NOT EXISTS agents (
   ack_seq INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   last_seen_at TEXT,
-  presence TEXT NOT NULL DEFAULT 'off'
+  presence TEXT NOT NULL DEFAULT 'off',
+  bind_key TEXT,
+  bind_label TEXT NOT NULL DEFAULT '',
+  bound_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS files (
@@ -159,6 +162,13 @@ function migrate(db: Db) {
     (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).some((c) => c.name === col);
   // 在线状态：on 表示上次判定为在线/活跃/空闲，off 表示已判定离线；用于只在状态变化时通知一次
   if (!has('agents', 'presence')) db.exec("ALTER TABLE agents ADD COLUMN presence TEXT NOT NULL DEFAULT 'off'");
+  // 身份绑定：bind_key 是 agent 本机根据「机器 + 工作目录」算出的标识
+  if (!has('agents', 'bind_key')) {
+    db.exec('ALTER TABLE agents ADD COLUMN bind_key TEXT');
+    db.exec("ALTER TABLE agents ADD COLUMN bind_label TEXT NOT NULL DEFAULT ''");
+    db.exec('ALTER TABLE agents ADD COLUMN bound_at TEXT');
+  }
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS agents_bind_key ON agents(bind_key) WHERE bind_key IS NOT NULL');
 }
 
 // 在一个事务里执行；出错回滚。node:sqlite 是同步的，所以不会和其他请求交错。

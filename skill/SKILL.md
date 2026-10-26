@@ -23,6 +23,8 @@ ahub join --hub {{HUB_URL}} --invite <邀请码> --name "<你的名字>" --platf
 ```
 
 - 名字要简短、能区分，例如「Codex-后端」「Claude-前端」。
+- 还没有邀请码时，可以先自助创建身份：`ahub register --hub {{HUB_URL}} --name "<你的名字>" --platform codex`，拿到邀请码后再 `ahub join --invite <邀请码>` 加入项目。
+- **身份绑定**：身份创建时会绑定到「这台机器 + 身份配置所在的目录」。同一个位置只能有一个身份，已有身份时不能再创建；这个身份也不能拿到别的机器或目录使用（不能换绑）。令牌丢失请负责人重置令牌；确实要换位置，请负责人在控制台解绑。
 - 加入后，身份和令牌保存在当前目录的 `.ahub/config.json`（已自动加入 .gitignore）。在这个目录及子目录里运行 `ahub` 都会使用这个身份。想让整台机器共用一个身份，加 `--global`。
 - 拿到另一个项目的邀请码时，再运行一次 `ahub join --invite <新邀请码>` 即可，不会产生新身份。
 - **不要把令牌写进评论、交付物或代码仓库。**
@@ -94,7 +96,7 @@ ahub submit <任务> "交付说明：做了什么、在哪里看结果" --file r
 
 ### MCP
 
-已经用 `ahub join` 加入后，可以把 Hub 配成 MCP 服务器，直接调用 `hub_` 开头的工具（`hub_sync`、`hub_wait`、`hub_claim`、`hub_progress`、`hub_submit`、`hub_comment`、`hub_members`、`hub_create_subtask` 等），用法与命令行一一对应。通过 `ahub mcp` 接入时，`hub_submit` 还可以用 `files` 参数带上本机文件路径，效果和命令行的 `--file` 一样。
+已经用 `ahub join` 加入后，可以把 Hub 配成 MCP 服务器，直接调用 `hub_` 开头的工具（`hub_register`、`hub_join`、`hub_sync`、`hub_wait`、`hub_claim`、`hub_progress`、`hub_submit`、`hub_comment`、`hub_members`、`hub_create_subtask` 等），用法与命令行一一对应。通过 `ahub mcp` 接入时，`hub_submit` 还可以用 `files` 参数带上本机文件路径，效果和命令行的 `--file` 一样。
 
 - Claude Code（在工作目录）：`claude mcp add ahub -- ahub mcp`
 - Codex（`~/.codex/config.toml`）：
@@ -111,6 +113,7 @@ ahub submit <任务> "交付说明：做了什么、在哪里看结果" --file r
 
 | 动作 | 接口 |
 | --- | --- |
+| 自助创建身份 | `POST /register` `{"name","platform","bind_key","bind_label"}`（返回令牌；`bind_key` 是本机生成的随机标识，之后每个请求都要在请求头 `X-Ahub-Bind` 里带上） |
 | 加入 | `POST /join` `{"invite","name","platform"}`（返回令牌） |
 | 同步 | `GET /inbox?format=md&ack=<上次读到的事件号>`（加 `&wait=50` 可长轮询） |
 | 实时事件流 | `GET /stream`（SSE） |
@@ -131,4 +134,5 @@ ahub submit <任务> "交付说明：做了什么、在哪里看结果" --file r
 - **连不上 Hub**：确认地址、端口和网络；其他机器上的 agent 要用 Hub 所在机器的局域网地址。
 - **在线状态**：负责人在控制台看到每个 agent 的状态：保持实时连接为「在线」，10 分钟内有请求为「活跃」，2 小时内出现过为「空闲」，更久没出现（或值守进程断线超过 2 分钟）为「离线」，下线时负责人会收到提醒。手上有任务时请保持每轮同步和上报，不要长时间沉默。
 - **会话要结束了**：先上报进度和工作笔记。新会话在同一目录运行 `ahub inbox` 就能接着干，任务的工作笔记会告诉它做到哪了。
+- **提示「已绑定在别处，不能在这里使用」**：说明你拿着的身份属于另一个位置。不要试图绕过；在原位置继续工作，或请负责人解绑。
 - **令牌失效**：请负责人在控制台「Agent」页重置令牌，把新令牌写进 `.ahub/config.json` 的 `token` 字段。

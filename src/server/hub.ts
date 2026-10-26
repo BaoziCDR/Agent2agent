@@ -47,6 +47,9 @@ export interface AgentRow {
   created_at: string;
   last_seen_at: string | null;
   presence: 'on' | 'off';
+  bind_key: string | null;
+  bind_label: string;
+  bound_at: string | null;
 }
 
 interface ProjectRow {
@@ -109,6 +112,8 @@ export interface AgentView {
   online: boolean;
   presence: Presence;
   presence_label: string;
+  /** 身份绑定的位置（机器名:工作目录），未绑定时为 null */
+  binding: { label: string; at: string } | null;
   /** ahub run 守护进程最近一次上报的状态，如「正在处理 P1-T3」 */
   activity: { state: string; note: string; at: string } | null;
   projects: { id: string; name: string; tags: string[] }[];
@@ -191,6 +196,13 @@ function newInviteCode(): string {
 }
 
 const MENTION_RE = /@(A-\d+|负责人|owner)/gi;
+
+export interface Binding {
+  /** agent 本机算出的标识（机器 + 工作目录的哈希） */
+  key: string;
+  /** 给人看的位置，如「my-mac:/Users/me/proj」 */
+  label: string;
+}
 
 export interface HubOptions {
   now?: () => Date;
@@ -760,6 +772,120 @@ export class Hub {
    * 用邀请码加入项目。没有身份的 agent 会新建身份并拿到令牌；
    * 已有身份的 agent（带令牌调用）只是多加入一个项目。
    */
+  // ───────────── 身份与绑定 ─────────────
+
+  /** 新建身份（在事务内调用）。新身份从当前事件位置开始，避免把历史事件全部灌进收件箱。 */
+  private createAgent(
+    input: { name?: string; platform?: string; tier?: string; description?: string; skills?: string[] },
+    bind: Binding | null,
+  ): { row: AgentRow; token: string } {
+    const name = input.name?.trim();
+    if (!name) throw invalid('请提供 agent 名称（name）');
+    if (name.length > 40) throw invalid('名称最多 40 个字');
+    const tier = (input.tier ?? 'L1').toUpperCase() as Tier;
+    if (!TIERS.includes(tier)) throw invalid('tier 只能是 L1、L2、L3、L4');
+    const token = newToken('ahub');
+    const now = this.iso();
+    const r = this.db
+      .prepare(
+        `INSERT INTO agents (name, platform, tier, description, skills, token_hash, created_at, last_seen_at, ack_seq, presence, bind_key, bind_label, bound_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'on', ?, ?, ?)`,
+      )
+      .run(
+        name,
+        input.platform ?? 'other',
+        tier,
+        input.description ?? '',
+        JSON.stringify(input.skills ?? []),
+        hashToken(token),
+        now,
+        now,
+        this.lastSeq(),
+        bind?.key ?? null,
+        bind?.label ?? '',
+        bind ? now : null,
+      );
+    return { row: this.requireAgentRow(agentCode(Number(r.lastInsertRowid))), token };
+  }
+
+  private boundAgent(key: string): AgentRow | undefined {
+    return this.db.prepare('SELECT * FROM agents WHERE bind_key = ?').get(key) as AgentRow | undefined;
+  }
+
+  /** 同一个位置已经绑定过身份时，不允许再创建新身份。 */
+  private assertNotBound(bind: Binding | null) {
+    if (!bind) return;
+    const other = this.boundAgent(bind.key);
+    if (other)
+      throw conflict(
+        `这个位置（${other.bind_label || bind.label}）已经绑定了身份 ${other.name}（${agentCode(other.id)}），不能再创建新身份。` +
+          '请继续使用原来的身份；令牌丢失时请负责人在控制台「Agent」页重置令牌，确实要换身份时请负责人先解绑。',
+      );
+  }
+
+  /** 不需要邀请码的自助注册：创建并绑定身份，但还不属于任何项目，加入项目仍需邀请码。 */
+  register(input: { name?: string; platform?: string; tier?: string; description?: string; skills?: string[] }, bind: Binding | null) {
+    if (!bind) throw invalid('自助注册需要绑定标识（bind_key）。请用 ahub register，它会自动生成');
+    this.assertNotBound(bind);
+    return this.write(() => {
+      const { row, token } = this.createAgent(input, bind);
+      const me = agentCode(row.id);
+      this.emit('agent.registered', me, {
+        audience: [],
+        data: { agent: me, name: row.name, platform: row.platform, bind_label: bind.label },
+        summary: `${row.name}（${me}）自助创建了身份，绑定在 ${bind.label || '未知位置'}`,
+      });
+      return { agent: this.agentView(row), token };
+    });
+  }
+
+  /**
+   * 每次带令牌的请求都检查绑定：已绑定的身份只能在原位置使用（不能换绑）；
+   * 还没绑定的旧身份，第一次带着绑定标识出现时绑定到那里。
+   */
+  checkBinding(agent: AgentRow, bind: Binding | null) {
+    if (agent.bind_key) {
+      if (bind?.key === agent.bind_key) return;
+      throw forbidden(
+        `身份 ${agent.name}（${agentCode(agent.id)}）已绑定在 ${agent.bind_label || '另一个位置'}，不能在这里使用，也不能换绑。` +
+          (bind ? '' : '请通过 ahub 命令行或 ahub mcp 访问（它们会自动带上绑定标识）。') +
+          '确实需要换位置，请负责人在控制台「Agent」页解绑。',
+      );
+    }
+    if (!bind) return;
+    const other = this.boundAgent(bind.key);
+    if (other) {
+      throw conflict(`这个位置已经绑定了身份 ${other.name}（${agentCode(other.id)}），不能再绑定 ${agent.name}（${agentCode(agent.id)}）`);
+    }
+    const now = this.iso();
+    this.write(() => {
+      this.db.prepare('UPDATE agents SET bind_key = ?, bind_label = ?, bound_at = ? WHERE id = ?').run(bind.key, bind.label, now, agent.id);
+      this.emit('agent.bound', agentCode(agent.id), {
+        audience: [],
+        data: { agent: agentCode(agent.id), bind_label: bind.label },
+        summary: `${agent.name}（${agentCode(agent.id)}）的身份绑定到了 ${bind.label || '一个新位置'}`,
+      });
+    });
+    agent.bind_key = bind.key;
+    agent.bind_label = bind.label;
+    agent.bound_at = now;
+  }
+
+  /** 负责人解绑：之后这个身份可以在新的位置重新绑定，原位置也可以创建新身份。 */
+  unbindAgent(code: string): AgentView {
+    const a = this.requireAgentRow(code);
+    if (!a.bind_key) throw invalid(`${a.name}（${code}）还没有绑定`);
+    return this.write(() => {
+      this.db.prepare("UPDATE agents SET bind_key = NULL, bind_label = '', bound_at = NULL WHERE id = ?").run(a.id);
+      this.emit('agent.unbound', 'owner', {
+        audience: [],
+        data: { agent: agentCode(a.id), bind_label: a.bind_label },
+        summary: `负责人解除了 ${a.name}（${agentCode(a.id)}）与 ${a.bind_label || '原位置'} 的绑定`,
+      });
+      return this.agentView(this.requireAgentRow(code));
+    });
+  }
+
   join(
     input: {
       invite: string;
@@ -771,6 +897,7 @@ export class Hub {
       tags?: string[];
     },
     existing: AgentRow | null,
+    bind?: Binding | null,
   ): { agent: AgentView; token: string | null; project: ProjectView; briefing: { project: ProjectView & { description: string } } } {
     const code = (input.invite ?? '').trim().toUpperCase();
     const inv = this.db.prepare('SELECT * FROM invites WHERE code = ?').get(code) as
@@ -780,32 +907,15 @@ export class Hub {
     if (inv.revoked) throw invalid('邀请码已被撤销');
     if (inv.expires_at < this.iso()) throw invalid('邀请码已过期');
     if (inv.uses >= inv.max_uses) throw invalid('邀请码已用完');
-    const tier = (input.tier ?? 'L1').toUpperCase() as Tier;
-    if (!TIERS.includes(tier)) throw invalid('tier 只能是 L1、L2、L3、L4');
+    if (!existing) this.assertNotBound(bind ?? null);
 
     return this.write(() => {
       let agent = existing;
       let token: string | null = null;
       if (!agent) {
-        const name = input.name?.trim();
-        if (!name) throw invalid('请提供 agent 名称（name）');
-        token = newToken('ahub');
-        const r = this.db
-          .prepare(
-            "INSERT INTO agents (name, platform, tier, description, skills, token_hash, created_at, last_seen_at, ack_seq, presence) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'on')",
-          )
-          .run(
-            name,
-            input.platform ?? 'other',
-            tier,
-            input.description ?? '',
-            JSON.stringify(input.skills ?? []),
-            hashToken(token),
-            this.iso(),
-            this.iso(),
-            0,
-          );
-        agent = this.db.prepare('SELECT * FROM agents WHERE id = ?').get(Number(r.lastInsertRowid)) as unknown as AgentRow;
+        const created = this.createAgent(input, bind ?? null);
+        agent = created.row;
+        token = created.token;
       }
       const already = this.db
         .prepare('SELECT 1 FROM memberships WHERE project_id = ? AND agent_id = ?')
@@ -816,10 +926,6 @@ export class Hub {
         .prepare('INSERT INTO memberships (project_id, agent_id, tags, joined_at) VALUES (?, ?, ?, ?)')
         .run(inv.project_id, agent.id, JSON.stringify(tags), this.iso());
       this.db.prepare('UPDATE invites SET uses = uses + 1 WHERE code = ?').run(code);
-      if (token) {
-        // 新身份从当前位置开始，避免把历史事件全部灌进收件箱
-        this.db.prepare('UPDATE agents SET ack_seq = ? WHERE id = ?').run(this.lastSeq(), agent.id);
-      }
       const me = agentCode(agent.id);
       this.emit('agent.joined', me, {
         project: inv.project_id,
@@ -860,6 +966,7 @@ export class Hub {
       presence,
       presence_label: PRESENCE_LABELS[presence],
       activity: presence === 'online' ? (this.activity.get(a.id) ?? null) : null,
+      binding: a.bind_key ? { label: a.bind_label, at: a.bound_at ?? '' } : null,
       projects: this.agentProjects(a.id),
       active_tasks: active.map((t) => taskCode(t.project_id, t.num)),
     };

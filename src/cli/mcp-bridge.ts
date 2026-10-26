@@ -2,6 +2,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { createHubMcpServer, type HubCall } from '../shared/mcp-tools.js';
 import { type CliConfig, saveConfig } from './config.js';
 import { fileArtifact } from './files.js';
+import { bindHeaders } from './binding.js';
 
 const LAST_SEQ_RE = /本次读到第 (\d+) 号事件/;
 
@@ -19,6 +20,7 @@ export async function runStdioBridge(cfg: CliConfig, configPath: string) {
         method,
         headers: {
           authorization: `Bearer ${cfg.token}`,
+          ...bindHeaders(),
           ...(body === undefined ? {} : { 'content-type': 'application/json' }),
         },
         body: body === undefined ? undefined : JSON.stringify(body),
@@ -37,12 +39,32 @@ export async function runStdioBridge(cfg: CliConfig, configPath: string) {
 
   const server = createHubMcpServer(call, {
     fileArtifact: (path) => fileArtifact(cfg, path),
+    register: async (input) => {
+      if (!cfg.hub) throw new Error('还没有配置 Hub 地址，请在 MCP 启动参数里加 --hub <地址>');
+      if (cfg.token) throw new Error(`这里已经有身份 ${cfg.name ?? ''}（${cfg.agent ?? ''}），一个位置只能有一个身份`);
+      const res = await fetch(`${cfg.hub}/api/v1/register`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...bindHeaders() },
+        body: JSON.stringify({ ...input, tier: 'L2', platform: input.platform ?? 'other' }),
+      });
+      const data = (await res.json()) as { error?: { message: string }; agent: { id: string; name: string; binding?: { label: string } }; token: string };
+      if (!res.ok) throw new Error(data.error?.message ?? `HTTP ${res.status}`);
+      cfg.token = data.token;
+      cfg.agent = data.agent.id;
+      cfg.name = data.agent.name;
+      saveConfig(configPath, cfg);
+      return (
+        `已创建身份 ${data.agent.name}（${data.agent.id}），绑定在 ${data.agent.binding?.label ?? '当前目录'}，令牌已保存在 ${configPath}。` +
+        '这个位置不能再创建别的身份。下一步：向负责人要邀请码，调用 hub_join 加入项目。'
+      );
+    },
     join: async (input) => {
       if (!cfg.hub) throw new Error('还没有配置 Hub 地址，请在 MCP 启动参数里加 --hub <地址>');
       const res = await fetch(`${cfg.hub}/api/v1/join`, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
+          ...bindHeaders(),
           ...(cfg.token ? { authorization: `Bearer ${cfg.token}` } : {}),
         },
         body: JSON.stringify({ ...input, tier: 'L2', platform: input.platform ?? 'other' }),

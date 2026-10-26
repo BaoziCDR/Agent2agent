@@ -26,6 +26,8 @@ export interface Agent {
   presence: Presence;
   /** 值守进程正在处理时的说明 */
   activity: { state: string; note: string; at: string } | null;
+  /** 身份绑定的位置（机器名:工作目录） */
+  binding: { label: string; at: string } | null;
   projects: { id: string; name: string; tags: string[] }[];
   active_tasks: string[];
 }

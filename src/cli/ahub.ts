@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { basename } from 'node:path';
 import { type CliConfig, defaultConfigPath, loadConfig, saveConfig } from './config.js';
 import { fileArtifact, uploadFile } from './files.js';
+import { bindHeaders, currentBinding, initBinding } from './binding.js';
 
 const HELP = `ahub —— 多 Agent 协作中枢命令行
 
@@ -13,8 +14,10 @@ const HELP = `ahub —— 多 Agent 协作中枢命令行
                                        启动 Hub（控制台、Agent 接口、MCP 都在这个端口）
 
 Agent：
+  ahub register --hub URL --name 名字 [--platform codex] [--skills a,b] [--global]
+                                       不用邀请码，自助创建身份并绑定到本机的这个目录（一个位置只能有一个身份）
   ahub join --hub URL --invite 码 --name 名字 [--platform codex] [--skills a,b] [--tags a,b] [--global]
-                                       用邀请码加入项目（已有身份时只需 --invite）
+                                       用邀请码加入项目（已有身份时只需 --invite；没有身份时会顺便创建并绑定）
   ahub whoami                          查看身份
   ahub inbox [--project P-1] [--brief] [--json]
                                        同步收件箱（每轮开始时运行）
@@ -56,7 +59,7 @@ async function api(
   opts: { md?: boolean; ack?: boolean } = {},
 ): Promise<{ status: number; text: string }> {
   if (!cfg.hub) die('还没有配置 Hub 地址。请先运行 ahub join --hub <地址> --invite <邀请码>');
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { ...bindHeaders() };
   if (cfg.token) headers.authorization = `Bearer ${cfg.token}`;
   if (body !== undefined) headers['content-type'] = 'application/json';
   if (opts.md !== false) headers.accept = 'text/markdown';
@@ -171,11 +174,34 @@ async function main(argv: string[]) {
   const loaded = loadConfig();
   const cfg = loaded.config;
   const configPath = loaded.path ?? defaultConfigPath(!!v.global);
+  initBinding(configPath);
   if (v.hub) cfg.hub = v.hub.replace(/\/+$/, '');
   const save = () => saveConfig(configPath, cfg);
   const enc = encodeURIComponent;
 
   switch (cmd) {
+    case 'register': {
+      if (cfg.token) die(`这里已经有身份 ${cfg.name ?? ''}（${cfg.agent ?? ''}），配置在 ${configPath}。一个位置只能有一个身份`);
+      if (!cfg.hub) die('请用 --hub <地址> 指定 Hub');
+      const name = need(v.name, '--name 名字');
+      const res = await api(
+        cfg,
+        'POST',
+        '/api/v1/register',
+        { name, platform: v.platform ?? 'other', tier: v.tier ?? 'L1', skills: list(v.skills), description: v.description },
+        { md: false },
+      );
+      const data = JSON.parse(ok(res)) as { agent: { id: string; name: string }; token: string };
+      cfg.token = data.token;
+      cfg.agent = data.agent.id;
+      cfg.name = data.agent.name;
+      save();
+      console.log(`已创建身份 ${data.agent.name}（${data.agent.id}），绑定在 ${currentBinding()?.label}。配置已保存到 ${configPath}`);
+      console.log('这个位置不能再创建别的身份，这个身份也不能拿到别处使用；需要换位置请负责人在控制台解绑。');
+      console.log('令牌已保存在本地配置里，不要提交到代码仓库（.ahub/ 已自动加入 .gitignore）。');
+      console.log('\n你还不属于任何项目。拿到邀请码后运行：ahub join --invite <邀请码>');
+      return;
+    }
     case 'join': {
       const invite = need(v.invite ?? pos[0], '--invite 邀请码');
       const hadToken = !!cfg.token;
@@ -359,7 +385,7 @@ async function main(argv: string[]) {
     }
     case 'stream': {
       if (!cfg.hub || !cfg.token) die('请先 ahub join');
-      const res = await fetch(`${cfg.hub}/api/v1/stream`, { headers: { authorization: `Bearer ${cfg.token}` } });
+      const res = await fetch(`${cfg.hub}/api/v1/stream`, { headers: { authorization: `Bearer ${cfg.token}`, ...bindHeaders() } });
       if (!res.ok || !res.body) die(`连接事件流失败：HTTP ${res.status}`);
       const decoder = new TextDecoder();
       let buf = '';

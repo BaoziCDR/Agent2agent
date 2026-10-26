@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { basename } from 'node:path';
 import type { CliConfig } from './config.js';
+import { bindHeaders } from './binding.js';
 
 const fail = (msg: string): never => {
   throw new Error(msg);
@@ -20,7 +21,7 @@ export async function uploadFile(cfg: CliConfig, path: string): Promise<{ id: st
   try {
     res = await fetch(`${cfg.hub}/api/v1/files?name=${encodeURIComponent(basename(path))}`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${cfg.token}`, 'content-type': 'application/octet-stream' },
+      headers: { authorization: `Bearer ${cfg.token}`, 'content-type': 'application/octet-stream', ...bindHeaders() },
       body: new Uint8Array(body),
     });
   } catch (err) {

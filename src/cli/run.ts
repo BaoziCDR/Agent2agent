@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import type { CliConfig } from './config.js';
+import { bindHeaders } from './binding.js';
 
 /** 值守模式：保持实时连接，收到需要处理的事项时用无界面模式唤起 agent harness。 */
 
@@ -93,7 +94,7 @@ export function buildPrompt(cfg: CliConfig, reasons: HubEvent[], open: { id: str
 
 export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOptions) {
   if (!cfg.hub || !cfg.token) throw new Error('请先在这个目录运行 ahub join 加入 Hub');
-  const headers = { authorization: `Bearer ${cfg.token}` };
+  const headers = { authorization: `Bearer ${cfg.token}`, ...bindHeaders() };
   const stateDir = dirname(configPath);
   const statePath = join(stateDir, 'run-state.json');
   const logDir = join(stateDir, 'run-logs');
