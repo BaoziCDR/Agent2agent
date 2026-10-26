@@ -18,11 +18,12 @@
   ],
   "scripts": {
     "build": "npm run build:server && npm run build:web",
+    "prepare": "npm run build",
     "build:server": "tsc -p tsconfig.json",
     "build:web": "vite build web",
     "dev:web": "vite web",
     "start": "node dist/cli/ahub.js serve",
-    "test": "npm run build:server && node --test --test-reporter=spec test/",
+    "test": "npm run build:server && node --test --test-reporter=spec test/*.test.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p web/tsconfig.json --noEmit"
   },
   "dependencies": {

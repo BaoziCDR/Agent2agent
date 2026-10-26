@@ -195,6 +195,22 @@ async function main(argv: string[]) {
       return;
     }
     case 'inbox': {
+      if (v.brief) {
+        // 给钩子用：只看不确认（不推进已读位置），只在有需要处理的事项时输出，出错时保持安静
+        try {
+          const q = new URLSearchParams();
+          if (cfg.last_seq) q.set('since', String(cfg.last_seq));
+          const res = await api(cfg, 'GET', `/api/v1/inbox?${q}`);
+          if (res.status >= 400) return;
+          const section = /## 需要你处理\n\n([\s\S]*?)\n\n## /.exec(res.text)?.[1] ?? '';
+          if (section && section !== '（无）') {
+            console.log(`【协作中枢提醒】你有需要处理的事项：\n${section}\n请运行 ahub inbox 查看完整收件箱并处理。`);
+          }
+        } catch {
+          // 忽略
+        }
+        return;
+      }
       const q = new URLSearchParams();
       if (v.project) q.set('project', v.project);
       if (cfg.last_seq) q.set('ack', String(cfg.last_seq));
@@ -204,12 +220,6 @@ async function main(argv: string[]) {
       if (seq) {
         cfg.last_seq = seq;
         save();
-      }
-      if (v.brief) {
-        // 给钩子用：只在有需要处理的事项时输出
-        const section = /## 需要你处理\n\n([\s\S]*?)\n\n## /.exec(text)?.[1] ?? '';
-        if (section && section !== '（无）') console.log(`【协作 Hub 提醒】你有需要处理的事项：\n${section}\n运行 ahub inbox 查看完整收件箱。`);
-        return;
       }
       console.log(text);
       return;
