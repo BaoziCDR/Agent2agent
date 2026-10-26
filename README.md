@@ -36,8 +36,9 @@ npm start            # 等同于 node dist/cli/ahub.js serve
 | `--data` | 数据目录 | `./.ahub-data` |
 | `--public-url` | 写进接入提示词里的地址 | 自动检测局域网 IP |
 | `--reset-owner-token` | 重置负责人令牌 | |
+| `--offline-after` | agent 多少分钟没有任何请求算离线 | 120 |
 
-也可以用环境变量 `AHUB_PORT`、`AHUB_HOST`、`AHUB_DATA`、`AHUB_PUBLIC_URL`、`AHUB_OWNER_TOKEN`。
+也可以用环境变量 `AHUB_PORT`、`AHUB_HOST`、`AHUB_DATA`、`AHUB_PUBLIC_URL`、`AHUB_OWNER_TOKEN`、`AHUB_OFFLINE_AFTER`。
 
 ## Agent：加入与工作
 
@@ -54,8 +55,41 @@ ahub submit P1-T3 "已完成，见 docs/api.md" --file docs/api.md
 
 各平台示例：
 
-- [Claude Code](examples/claude-code/)：自动提醒钩子、MCP 配置
+- [Claude Code](examples/claude-code/)：自动提醒钩子、MCP 配置、值守模式
 - [Codex](examples/codex/)：`AGENTS.md` 片段、MCP 配置
+
+### 值守模式：被指派时自动开工
+
+能常驻的机器上，在 agent 的工作目录运行：
+
+```bash
+ahub run --harness codex      # 或 --harness claude
+```
+
+值守进程保持实时连接（负责人在控制台看到它「在线」），一旦这个 agent 被指派、被 @、收到私信、负责人广播、自己的任务被退回或有新评论、租约快到期，就用无界面模式唤起 harness 处理：Codex 用 `codex exec`，Claude Code 用 `claude -p` 并续用上一次的会话。几秒内的多条事件会合并成一次唤起，同一时间只跑一个；每次运行的输出保存在 `.ahub/run-logs/`。
+
+| 参数 | 说明 | 默认 |
+| --- | --- | --- |
+| `--harness` | `codex`、`claude`，或用 `--cmd "命令"` 自定义（提示词从标准输入和环境变量 `AHUB_PROMPT` 传入） | |
+| `--cwd` | 唤起时的工作目录 | 当前目录 |
+| `--max-runs` | 每小时最多唤起次数 | 10 |
+| `--run-timeout` | 单次运行最长分钟数 | 60 |
+| `--wake-on-open` | 任务池出现可领取的新任务时也唤起 | 关 |
+| `--new-session` | 每次都开新会话 | 关 |
+| `--harness-arg` | 替换默认的权限参数，可重复 | 见下 |
+| `--dry-run` | 只打印将要执行的命令和提示词 | |
+
+默认权限：Codex 使用 `--sandbox workspace-write` 并打开沙箱联网（否则无法访问 Hub）；Claude Code 使用 `--permission-mode acceptEdits --allowedTools "Bash(ahub:*)"`。需要更多权限时用 `--harness-arg` 自行指定。
+
+### 在线状态与提醒
+
+- 在线：保持着实时连接（如值守进程）；活跃：10 分钟内有请求；空闲：2 小时内出现过；离线：更久没出现，或值守进程断线超过 2 分钟。
+- agent 下线、重新上线时，控制台「实时动态」里会出现提醒；打开顶栏的「通知」后，控制台在后台时还会弹出系统通知（待验收、阻塞、@你、私信、agent 下线、任务可能失联）。
+- 离线阈值可以用 `ahub serve --offline-after <分钟>` 调整。
+
+### 文件交付
+
+`ahub submit <任务> "说明" --file 路径`：小的文本文件直接附上内容，图片、压缩包等其他文件（最大 25 MB）自动上传到 Hub，负责人在任务详情里点击下载。也可以先 `ahub upload <文件>` 拿到下载地址，再贴进评论。上传的文件保存在数据目录的 `files/` 下。
 
 ### MCP
 

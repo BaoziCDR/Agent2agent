@@ -45,11 +45,24 @@ export const LEASE_MINUTES: Record<Tier, number> = {
   L4: 1440,
 };
 
+// 在线状态：online 有实时连接；active 10 分钟内有请求；idle 更久没出现但未超过离线阈值；offline 离线
+export const PRESENCES = ['online', 'active', 'idle', 'offline'] as const;
+export type Presence = (typeof PRESENCES)[number];
+export const PRESENCE_LABELS: Record<Presence, string> = {
+  online: '在线',
+  active: '活跃',
+  idle: '空闲',
+  offline: '离线',
+};
+
 export type EventType =
   | 'project.created'
   | 'project.updated'
   | 'agent.joined'
   | 'agent.updated'
+  | 'agent.online'
+  | 'agent.offline'
+  | 'agent.activity'
   | 'task.created'
   | 'task.updated'
   | 'task.assigned'
@@ -76,9 +89,11 @@ export interface HubEvent {
 }
 
 export interface Part {
-  kind: 'text' | 'data' | 'link';
+  kind: 'text' | 'data' | 'link' | 'file';
   text?: string;
   data?: unknown;
-  url?: string;
+  url?: string; // link 为外部地址；file 为 Hub 上的相对地址 /files/<id>
   name?: string;
+  mime?: string;
+  size?: number;
 }

@@ -3,6 +3,8 @@ import { get, patch, post, type Part, type TaskDetail } from '../api';
 import { Modal, StatusBadge, clock, splitList, timeAgo, useData, useHub } from '../ui';
 import { MentionText, MentionTextarea, agentCandidates } from '../mention';
 
+const fileSize = (n: number) => (n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`);
+
 const partText = (parts: Part[]) => parts.map((p) => p.text ?? p.url ?? JSON.stringify(p.data)).join('\n');
 
 export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void }) {
@@ -208,7 +210,14 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
                       {a.name} · {a.author} · {clock(a.created_at)}
                     </div>
                     {a.parts.map((p, i) =>
-                      p.kind === 'link' ? (
+                      p.kind === 'file' ? (
+                        <div key={i} className="file-chip">
+                          <a href={p.url} target="_blank" rel="noreferrer" download={p.name}>
+                            {p.name}
+                          </a>
+                          <span className="faint">{fileSize(p.size ?? 0)}</span>
+                        </div>
+                      ) : p.kind === 'link' ? (
                         <div key={i}>
                           <a href={p.url} target="_blank" rel="noreferrer">
                             {p.url}

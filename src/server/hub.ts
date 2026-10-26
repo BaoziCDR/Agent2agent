@@ -5,11 +5,13 @@ import {
   type EventType,
   type HubEvent,
   type Part,
+  type Presence,
   type Priority,
   type TaskStatus,
   type Tier,
   ACTIVE_STATUSES,
   LEASE_MINUTES,
+  PRESENCE_LABELS,
   PRIORITIES,
   STATUS_LABELS,
   TIERS,
@@ -44,6 +46,7 @@ export interface AgentRow {
   ack_seq: number;
   created_at: string;
   last_seen_at: string | null;
+  presence: 'on' | 'off';
 }
 
 interface ProjectRow {
@@ -104,6 +107,10 @@ export interface AgentView {
   created_at: string;
   last_seen_at: string | null;
   online: boolean;
+  presence: Presence;
+  presence_label: string;
+  /** ahub run 守护进程最近一次上报的状态，如「正在处理 P1-T3」 */
+  activity: { state: string; note: string; at: string } | null;
   projects: { id: string; name: string; tags: string[] }[];
   active_tasks: string[];
 }
@@ -187,7 +194,13 @@ const MENTION_RE = /@(A-\d+|负责人|owner)/gi;
 
 export interface HubOptions {
   now?: () => Date;
+  /** 多久没有任何请求算离线（分钟），默认 120 */
+  offlineAfterMinutes?: number;
+  /** 实时连接断开后多久算离线（分钟），默认 2；给守护进程留出重连时间 */
+  streamGraceMinutes?: number;
 }
+
+const ACTIVE_MINUTES = 10;
 
 export class Hub {
   readonly bus = new EventEmitter();
@@ -195,12 +208,20 @@ export class Hub {
   private now: () => Date;
   /** agent id → 当前打开的 SSE 连接和挂起的长轮询数量 */
   private live = new Map<number, number>();
+  /** agent id → 最后一条 SSE 连接断开的时间（毫秒） */
+  private streamLostAt = new Map<number, number>();
+  /** agent id → 守护进程上报的当前状态 */
+  private activity = new Map<number, { state: string; note: string; at: string }>();
+  private offlineAfterMs: number;
+  private streamGraceMs: number;
 
   constructor(
     readonly db: Db,
     opts: HubOptions = {},
   ) {
     this.now = opts.now ?? (() => new Date());
+    this.offlineAfterMs = (opts.offlineAfterMinutes ?? 120) * 60_000;
+    this.streamGraceMs = (opts.streamGraceMinutes ?? 2) * 60_000;
     this.bus.setMaxListeners(0);
   }
 
@@ -266,18 +287,104 @@ export class Hub {
     return row;
   }
 
+  /** 记录 agent 出现；如果之前已判定离线，通知负责人它回来了。 */
   touchAgent(agent: AgentRow) {
-    this.db.prepare('UPDATE agents SET last_seen_at = ? WHERE id = ?').run(this.iso(), agent.id);
+    const now = this.iso();
+    if (agent.presence === 'off') {
+      this.write(() => {
+        this.db.prepare("UPDATE agents SET last_seen_at = ?, presence = 'on' WHERE id = ?").run(now, agent.id);
+        this.emit('agent.online', agentCode(agent.id), {
+          audience: [],
+          data: { agent: agentCode(agent.id) },
+          summary: `${agent.name}（${agentCode(agent.id)}）上线了`,
+        });
+      });
+      agent.presence = 'on';
+    } else {
+      this.db.prepare('UPDATE agents SET last_seen_at = ? WHERE id = ?').run(now, agent.id);
+    }
+    agent.last_seen_at = now;
   }
 
-  markLive(agentId: number, delta: 1 | -1) {
+  /** 实时连接计数。kind 为 stream 时，最后一条连接断开后超过宽限期即判定离线。 */
+  markLive(agentId: number, delta: 1 | -1, kind: 'stream' | 'poll' = 'poll') {
     const n = (this.live.get(agentId) ?? 0) + delta;
     if (n <= 0) this.live.delete(agentId);
     else this.live.set(agentId, n);
+    if (delta === 1) {
+      this.streamLostAt.delete(agentId);
+      return;
+    }
+    // 断开时记一次「最后出现」，否则长连接期间的 last_seen 一直停在连接建立时
+    this.db.prepare('UPDATE agents SET last_seen_at = ? WHERE id = ?').run(this.iso(), agentId);
+    if (n <= 0 && kind === 'stream') {
+      this.streamLostAt.set(agentId, this.now().getTime());
+      this.activity.delete(agentId);
+    }
   }
 
   isLive(agentId: number) {
     return (this.live.get(agentId) ?? 0) > 0;
+  }
+
+  presenceOf(a: AgentRow): Presence {
+    if (a.status !== 'active') return 'offline';
+    if (this.isLive(a.id)) return 'online';
+    const now = this.now().getTime();
+    const seen = a.last_seen_at ? Date.parse(a.last_seen_at) : 0;
+    const lost = this.streamLostAt.get(a.id);
+    // 守护进程断线：断开之后没有再出现过，且超过宽限期
+    if (lost !== undefined && seen <= lost + 1000 && now - lost > this.streamGraceMs) return 'offline';
+    const age = now - seen;
+    if (age <= ACTIVE_MINUTES * 60_000) return 'active';
+    if (age <= this.offlineAfterMs) return 'idle';
+    return 'offline';
+  }
+
+  /** 定时调用：把刚刚变成离线的 agent 标记出来并通知负责人。返回新离线的数量。 */
+  sweepPresence(): number {
+    const rows = this.db.prepare("SELECT * FROM agents WHERE presence = 'on'").all() as unknown as AgentRow[];
+    const gone = rows.filter((a) => this.presenceOf(a) === 'offline');
+    if (!gone.length) return 0;
+    this.write(() => {
+      for (const a of gone) {
+        this.db.prepare("UPDATE agents SET presence = 'off' WHERE id = ?").run(a.id);
+        if (a.status !== 'active') continue; // 被停用的不必再通知
+        const tasks = this.agentView(a).active_tasks;
+        const lost = this.streamLostAt.has(a.id);
+        this.emit('agent.offline', agentCode(a.id), {
+          audience: [],
+          data: { agent: agentCode(a.id), last_seen_at: a.last_seen_at, active_tasks: tasks, reason: lost ? 'disconnected' : 'silent' },
+          summary:
+            `${a.name}（${agentCode(a.id)}）${lost ? '断开了连接' : '很久没有出现'}，已离线` +
+            (tasks.length ? `；手上还有 ${tasks.join('、')}` : ''),
+        });
+      }
+    });
+    return gone.length;
+  }
+
+  /** 守护进程上报状态（被唤醒、处理完成等），只通知负责人。 */
+  reportActivity(agent: AgentRow, input: { state?: string; note?: string; tasks?: string[] }) {
+    const state = input.state === 'working' || input.state === 'stopped' ? input.state : 'idle';
+    const note = String(input.note ?? '').slice(0, 300);
+    const at = this.iso();
+    if (state === 'working') this.activity.set(agent.id, { state, note, at });
+    else this.activity.delete(agent.id);
+    const who = `${agent.name}（${agentCode(agent.id)}）`;
+    this.write(() =>
+      this.emit('agent.activity', agentCode(agent.id), {
+        audience: [],
+        data: { agent: agentCode(agent.id), state, note },
+        summary:
+          state === 'working'
+            ? `${who}被唤醒：${note || '处理新事项'}`
+            : state === 'stopped'
+              ? `${who}的值守进程已退出`
+              : `${who}处理完毕，回到待命${note ? `：${note}` : ''}`,
+      }),
+    );
+    return { ok: true };
   }
 
   // ───────────── 事件 ─────────────
@@ -685,7 +792,7 @@ export class Hub {
         token = newToken('ahub');
         const r = this.db
           .prepare(
-            'INSERT INTO agents (name, platform, tier, description, skills, token_hash, created_at, last_seen_at, ack_seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            "INSERT INTO agents (name, platform, tier, description, skills, token_hash, created_at, last_seen_at, ack_seq, presence) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'on')",
           )
           .run(
             name,
@@ -738,6 +845,7 @@ export class Hub {
     const active = this.db
       .prepare(`SELECT project_id, num FROM tasks WHERE assignee_id = ? AND status IN (${ACTIVE_STATUSES.map(() => '?').join(',')})`)
       .all(a.id, ...ACTIVE_STATUSES) as { project_id: number; num: number }[];
+    const presence = this.presenceOf(a);
     return {
       id: agentCode(a.id),
       name: a.name,
@@ -748,7 +856,10 @@ export class Hub {
       status: a.status,
       created_at: a.created_at,
       last_seen_at: a.last_seen_at,
-      online: this.isLive(a.id),
+      online: presence === 'online' || presence === 'active',
+      presence,
+      presence_label: PRESENCE_LABELS[presence],
+      activity: presence === 'online' ? (this.activity.get(a.id) ?? null) : null,
       projects: this.agentProjects(a.id),
       active_tasks: active.map((t) => taskCode(t.project_id, t.num)),
     };
@@ -1431,6 +1542,29 @@ export class Hub {
         }),
       ),
     );
+  }
+
+  // ───────────── 文件 ─────────────
+
+  /** 登记一个上传的文件，返回文件编号（同时也是难以猜测的下载地址的一部分）。内容由调用方写到磁盘。 */
+  recordFile(uploader: string, input: { name: string; mime: string; size: number }): Part {
+    const id = randomBytes(18).toString('base64url');
+    const name = input.name.replace(/[\\/\0]/g, '_').slice(0, 200) || 'file';
+    this.db
+      .prepare('INSERT INTO files (id, name, mime, size, uploader, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(id, name, input.mime, input.size, uploader, this.iso());
+    return { kind: 'file', name, mime: input.mime, size: input.size, url: `/files/${id}` };
+  }
+
+  getFile(id: string): { id: string; name: string; mime: string; size: number } | null {
+    return (this.db.prepare('SELECT id, name, mime, size FROM files WHERE id = ?').get(id) as never) ?? null;
+  }
+
+  /** 把交付物里的 file_id 换成文件信息。 */
+  filePart(id: string): Part {
+    const f = this.getFile(id);
+    if (!f) throw invalid(`找不到上传的文件 ${id}`);
+    return { kind: 'file', name: f.name, mime: f.mime, size: f.size, url: `/files/${f.id}` };
   }
 
   // ───────────── 讨论与消息 ─────────────

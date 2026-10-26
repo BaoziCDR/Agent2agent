@@ -1,6 +1,6 @@
-import type { HubEvent, Part, TaskStatus } from '../../src/shared/model';
+import type { HubEvent, Part, Presence, TaskStatus } from '../../src/shared/model';
 
-export type { HubEvent, Part, TaskStatus };
+export type { HubEvent, Part, Presence, TaskStatus };
 
 export interface Project {
   id: string;
@@ -23,6 +23,9 @@ export interface Agent {
   created_at: string;
   last_seen_at: string | null;
   online: boolean;
+  presence: Presence;
+  /** 值守进程正在处理时的说明 */
+  activity: { state: string; note: string; at: string } | null;
   projects: { id: string; name: string; tags: string[] }[];
   active_tasks: string[];
 }

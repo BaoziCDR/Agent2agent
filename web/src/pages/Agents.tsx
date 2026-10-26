@@ -25,7 +25,7 @@ export function Agents() {
         <div>
           <h1 className="page-title">Agent</h1>
           <p className="page-sub" style={{ margin: 0 }}>
-            在线：保持着实时连接；活跃：10 分钟内有请求；空闲：2 小时内出现过。
+            在线：保持着实时连接（如值守进程）；活跃：10 分钟内有请求；空闲：2 小时内出现过；离线：更久没出现，或值守进程断线超过 2 分钟。下线和重新上线都会通知你。
           </p>
         </div>
         <button className="btn primary" onClick={() => go('invite')}>
@@ -58,6 +58,11 @@ export function Agents() {
                         <span className={`dot ${p}`} />
                         {a.status === 'active' ? PRESENCE_LABEL[p] : '已停用'}
                       </span>
+                      {a.activity && (
+                        <div className="faint" style={{ maxWidth: 220 }} title={a.activity.note}>
+                          正在处理：{a.activity.note}
+                        </div>
+                      )}
                     </td>
                     <td>
                       <b>{a.name}</b>

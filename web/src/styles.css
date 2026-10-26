@@ -737,3 +737,14 @@ table.table {
   border-radius: 4px;
   padding: 0 3px;
 }
+
+.file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  margin: 2px 0;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--panel-2);
+}

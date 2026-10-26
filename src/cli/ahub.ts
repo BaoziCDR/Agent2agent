@@ -3,11 +3,13 @@ import { parseArgs } from 'node:util';
 import { readFileSync } from 'node:fs';
 import { basename } from 'node:path';
 import { type CliConfig, defaultConfigPath, loadConfig, saveConfig } from './config.js';
+import { fileArtifact, uploadFile } from './files.js';
 
 const HELP = `ahub —— 多 Agent 协作中枢命令行
 
 负责人：
   ahub serve [--port 7788] [--host 0.0.0.0] [--data ./.ahub-data] [--public-url URL] [--reset-owner-token]
+             [--offline-after 120]     agent 多少分钟没有任何请求算离线
                                        启动 Hub（控制台、Agent 接口、MCP 都在这个端口）
 
 Agent：
@@ -25,6 +27,7 @@ Agent：
   ahub block <任务> <原因> | unblock <任务> [说明]
   ahub submit <任务> <交付说明> [--file 路径 ...] [--link URL ...]
   ahub release <任务> <理由>
+  ahub upload <文件>                   上传文件（最大 25 MB），返回下载地址；submit --file 遇到大文件或二进制文件会自动上传
   ahub comment <任务> <内容>           可用 @A-3、@成员名字 或 @负责人
   ahub members [--project P-1]         查看项目成员和编号（用于 @）
   ahub subtask <父任务> <标题> [--desc 描述] [--assignee A-3] [--tags a,b] [--priority P1] [--accept "标准1;标准2"]
@@ -32,6 +35,9 @@ Agent：
   ahub use <项目>                      设置当前目录的默认项目
   ahub stream                          持续输出实时事件（SSE）
   ahub mcp [--hub URL]                 以 stdio 方式运行 MCP 服务（供 Codex、Claude Code 等配置）
+  ahub run --harness codex|claude      值守模式：保持在线，收到指派、@、私信、退回时自动唤起 harness 处理
+           [--cwd 目录] [--max-runs 10] [--run-timeout 60] [--wake-on-open] [--new-session]
+           [--harness-arg 参数 ...] [--cmd "自定义命令"] [--dry-run]
 
 配置保存在当前目录的 .ahub/config.json（加 --global 则保存到用户主目录）。
 也可用环境变量 AHUB_URL、AHUB_TOKEN 覆盖。`;
@@ -128,6 +134,17 @@ async function main(argv: string[]) {
       'public-url': { type: 'string' },
       'reset-owner-token': { type: 'boolean' },
       'owner-token': { type: 'string' },
+      'offline-after': { type: 'string' },
+      harness: { type: 'string' },
+      cmd: { type: 'string' },
+      'harness-arg': { type: 'string', multiple: true },
+      cwd: { type: 'string' },
+      'max-runs': { type: 'string' },
+      'run-timeout': { type: 'string' },
+      debounce: { type: 'string' },
+      'wake-on-open': { type: 'boolean' },
+      'new-session': { type: 'boolean' },
+      'dry-run': { type: 'boolean' },
     },
   });
 
@@ -146,6 +163,7 @@ async function main(argv: string[]) {
       publicUrl: v['public-url'] ?? process.env.AHUB_PUBLIC_URL,
       resetOwnerToken: v['reset-owner-token'],
       ownerToken: v['owner-token'] ?? process.env.AHUB_OWNER_TOKEN,
+      offlineAfterMinutes: Number(v['offline-after'] ?? process.env.AHUB_OFFLINE_AFTER ?? 120) || 120,
     });
     return;
   }
@@ -266,6 +284,12 @@ async function main(argv: string[]) {
       console.log(ok(await api(cfg, 'GET', `/api/v1/members${project ? `?project=${enc(project)}` : ''}`)));
       return;
     }
+    case 'upload': {
+      const f = need(pos[0], '文件路径');
+      const r = await uploadFile(cfg, f).catch((err: Error) => die(err.message));
+      console.log(`已上传 ${r.name}（${r.size} 字节）：${r.absolute_url}`);
+      return;
+    }
     case 'task':
       console.log(ok(await api(cfg, 'GET', `/api/v1/tasks/${enc(need(pos[0], '任务编号'))}`)));
       return;
@@ -300,7 +324,7 @@ async function main(argv: string[]) {
       const id = need(pos[0], '任务编号');
       const summary = need(pos.slice(1).join(' '), '交付说明');
       const artifacts = [
-        ...(v.file ?? []).map((f) => ({ name: basename(f), content: readFileSync(f, 'utf8') })),
+        ...(await Promise.all((v.file ?? []).map((f) => fileArtifact(cfg, f).catch((err: Error) => die(err.message))))),
         ...(v.link ?? []).map((u) => ({ name: u, url: u })),
       ];
       console.log(ok(await api(cfg, 'POST', `/api/v1/tasks/${enc(id)}/submit`, { summary, artifacts }, { ack: true })));
@@ -351,6 +375,26 @@ async function main(argv: string[]) {
           console.log(`[${e.seq}] ${e.at.slice(11, 19)} ${e.summary}`);
         }
       }
+      return;
+    }
+    case 'run': {
+      const harness = (v.harness ?? (v.cmd ? 'custom' : '')) as 'codex' | 'claude' | 'custom';
+      if (!['codex', 'claude', 'custom'].includes(harness)) die('请用 --harness codex 或 --harness claude 指定要唤起的 agent，或用 --cmd 给出自定义命令');
+      if (harness === 'custom' && !v.cmd) die('--harness custom 需要同时给出 --cmd');
+      if (!loaded.path) die('请先在这个目录运行 ahub join 加入 Hub');
+      const { runDaemon } = await import('./run.js');
+      await runDaemon(cfg, loaded.path, {
+        harness,
+        cmd: v.cmd,
+        harnessArgs: v['harness-arg']?.length ? v['harness-arg'] : undefined,
+        cwd: v.cwd ?? process.cwd(),
+        maxRunsPerHour: Number(v['max-runs'] ?? 10) || 10,
+        timeoutMinutes: Number(v['run-timeout'] ?? 60) || 60,
+        debounceSeconds: Number(v.debounce ?? 5) || 5,
+        wakeOnOpen: !!v['wake-on-open'],
+        newSession: !!v['new-session'],
+        dryRun: !!v['dry-run'],
+      });
       return;
     }
     case 'mcp': {

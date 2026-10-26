@@ -1,5 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join as pathJoin } from 'node:path';
 import { openDb } from '../dist/server/db.js';
 import { Hub } from '../dist/server/hub.js';
 import { buildApp } from '../dist/server/app.js';
@@ -12,7 +15,7 @@ async function setup() {
   const hub = new Hub(openDb(':memory:'));
   const ownerToken = 'owner_test';
   hub.ensureOwnerToken(ownerToken);
-  const app = buildApp(hub, { webDir: '/nonexistent', maxWaitSeconds: 2 });
+  const app = buildApp(hub, { webDir: '/nonexistent', maxWaitSeconds: 2, filesDir: mkdtempSync(pathJoin(tmpdir(), 'ahub-files-')) });
   const owner = { authorization: `Bearer ${ownerToken}` };
   const req = async (method, url, body, headers = owner) => {
     const res = await app.inject({ method, url, headers: { ...headers, ...(body ? { 'content-type': 'application/json' } : {}) }, payload: body ? JSON.stringify(body) : undefined });
@@ -100,4 +103,47 @@ test('MCP：通过 HTTP 调用 hub_ 工具', async () => {
   assert.equal(bad.isError, true);
   await client.close();
   await app.close();
+});
+
+test('文件上传：agent 上传后作为交付物提交，负责人能下载', async () => {
+  const { app, req, join: joinAgent, project } = await setup();
+  const a = await joinAgent('甲');
+  const t = (await req('POST', '/api/v1/admin/tasks', { project: project.id, title: '出图' })).json();
+  await req('POST', `/api/v1/tasks/${t.id}/claim`, {}, a.headers);
+  const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 1, 2, 3]);
+  const up = await app.inject({
+    method: 'POST',
+    url: '/api/v1/files?name=' + encodeURIComponent('图 1.png'),
+    headers: { ...a.headers, 'content-type': 'application/octet-stream' },
+    payload: bytes,
+  });
+  assert.equal(up.statusCode, 201);
+  const f = up.json();
+  assert.equal(f.size, 8);
+  assert.equal(f.mime, 'image/png');
+  // 客户端自己拼的 file 部分会被丢掉，只认 file_id
+  await req('POST', `/api/v1/tasks/${t.id}/submit`, {
+    summary: '图在附件里',
+    artifacts: [{ name: '图', file_id: f.id }, { name: '伪造', parts: [{ kind: 'file', url: '/files/xxx' }] }],
+  }, a.headers);
+  const detail = (await req('GET', `/api/v1/admin/tasks/${t.id}`)).json();
+  const parts = detail.artifacts.flatMap((x) => x.parts).filter((p) => p.kind === 'file');
+  assert.equal(parts.length, 1);
+  const dl = await app.inject({ method: 'GET', url: parts[0].url });
+  assert.equal(dl.statusCode, 200);
+  assert.deepEqual(dl.rawPayload, bytes);
+  assert.match(dl.headers['content-disposition'], /inline; filename\*=UTF-8''%E5%9B%BE%201\.png/);
+  assert.equal((await app.inject({ method: 'GET', url: '/files/abcdefghijklmnop' })).statusCode, 404);
+  assert.equal((await app.inject({ method: 'POST', url: '/api/v1/files', headers: { 'content-type': 'application/octet-stream' }, payload: bytes })).statusCode, 401);
+  const md = await req('GET', `/api/v1/tasks/${t.id}?format=md`, undefined, a.headers);
+  assert.match(md.text, /文件：\[图 1\.png\]\(http:\/\/[^)]+\/files\/[\w-]+\)/);
+});
+
+test('值守进程上报状态：负责人看到「正在处理」', async () => {
+  const { req, join: joinAgent } = await setup();
+  const a = await joinAgent('甲');
+  await req('POST', '/api/v1/me/activity', { state: 'working', note: '处理 P1-T1' }, a.headers);
+  const ev = (await req('GET', '/api/v1/admin/events?limit=1')).json()[0];
+  assert.equal(ev.type, 'agent.activity');
+  assert.match(ev.summary, /甲（A-1）被唤醒：处理 P1-T1/);
 });

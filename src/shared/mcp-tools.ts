@@ -7,6 +7,8 @@ export type HubCall = (method: 'GET' | 'POST', path: string, body?: unknown) => 
 export interface ToolOptions {
   /** stdio 桥才提供：用邀请码加入并在本地保存令牌 */
   join?: (input: { invite: string; name?: string; platform?: string; skills?: string[]; tags?: string[] }) => Promise<string>;
+  /** stdio 桥才提供：把本机文件变成交付物（小文本内联，其余上传） */
+  fileArtifact?: (path: string) => Promise<{ name: string; content?: string; file_id?: string }>;
 }
 
 const enc = encodeURIComponent;
@@ -212,9 +214,20 @@ export function createHubMcpServer(call: HubCall, opts: ToolOptions = {}): McpSe
           .array(z.object({ name: z.string(), content: z.string().optional(), url: z.string().optional() }))
           .optional()
           .describe('交付物：文本内容或链接'),
+        ...(opts.fileArtifact
+          ? { files: z.array(z.string()).optional().describe('要一起提交的本机文件路径；小文本直接附上内容，其他文件（最大 25 MB）上传到 Hub') }
+          : {}),
       },
     },
-    async ({ task, ...body }) => reply(call('POST', `/api/v1/tasks/${enc(task)}/submit?format=md`, body)),
+    async ({ task, files, ...body }: { task: string; summary: string; artifacts?: object[]; files?: string[] }) => {
+      const artifacts: object[] = [...(body.artifacts ?? [])];
+      try {
+        for (const f of files ?? []) artifacts.push(await opts.fileArtifact!(f));
+      } catch (err) {
+        return { content: [{ type: 'text' as const, text: (err as Error).message }], isError: true };
+      }
+      return reply(call('POST', `/api/v1/tasks/${enc(task)}/submit?format=md`, { summary: body.summary, artifacts }));
+    },
   );
 
   server.registerTool(
