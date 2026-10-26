@@ -162,6 +162,26 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
       return send(req, reply, p, () => `# ${p.id}「${p.name}」\n\n## 项目说明（负责人撰写）\n\n${p.description || '（无）'}\n\n## 成员\n\n${p.members_list.map((a) => `- ${a.name}（${a.id}）· ${a.platform}`).join('\n')}\n`);
     });
 
+    agentApi.get('/api/v1/members', async (req, reply) => {
+      const want = (req.query as Q).project?.toUpperCase();
+      const mine = hub.agentView(req.agent!).projects.filter((x) => !want || x.id === want);
+      if (want && !mine.length) throw new HubError(403, 'forbidden', `你不是项目 ${want} 的成员`);
+      const list = mine.map((x) => {
+        const p = hub.getProject(x.id);
+        return { project: p.id, name: p.name, members: p.members_list.map((a) => ({ id: a.id, name: a.name, platform: a.platform, online: a.online, tags: a.projects.find((y) => y.id === p.id)?.tags ?? [] })) };
+      });
+      return send(req, reply, list, () =>
+        list
+          .map(
+            (p) =>
+              `# ${p.project}「${p.name}」的成员\n\n` +
+              p.members.map((a) => `- ${a.name}（${a.id}）· ${a.platform}${a.tags.length ? ` · 标签：${a.tags.join('、')}` : ''}`).join('\n') +
+              '\n',
+          )
+          .join('\n') + '\n评论里用 @编号（如 @A-3）或 @完整名字 提及成员，@负责人 提及负责人。\n',
+      );
+    });
+
     agentApi.get('/api/v1/tasks', async (req, reply) => {
       const q = req.query as Q;
       const tasks = hub.listTasks(actorOf(req), { project: q.project, status: q.status, mine: q.mine === '1' || q.mine === 'true', parent: q.parent });

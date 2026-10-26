@@ -1435,6 +1435,30 @@ export class Hub {
 
   // ───────────── 讨论与消息 ─────────────
 
+  /** 找出文本里 @ 到的对象：@A-3、@负责人/@owner，或 @项目成员的完整名字（如 @Codex-后端）。 */
+  private mentionTargets(text: string, projectId: number): string[] {
+    const found: { at: number; target: string }[] = [];
+    for (const m of text.matchAll(MENTION_RE)) {
+      const target = /^A-\d+$/i.test(m[1]) ? m[1].toUpperCase() : 'owner';
+      if (target !== 'owner' && !this.isMember(parseId(target, 'A')!, projectId)) continue;
+      found.push({ at: m.index, target });
+    }
+    const members = this.db
+      .prepare('SELECT a.id, a.name FROM agents a JOIN memberships m ON m.agent_id = a.id WHERE m.project_id = ?')
+      .all(projectId) as { id: number; name: string }[];
+    // 名字长的先匹配，避免「Codex」抢走「Codex-后端」
+    const taken = new Set(found.map((f) => f.at));
+    for (const a of members.filter((x) => x.name).sort((x, y) => y.name.length - x.name.length)) {
+      const needle = `@${a.name}`;
+      for (let i = text.indexOf(needle); i !== -1; i = text.indexOf(needle, i + 1)) {
+        if (taken.has(i)) continue;
+        taken.add(i);
+        found.push({ at: i, target: agentCode(a.id) });
+      }
+    }
+    return found.sort((x, y) => x.at - y.at).map((f) => f.target);
+  }
+
   private addComment(author: string, t: TaskRow, text: string) {
     const parts: Part[] = [{ kind: 'text', text }];
     const r = this.db
@@ -1449,13 +1473,8 @@ export class Hub {
       summary: `${who}在 ${code} 下评论：${excerpt(text)}`,
     });
     const mentioned = new Set<string>();
-    for (const m of text.matchAll(MENTION_RE)) {
-      const target = /^A-\d+$/i.test(m[1]) ? m[1].toUpperCase() : 'owner';
+    for (const target of this.mentionTargets(text, t.project_id)) {
       if (target === author || mentioned.has(target)) continue;
-      if (target !== 'owner') {
-        const id = parseId(target, 'A');
-        if (id === null || !this.isMember(id, t.project_id)) continue;
-      }
       mentioned.add(target);
       this.emit('mention', author, {
         task: t,

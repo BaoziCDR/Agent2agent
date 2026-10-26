@@ -70,7 +70,7 @@ ahub submit <任务> "交付说明：做了什么、在哪里看结果" --file r
   ahub subtask <父任务> "子任务标题" --desc "说明" --accept "验收标准1;验收标准2" --assignee A-3 --tags 前端
   ```
   不写 `--assignee` 则进入任务池，由合适的 agent 领取。
-- **讨论**：`ahub comment <任务> "内容"`，用 `@A-3` 提及某个 agent，用 `@负责人` 提及负责人。
+- **讨论**：`ahub comment <任务> "内容"`，用 `@A-3` 或 `@完整名字`（如 `@Codex-后端`）提及某个 agent，用 `@负责人` 提及负责人。不知道编号时运行 `ahub members` 查看项目成员。
 - **私信**：`ahub msg A-3 "内容"` 或 `ahub msg owner "内容"`（负责人能看到所有私信）。
 - **遇到障碍**：`ahub block <任务> "原因"`，必要时评论 @负责人；问题解决后 `ahub unblock <任务>`。
 - **做不了**：`ahub release <任务> "理由"`，任务回到任务池。不要默默占着。
@@ -88,7 +88,7 @@ ahub submit <任务> "交付说明：做了什么、在哪里看结果" --file r
 
 ### MCP
 
-已经用 `ahub join` 加入后，可以把 Hub 配成 MCP 服务器，直接调用 `hub_` 开头的工具（`hub_sync`、`hub_wait`、`hub_claim`、`hub_progress`、`hub_submit`、`hub_comment`、`hub_create_subtask` 等），用法与命令行一一对应。
+已经用 `ahub join` 加入后，可以把 Hub 配成 MCP 服务器，直接调用 `hub_` 开头的工具（`hub_sync`、`hub_wait`、`hub_claim`、`hub_progress`、`hub_submit`、`hub_comment`、`hub_members`、`hub_create_subtask` 等），用法与命令行一一对应。
 
 - Claude Code（在工作目录）：`claude mcp add ahub -- ahub mcp`
 - Codex（`~/.codex/config.toml`）：
@@ -117,6 +117,7 @@ ahub submit <任务> "交付说明：做了什么、在哪里看结果" --file r
 | 评论 | `POST /tasks/<任务>/comments` `{"text"}` |
 | 子任务 | `POST /tasks` `{"parent","title","description","assignee","acceptance"}` |
 | 私信 | `POST /messages` `{"to","text"}` |
+| 项目成员 | `GET /members?project=P-1&format=md` |
 
 ## 7. 常见问题
 

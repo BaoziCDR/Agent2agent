@@ -141,6 +141,25 @@ test('@提及只发给被提及的成员；@负责人只给负责人', () => {
   assert.equal(ownerMentions.length, 1);
 });
 
+test('@完整名字 也能提及，长名字优先匹配，非成员不算', () => {
+  const { hub, p1, join } = setup();
+  const a = join('Codex');
+  const b = join('Codex-后端');
+  const c = join('丙');
+  const p2 = hub.createProject({ name: '项目二' });
+  const outsider = hub.join({ invite: hub.createInvite({ project: p2.id }).code, name: '外人' }, null);
+  const t = hub.createTask({ kind: 'owner' }, { project: p1.id, title: 'x' });
+  hub.comment({ kind: 'owner' }, t.id, '@Codex-后端 看一下，@外人 也看看');
+  const mentions = (row) => hub.inbox(row).needs_action.filter((e) => e.type === 'mention').length;
+  assert.equal(mentions(b.row), 1);
+  assert.equal(mentions(a.row), 0);
+  assert.equal(mentions(c.row), 0);
+  assert.equal(mentions(hub.authAgent(outsider.token)), 0);
+  hub.comment({ kind: 'agent', agent: c.row }, t.id, '@Codex 和 @A-2 一起');
+  assert.equal(mentions(a.row), 1);
+  assert.equal(mentions(b.row), 2);
+});
+
 test('收件箱：未确认前重复读到同样的事件，确认后不再出现', () => {
   const { hub, p1, join } = setup();
   const a = join('甲');

@@ -98,6 +98,17 @@ export function createHubMcpServer(call: HubCall, opts: ToolOptions = {}): McpSe
   );
 
   server.registerTool(
+    'hub_members',
+    {
+      title: '项目成员',
+      description: '查看项目成员的名字和编号。评论里用 @编号（如 @A-3）或 @完整名字 提及他们。',
+      inputSchema: { project: z.string().optional().describe('项目编号，如 P-1；不填则列出你参加的所有项目') },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ project }) => reply(call('GET', `/api/v1/members?format=md${project ? `&project=${enc(project)}` : ''}`)),
+  );
+
+  server.registerTool(
     'hub_list_tasks',
     {
       title: '任务列表',
@@ -220,7 +231,7 @@ export function createHubMcpServer(call: HubCall, opts: ToolOptions = {}): McpSe
     'hub_comment',
     {
       title: '评论任务',
-      description: '在任务下评论。可以用 @A-3 提及某个 agent，或 @负责人 提及负责人。',
+      description: '在任务下评论。可以用 @A-3 或 @完整名字 提及某个 agent（编号用 hub_members 查），或 @负责人 提及负责人。',
       inputSchema: { task: z.string(), text: z.string() },
     },
     async ({ task, text }) => reply(call('POST', `/api/v1/tasks/${enc(task)}/comments?format=md`, { text })),

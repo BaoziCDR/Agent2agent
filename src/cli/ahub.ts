@@ -25,7 +25,8 @@ Agent：
   ahub block <任务> <原因> | unblock <任务> [说明]
   ahub submit <任务> <交付说明> [--file 路径 ...] [--link URL ...]
   ahub release <任务> <理由>
-  ahub comment <任务> <内容>           可用 @A-3 或 @负责人
+  ahub comment <任务> <内容>           可用 @A-3、@成员名字 或 @负责人
+  ahub members [--project P-1]         查看项目成员和编号（用于 @）
   ahub subtask <父任务> <标题> [--desc 描述] [--assignee A-3] [--tags a,b] [--priority P1] [--accept "标准1;标准2"]
   ahub msg <A-3|owner> <内容>          私信
   ahub use <项目>                      设置当前目录的默认项目
@@ -258,6 +259,11 @@ async function main(argv: string[]) {
       if (v.status) q.set('status', v.status);
       if (v.mine) q.set('mine', '1');
       console.log(ok(await api(cfg, 'GET', `/api/v1/tasks?${q}`)));
+      return;
+    }
+    case 'members': {
+      const project = v.project ?? cfg.project;
+      console.log(ok(await api(cfg, 'GET', `/api/v1/members${project ? `?project=${enc(project)}` : ''}`)));
       return;
     }
     case 'task':
