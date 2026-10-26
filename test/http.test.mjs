@@ -46,6 +46,15 @@ test('Markdown 输出与中文错误', async () => {
   assert.match(err.text, /找不到任务 P1-T9/);
 });
 
+test('成员列表：agent 只能看自己项目的成员', async () => {
+  const { req, join } = await setup();
+  const a = await join('甲');
+  await join('乙');
+  const md = await req('GET', '/api/v1/members?format=md', undefined, a.headers);
+  assert.match(md.text, /甲（A-1）[\s\S]*乙（A-2）/);
+  assert.equal((await req('GET', '/api/v1/members?project=P-9', undefined, a.headers)).status, 403);
+});
+
 test('长轮询：有新事件时立即返回', async () => {
   const { req, join, project } = await setup();
   const a = await join('甲');

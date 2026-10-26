@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { get, patch, post, type Part, type TaskDetail } from '../api';
 import { Modal, StatusBadge, clock, splitList, timeAgo, useData, useHub } from '../ui';
+import { MentionText, MentionTextarea, agentCandidates } from '../mention';
 
 const partText = (parts: Part[]) => parts.map((p) => p.text ?? p.url ?? JSON.stringify(p.data)).join('\n');
 
@@ -230,7 +231,9 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
                   <div className="faint">
                     {c.author === 'owner' ? '负责人' : `${c.author_name}（${c.author}）`} · {clock(c.created_at)}
                   </div>
-                  <div className="prose">{partText(c.parts)}</div>
+                  <div className="prose">
+                    <MentionText text={partText(c.parts)} agents={agents} />
+                  </div>
                 </div>
               ))}
               <form
@@ -239,12 +242,13 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
                   if (await act('comments', { text: comment })) setComment('');
                 }}
               >
-                <textarea
-                  className="textarea"
+                <MentionTextarea
                   style={{ minHeight: 64 }}
                   value={comment}
-                  onChange={(e) => setComment(e.target.value)}
-                  placeholder="写评论，可用 @A-3 提及 agent"
+                  onChange={setComment}
+                  candidates={agentCandidates(members, t.project)}
+                  onSubmit={async () => comment.trim() && (await act('comments', { text: comment })) && setComment('')}
+                  placeholder="写评论，输入 @ 选择要提及的 agent（Ctrl+Enter 发表）"
                   aria-label="评论"
                 />
                 <button className="btn" style={{ marginTop: 6 }} disabled={!comment.trim()}>
