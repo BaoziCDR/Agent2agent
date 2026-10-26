@@ -1,6 +1,7 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import { existsSync, readFileSync } from 'node:fs';
+import { networkInterfaces } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { type Actor, type AgentRow, Hub, HubError, agentCode } from './hub.js';
@@ -258,6 +259,15 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
     const A = '/api/v1/admin';
 
     admin.get(`${A}/overview`, async (req) => hub.overview((req.query as Q).project));
+    admin.get(`${A}/info`, async (req) => {
+      if (opts.publicUrl) return { urls: [opts.publicUrl] };
+      const port = /:(\d+)$/.exec(req.headers.host ?? '')?.[1] ?? '80';
+      const ips = Object.values(networkInterfaces())
+        .flat()
+        .filter((a) => a && a.family === 'IPv4' && !a.internal)
+        .map((a) => a!.address);
+      return { urls: [...ips.map((ip) => `http://${ip}:${port}`), `${req.protocol}://${req.headers.host}`] };
+    });
     admin.get(`${A}/stream`, async (req, reply) => {
       const lastId = Number(req.headers['last-event-id'] ?? (req.query as Q).since ?? hub.lastSeq()) || 0;
       streamEvents(hub, req, reply, lastId, () => true, () => hub.eventsForOwner({ after: lastId, limit: 500 }), null);
@@ -380,7 +390,7 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
   // ── 控制台 ──
   const webDir = opts.webDir ?? join(ROOT, 'web', 'dist');
   if (existsSync(join(webDir, 'index.html'))) {
-    app.register(fastifyStatic, { root: webDir, prefix: '/', wildcard: false });
+    app.register(fastifyStatic, { root: webDir, prefix: '/' });
     app.setNotFoundHandler((req, reply) => {
       if (req.method === 'GET' && !req.url.startsWith('/api/') && !req.url.startsWith('/mcp')) {
         return reply.sendFile('index.html');
