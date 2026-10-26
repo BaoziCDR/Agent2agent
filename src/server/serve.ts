@@ -12,6 +12,8 @@ export interface ServeOptions {
   publicUrl?: string;
   resetOwnerToken?: boolean;
   ownerToken?: string;
+  /** 多久没有任何请求算离线（分钟） */
+  offlineAfterMinutes?: number;
 }
 
 function lanAddresses(): string[] {
@@ -26,7 +28,7 @@ export async function serve(opts: ServeOptions) {
   const dataDir = resolve(opts.dataDir);
   mkdirSync(dataDir, { recursive: true });
   const db = openDb(join(dataDir, 'hub.db'));
-  const hub = new Hub(db);
+  const hub = new Hub(db, { offlineAfterMinutes: opts.offlineAfterMinutes });
 
   let token = hub.ensureOwnerToken(opts.ownerToken);
   if (opts.resetOwnerToken) token = hub.resetOwnerToken();
@@ -40,16 +42,17 @@ export async function serve(opts: ServeOptions) {
     }
   }
 
-  const app = buildApp(hub, { publicUrl: opts.publicUrl, logger: false });
+  const app = buildApp(hub, { publicUrl: opts.publicUrl, logger: false, filesDir: join(dataDir, 'files') });
   await app.listen({ port: opts.port, host: opts.host });
 
   const sweep = setInterval(() => {
     try {
       hub.sweepLeases();
+      hub.sweepPresence();
     } catch (err) {
-      console.error('租约检查失败：', err);
+      console.error('租约/在线状态检查失败：', err);
     }
-  }, 60_000);
+  }, 30_000);
   sweep.unref();
 
   const urls =

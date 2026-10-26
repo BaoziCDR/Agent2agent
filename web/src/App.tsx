@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { type Agent, ApiError, get, getToken, type HubEvent, type Project, setToken } from './api';
 import { Ctx, type HubCtx } from './ui';
+import { maybeNotify, notifyEnabled, notifySupported, setNotify } from './notify';
 import { Overview } from './pages/Overview';
 import { Board } from './pages/Board';
 import { NewTask } from './pages/NewTask';
@@ -80,6 +81,7 @@ export function App() {
   const [tick, setTick] = useState(0);
   const [events, setEvents] = useState<HubEvent[]>([]);
   const [connected, setConnected] = useState(false);
+  const [notifyOn, setNotifyOn] = useState(notifyEnabled);
   const [toastMsg, setToastMsg] = useState<{ text: string; error: boolean } | null>(null);
   const toastTimer = useRef<number>(0);
 
@@ -133,13 +135,16 @@ export function App() {
     const onEvent = (msg: MessageEvent) => {
       const e = JSON.parse(msg.data) as HubEvent;
       setEvents((list) => [e, ...list].slice(0, 300));
+      maybeNotify(e, () => {
+        location.hash = e.task ? `#/${readHash().page}/${e.task}` : e.type === 'agent.offline' ? '#/agents' : '#/overview';
+      });
       window.clearTimeout(timer);
       timer = window.setTimeout(() => setTick((t) => t + 1), 300);
     };
     const types = [
       'project.created', 'project.updated', 'agent.joined', 'agent.updated', 'task.created', 'task.updated', 'task.assigned',
       'task.claimed', 'task.status_changed', 'task.progress', 'task.lease_expiring', 'task.deliverable', 'comment.created',
-      'message.direct', 'mention', 'owner.broadcast',
+      'message.direct', 'mention', 'owner.broadcast', 'agent.online', 'agent.offline', 'agent.activity',
     ];
     for (const t of types) es.addEventListener(t, onEvent);
     // 在线状态依赖时间推移，定期刷新
@@ -222,6 +227,19 @@ export function App() {
             ))}
           </select>
           <div className="spacer" />
+          {notifySupported() && (
+            <button
+              className="btn small"
+              title="控制台在后台时，用系统通知提醒你：待验收、阻塞、@你、私信、agent 下线、任务可能失联"
+              onClick={async () => {
+                const on = await setNotify(!notifyOn);
+                setNotifyOn(on);
+                if (!notifyOn && !on) toast('浏览器没有允许通知，请在地址栏左侧的网站设置里打开', true);
+              }}
+            >
+              {notifyOn ? '通知：开' : '通知：关'}
+            </button>
+          )}
           <span className="conn" title={connected ? '实时连接正常' : '实时连接已断开，正在重连'}>
             <span className={`dot ${connected ? 'online' : ''}`} />
             {connected ? '实时' : '重连中'}

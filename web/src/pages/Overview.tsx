@@ -113,6 +113,7 @@ export function Overview() {
                         {PRESENCE_LABEL[p]} · 最后出现 {timeAgo(a.last_seen_at)}
                         {a.active_tasks.length > 0 && ` · 手上：${a.active_tasks.join('、')}`}
                       </div>
+                      {a.activity && <div className="faint">正在处理：{a.activity.note}</div>}
                     </div>
                   </div>
                 );

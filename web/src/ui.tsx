@@ -1,5 +1,5 @@
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useState } from 'react';
-import type { Agent, HubEvent, Project, Task } from './api';
+import type { Agent, HubEvent, Presence, Project, Task } from './api';
 
 export interface HubCtx {
   projects: Project[];
@@ -58,17 +58,10 @@ export function clock(iso: string): string {
   return today ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
 }
 
-export type Presence = 'online' | 'active' | 'idle' | 'offline';
 export const PRESENCE_LABEL: Record<Presence, string> = { online: '在线', active: '活跃', idle: '空闲', offline: '离线' };
 
 export function presence(a: Agent): Presence {
-  if (a.status !== 'active') return 'offline';
-  if (a.online) return 'online';
-  if (!a.last_seen_at) return 'offline';
-  const mins = (Date.now() - new Date(a.last_seen_at).getTime()) / 60000;
-  if (mins < 10) return 'active';
-  if (mins < 120) return 'idle';
-  return 'offline';
+  return a.status === 'active' ? a.presence : 'offline';
 }
 
 export const PLATFORM_LABEL: Record<string, string> = {

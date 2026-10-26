@@ -1,6 +1,6 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import fastifyStatic from '@fastify/static';
-import { existsSync, readFileSync } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,6 +19,8 @@ export interface AppOptions {
   logger?: boolean;
   /** 长轮询最长挂起秒数 */
   maxWaitSeconds?: number;
+  /** 上传文件的保存目录；不设置时不提供上传 */
+  filesDir?: string;
 }
 
 declare module 'fastify' {
@@ -153,6 +155,12 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
       streamEvents(hub, req, reply, lastId, (e) => hub.canSee(agent, e), () => hub.eventsForAgent(agent, lastId, 1000).events, agent.id);
     });
 
+    // ahub run 守护进程上报自己被唤醒/处理完毕
+    agentApi.post('/api/v1/me/activity', async (req) => {
+      const b = (req.body ?? {}) as Record<string, unknown>;
+      return hub.reportActivity(req.agent!, { state: str(b.state), note: str(b.note) });
+    });
+
     agentApi.get('/api/v1/projects', async (req) => hub.agentView(req.agent!).projects);
 
     agentApi.get('/api/v1/projects/:id', async (req, reply) => {
@@ -190,7 +198,7 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
 
     agentApi.get('/api/v1/tasks/:id', async (req, reply) => {
       const t = hub.getTaskFor(actorOf(req), (req.params as { id: string }).id);
-      return send(req, reply, t, () => renderTask(t));
+      return send(req, reply, t, () => renderTask(t, publicUrl(req)));
     });
 
     const action = (
@@ -227,7 +235,7 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
     action('/api/v1/tasks/:id/unblock', (a, id, b) => hub.unblock({ kind: 'agent', agent: a }, id, str(b.note)), taskDone('解除阻塞'));
     action(
       '/api/v1/tasks/:id/submit',
-      (a, id, b) => hub.submit(a, id, { summary: str(b.summary) ?? '', artifacts: parseArtifacts(b.artifacts) }),
+      (a, id, b) => hub.submit(a, id, { summary: str(b.summary) ?? '', artifacts: parseArtifacts(hub, b.artifacts) }),
       taskDone('提交验收'),
     );
     action('/api/v1/tasks/:id/release', (a, id, b) => hub.release(a, id, str(b.reason) ?? ''), taskDone('放弃'));
@@ -262,6 +270,49 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
       (a, _id, b) => hub.message({ kind: 'agent', agent: a }, str(b.to) ?? '', str(b.text) ?? str(b.body) ?? ''),
       () => '私信已发送。\n',
     );
+  });
+
+  // ── 文件上传与下载 ──
+  const MAX_UPLOAD = 25 * 1024 * 1024;
+  app.addContentTypeParser('application/octet-stream', { parseAs: 'buffer', bodyLimit: MAX_UPLOAD }, (_req, body, done) =>
+    done(null, body),
+  );
+  app.post('/api/v1/files', { bodyLimit: MAX_UPLOAD }, async (req, reply) => {
+    if (!opts.filesDir) throw new HubError(501, 'unsupported', '这个 Hub 没有开启文件上传');
+    const token = tokenOf(req);
+    let uploader: string | null = null;
+    if (token && hub.isOwnerToken(token)) uploader = 'owner';
+    else {
+      const agent = token ? hub.authAgent(token) : null;
+      if (agent) {
+        hub.touchAgent(agent);
+        uploader = agentCode(agent.id);
+      }
+    }
+    if (!uploader) throw new HubError(401, 'unauthorized', '缺少或无效的令牌');
+    if (!Buffer.isBuffer(req.body)) throw new HubError(400, 'invalid', '请用 Content-Type: application/octet-stream 上传文件内容');
+    const q = req.query as Q;
+    const name = q.name ?? (req.headers['x-file-name'] ? decodeURIComponent(String(req.headers['x-file-name'])) : 'file');
+    const mime = q.mime ?? guessMime(name);
+    const part = hub.recordFile(uploader, { name, mime, size: req.body.length });
+    mkdirSync(opts.filesDir, { recursive: true });
+    writeFileSync(join(opts.filesDir, part.url!.slice('/files/'.length)), req.body);
+    reply.status(201);
+    return { ...part, id: part.url!.slice('/files/'.length), absolute_url: publicUrl(req) + part.url };
+  });
+  // 下载地址本身难以猜测，相当于一次性分享链接，方便控制台和 agent 直接打开
+  app.get('/files/:id', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const f = /^[\w-]{10,64}$/.test(id) ? hub.getFile(id) : null;
+    const path = f && opts.filesDir ? join(opts.filesDir, f.id) : null;
+    if (!f || !path || !existsSync(path)) throw new HubError(404, 'not_found', '找不到这个文件');
+    const inline = /^(image\/(png|jpeg|gif|webp)|application\/pdf|text\/plain)$/.test(f.mime);
+    reply
+      .header('content-type', f.mime === 'text/plain' ? 'text/plain; charset=utf-8' : f.mime)
+      .header('x-content-type-options', 'nosniff')
+      .header('content-security-policy', "default-src 'none'")
+      .header('content-disposition', `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(f.name)}`);
+    return reply.send(createReadStream(path));
   });
 
   // ── MCP（Streamable HTTP，无状态） ──
@@ -428,11 +479,24 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
   return app;
 }
 
-function parseArtifacts(v: unknown): { name?: string; parts: Part[] }[] | undefined {
+const MIME: Record<string, string> = {
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',
+  pdf: 'application/pdf', txt: 'text/plain', log: 'text/plain', md: 'text/markdown', json: 'application/json',
+  csv: 'text/csv', zip: 'application/zip', gz: 'application/gzip', tar: 'application/x-tar', html: 'text/html',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  mp4: 'video/mp4', mp3: 'audio/mpeg',
+};
+const guessMime = (name: string) => MIME[name.split('.').pop()?.toLowerCase() ?? ''] ?? 'application/octet-stream';
+
+function parseArtifacts(hub: Hub, v: unknown): { name?: string; parts: Part[] }[] | undefined {
   if (!Array.isArray(v)) return undefined;
-  return v.map((a: { name?: string; content?: string; url?: string; parts?: Part[] }) => {
-    if (Array.isArray(a.parts)) return { name: a.name, parts: a.parts };
+  return v.map((a: { name?: string; content?: string; url?: string; file_id?: string; parts?: Part[] }) => {
+    // 文件只能通过 file_id 引用，不接受客户端自己拼的 file 部分
+    if (Array.isArray(a.parts)) return { name: a.name, parts: a.parts.filter((p) => p.kind !== 'file') };
     const parts: Part[] = [];
+    if (a.file_id) parts.push(hub.filePart(String(a.file_id)));
     if (a.content) parts.push({ kind: 'text', text: String(a.content) });
     if (a.url) parts.push({ kind: 'link', url: String(a.url) });
     return { name: a.name, parts };
@@ -490,11 +554,11 @@ function streamEvents(
     }
   };
   hub.bus.on('event', onEvent);
-  if (agentId !== null) hub.markLive(agentId, 1);
+  if (agentId !== null) hub.markLive(agentId, 1, 'stream');
   const heartbeat = setInterval(() => res.write(': 心跳\n\n'), 20_000);
   req.raw.on('close', () => {
     clearInterval(heartbeat);
     hub.bus.off('event', onEvent);
-    if (agentId !== null) hub.markLive(agentId, -1);
+    if (agentId !== null) hub.markLive(agentId, -1, 'stream');
   });
 }

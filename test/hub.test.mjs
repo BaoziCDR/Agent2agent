@@ -195,3 +195,45 @@ test('乐观锁：版本号不一致时拒绝修改', () => {
   hub.updateTask(t.id, { title: 'y', version: t.version });
   assert.throws(() => hub.updateTask(t.id, { title: 'z', version: t.version }), /其他人修改/);
 });
+
+test('在线状态：活跃 → 空闲 → 离线只通知一次，回来时再通知', () => {
+  const { hub, p1, join, advance } = setup();
+  const a = join('甲');
+  const t = hub.createTask({ kind: 'owner' }, { project: p1.id, title: 'x' });
+  hub.claim(a.row, t.id);
+  const presence = () => hub.listAgents().find((x) => x.id === a.agent.id).presence;
+  assert.equal(presence(), 'active');
+  advance(30);
+  assert.equal(presence(), 'idle');
+  assert.equal(hub.sweepPresence(), 0);
+  advance(100);
+  assert.equal(presence(), 'offline');
+  assert.equal(hub.sweepPresence(), 1);
+  assert.equal(hub.sweepPresence(), 0);
+  const offline = hub.eventsForOwner({ limit: 5 }).filter((e) => e.type === 'agent.offline');
+  assert.equal(offline.length, 1);
+  assert.match(offline[0].summary, /甲（A-1）很久没有出现，已离线；手上还有 P1-T1/);
+  assert.ok(!hub.inbox(a.row).events.some((e) => e.type === 'agent.offline'), 'agent 自己看不到');
+
+  hub.touchAgent(hub.authAgent(a.token));
+  assert.equal(presence(), 'active');
+  assert.ok(hub.eventsForOwner({ limit: 5 }).some((e) => e.type === 'agent.online'));
+});
+
+test('在线状态：守护进程断线超过宽限期就算离线', () => {
+  const { hub, join, advance } = setup();
+  const a = join('甲');
+  const presence = () => hub.listAgents().find((x) => x.id === a.agent.id).presence;
+  hub.markLive(a.row.id, 1, 'stream');
+  advance(60);
+  assert.equal(presence(), 'online');
+  hub.markLive(a.row.id, -1, 'stream');
+  advance(1);
+  assert.equal(presence(), 'active');
+  hub.markLive(a.row.id, 1, 'stream'); // 重连
+  hub.markLive(a.row.id, -1, 'stream');
+  advance(3);
+  assert.equal(presence(), 'offline');
+  assert.equal(hub.sweepPresence(), 1);
+  assert.match(hub.eventsForOwner({ limit: 1 })[0].summary, /断开了连接/);
+});
