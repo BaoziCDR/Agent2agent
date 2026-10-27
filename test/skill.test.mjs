@@ -15,7 +15,7 @@ function sandbox() {
   const dir = join(home, 'work');
   mkdirSync(join(dir, '.ahub'), { recursive: true });
   writeFileSync(join(dir, '.ahub', 'config.json'), JSON.stringify({ hub: 'http://10.0.0.5:7788', agent: 'A-1', name: '甲' }));
-  const run = (...args) => execFileSync(process.execPath, [CLI, ...args], { cwd: run.cwd ?? dir, env: { ...process.env, HOME: home, USERPROFILE: home }, encoding: 'utf8' });
+  const run = (...args) => execFileSync(process.execPath, [CLI, ...args], { cwd: run.cwd ?? dir, env: { ...process.env, HOME: home, USERPROFILE: home }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   return { home, dir, run };
 }
 
@@ -65,4 +65,13 @@ test('ahub skill：安装到项目目录、在子目录里也装到同一处、�
 test('安装包里带着 skill，版本与命令行一致', () => {
   const tgz = buildInstallPackage(join(import.meta.dirname, '..'));
   assert.ok(gunzipSync(tgz).includes('package/skill/SKILL.md'));
+});
+
+test('子命令 --help 只显示该命令的用法，写错参数给中文提示', () => {
+  const { run } = sandbox();
+  const help = run('skill', '--help');
+  assert.match(help, /ahub skill install/);
+  assert.ok(!help.includes('ahub serve'));
+  assert.match(run('artifact', 'patch', '-h'), /ahub artifact patch/);
+  assert.throws(() => run('skill', '--bogus'), (e) => /Unknown option '--bogus'/.test(e.stderr) && !/at /.test(e.stderr));
 });
