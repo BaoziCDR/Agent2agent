@@ -105,6 +105,8 @@ pre {
 }
 
 .brand {
+  white-space: nowrap;
+  flex-shrink: 0;
   font-weight: 650;
   font-size: 15px;
   width: 176px;
@@ -241,6 +243,38 @@ pre {
   }
   .brand {
     width: auto;
+  }
+  .nav-item {
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .nav-item .badge {
+    margin-left: 6px;
+  }
+  .main {
+    padding: 16px 16px 40px;
+  }
+  .board {
+    grid-auto-columns: minmax(78vw, 1fr);
+  }
+  .table th,
+  .table td {
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 600px) {
+  .topbar {
+    gap: 8px;
+    padding: 0 12px;
+  }
+  .topbar .select {
+    min-width: 0 !important;
+    flex: 1;
+  }
+  .topbar .spacer,
+  .conn-label {
+    display: none;
   }
 }
 
@@ -403,14 +437,16 @@ pre {
 .board {
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: minmax(228px, 1fr);
-  gap: 12px;
+  grid-auto-columns: minmax(172px, 1fr);
+  gap: 10px;
   overflow-x: auto;
   padding-bottom: 8px;
+  scroll-snap-type: x proximity;
   align-items: start;
 }
 
 .column {
+  scroll-snap-align: start;
   background: var(--panel-2);
   border-radius: var(--radius);
   padding: 10px;
@@ -507,6 +543,10 @@ pre {
   white-space: nowrap;
   padding-top: 1px;
   min-width: 42px;
+}
+
+.table-wrap {
+  overflow-x: auto;
 }
 
 table.table {

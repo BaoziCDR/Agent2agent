@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { get, type Message, post } from '../api';
 import { clock, useData, useHub } from '../ui';
 
@@ -6,6 +6,7 @@ export function Messages() {
   const { agents, projects, project, toast } = useHub();
   const [to, setTo] = useState('');
   const [text, setText] = useState('');
+  const textRef = useRef<HTMLTextAreaElement>(null);
   const [bProjectChoice, setBProject] = useState('');
   const bProject = bProjectChoice || (project ?? projects[0]?.id ?? '');
   const [bText, setBText] = useState('');
@@ -33,7 +34,7 @@ export function Messages() {
           </div>
           <div className="field">
             <label htmlFor="msg-text">内容</label>
-            <textarea id="msg-text" className="textarea" value={text} onChange={(e) => setText(e.target.value)} />
+            <textarea id="msg-text" ref={textRef} className="textarea" value={text} onChange={(e) => setText(e.target.value)} />
           </div>
           <button
             className="btn primary"
@@ -98,6 +99,18 @@ export function Messages() {
                 </div>
                 <div className="prose">{m.body}</div>
               </div>
+              {m.sender !== 'owner' && agents.some((a) => a.id === m.sender && a.status === 'active') && (
+                <button
+                  className="btn small"
+                  onClick={() => {
+                    setTo(m.sender);
+                    textRef.current?.focus();
+                    textRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                  }}
+                >
+                  回复
+                </button>
+              )}
             </div>
           ))}
         </div>
