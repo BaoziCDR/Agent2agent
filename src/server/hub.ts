@@ -1087,7 +1087,12 @@ export class Hub {
           e.data.to === 'working' &&
           (e.data.from === 'review' || (e.data.from === 'input_required' && e.actor !== me))
         );
-      case 'comment.created':
+      case 'comment.created': {
+        if (e.data.assignee !== me) return false;
+        // 评论点名给了别的 agent（没有 @ 你）就不用你处理；被 @ 了会另有一条 mention
+        const mentions = Array.isArray(e.data.mentions) ? (e.data.mentions as string[]) : [];
+        return !mentions.length;
+      }
       case 'task.unlocked':
         return e.data.assignee === me;
       default:
@@ -2172,7 +2177,16 @@ export class Hub {
     if (actor.kind === 'agent') {
       if (!parent) throw forbidden('agent 只能创建子任务，请提供 parent');
       if (!this.isMember(actor.agent.id, projectId)) throw forbidden('你不是该项目的成员');
-      if (parent.assignee_id !== actor.agent.id) throw forbidden(`只能为自己负责的任务创建子任务（${input.parent} 不在你名下）`);
+      if (parent.assignee_id !== actor.agent.id) {
+        // 在这个任务里被 @ 过的 agent 可以给自己建子任务，把分给它的那部分工作记下来
+        const me = agentCode(actor.agent.id);
+        const mentioned = this.db
+          .prepare(`SELECT 1 FROM events WHERE type = 'mention' AND task_id = ? AND EXISTS (SELECT 1 FROM json_each(events.audience) WHERE value = ?)`)
+          .get(parent.id, me);
+        if (!mentioned) throw forbidden(`只能为自己负责的任务、或在里面被 @ 过的任务创建子任务（${input.parent} 不在你名下）`);
+        if (input.assignee && this.requireAgentRow(input.assignee).id !== actor.agent.id) throw forbidden(`${input.parent} 不在你名下，只能建指派给自己的子任务`);
+        input = { ...input, assignee: me };
+      }
     }
     const project = this.requireProject(projectCode(projectId));
     if (project.status !== 'active') throw conflict('项目已归档，不能新建任务');
@@ -2767,15 +2781,14 @@ export class Hub {
     // agent 在任务下回复了，它在这个任务里接手的评论和指派都算处理完
     const self = parseId(author, 'A');
     if (self !== null) this.settleOwn(self, { task: t.id, comments: true });
+    const targets = [...new Set(this.mentionTargets(text, t.project_id))].filter((x) => x !== author);
     this.emit('comment.created', author, {
       task: t,
-      data: { comment_id: commentId, text, assignee, files: files.map((f) => f.name) },
+      // mentions：评论 @ 了哪些 agent。@ 了别人、没 @ 任务负责的 agent 时，不唤醒它（它在动态里照样看得到）
+      data: { comment_id: commentId, text, assignee, mentions: targets.filter((x) => x !== 'owner'), files: files.map((f) => f.name) },
       summary: `${who}在 ${code} 下评论：${text ? excerpt(text) : ''}${files.length ? `${text ? ' ' : ''}〔附件：${files.map((f) => f.name).join('、')}〕` : ''}`,
     });
-    const mentioned = new Set<string>();
-    for (const target of this.mentionTargets(text, t.project_id)) {
-      if (target === author || mentioned.has(target)) continue;
-      mentioned.add(target);
+    for (const target of targets) {
       this.emit('mention', author, {
         task: t,
         audience: target === 'owner' ? [] : [target],
