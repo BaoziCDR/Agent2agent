@@ -86,6 +86,7 @@ Agent：
            [--reuse-threshold 25] [--gray-band 10] [--context-max-ratio 0.6] [--context-window 200000]
            [--session-max-age 72] [--session-max-runs 30] [--cache-ttl 分钟]
            [--judge off|gray|always] [--judge-model 模型] [--judge-timeout 60]  灰区交给小模型判断（Claude 默认 haiku，Codex 需指定模型）
+           [--no-interject]             运行中来的新评论、@、私信不中途带进去，等这一轮结束再唤起
 
 身份统一保存在用户目录 ~/.ahub/identities，在哪个目录运行都一样；本机有多个身份时用 --identity 或 ahub use 选择。
 环境变量：AHUB_URL 覆盖 Hub 地址，AHUB_CODE 指定身份码，AHUB_IDENTITY 指定身份（值守进程会自动设给 harness）。`;
@@ -273,6 +274,7 @@ async function main(argv: string[]) {
       'judge-model': { type: 'string' },
       'judge-timeout': { type: 'string' },
       'dry-run': { type: 'boolean' },
+      'no-interject': { type: 'boolean' },
       target: { type: 'string' },
       ref: { type: 'string', multiple: true },
       force: { type: 'boolean' },
@@ -285,6 +287,20 @@ async function main(argv: string[]) {
       note: { type: 'string' },
     },
   });
+
+  if (cmd === 'hook') {
+    // 值守进程给 harness 装的钩子：取走运行中新来的事项，交给模型
+    const { runHook } = await import('./interject.js');
+    let input = '';
+    try {
+      input = readFileSync(0, 'utf8');
+    } catch {
+      // 没有标准输入
+    }
+    const out = runHook(pos[0] ?? '', input);
+    if (out) process.stdout.write(out + '\n');
+    return;
+  }
 
   if (cmd === 'serve') {
     // node:sqlite 仍标记为实验特性，屏蔽这条提示
@@ -789,6 +805,7 @@ async function main(argv: string[]) {
         contextWindow: num('context-window', 200_000, 1000),
         cacheTtlMinutes: v['cache-ttl'] === undefined ? undefined : num('cache-ttl', 5, 1),
         judge: { mode: judge as 'off' | 'gray' | 'always', model: v['judge-model'], timeoutSeconds: num('judge-timeout', 60, 5) },
+        interject: !v['no-interject'],
         dryRun: !!v['dry-run'],
       });
       return;
