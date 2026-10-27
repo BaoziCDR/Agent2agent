@@ -10,7 +10,7 @@ export interface MentionCandidate {
 }
 
 export const agentCandidates = (agents: Agent[], project?: string): MentionCandidate[] =>
-  agents.map((a) => ({
+  agents.filter((a) => a.status !== 'deleted').map((a) => ({
     code: a.id,
     name: a.name,
     tags: a.projects.find((p) => p.id === project)?.tags ?? [],

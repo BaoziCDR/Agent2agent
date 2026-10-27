@@ -131,6 +131,17 @@ function errorText(r: { status: number; text: string }) {
   }
 }
 
+/** 令牌被 Hub 拒绝（身份已停用、删除，或令牌已重置）时返回原因。 */
+function rejectedToken(cfg: CliConfig, r: { status: number; text: string }): string | null {
+  return cfg.token && r.status === 401 ? errorText(r) : null;
+}
+
+/** 把失效的身份从配置文件里清掉，Hub 地址留着，下次用新邀请码加入时不必再写 --hub。 */
+function forgetIdentity(path: string, cfg: CliConfig) {
+  for (const k of ['token', 'agent', 'name', 'project', 'last_seq'] as const) delete cfg[k];
+  if (existsSync(path)) saveConfig(path, cfg);
+}
+
 function need(v: string | undefined, what: string): string {
   if (!v) die(`缺少参数：${what}。运行 ahub --help 查看用法`);
   return v;
@@ -262,7 +273,13 @@ async function main(argv: string[]) {
         tags: list(v.tags),
         description: v.description,
       };
-      const res = await api(cfg, 'POST', '/api/v1/join', body, { md: false });
+      let res = await api(cfg, 'POST', '/api/v1/join', body, { md: false });
+      const stale = rejectedToken(cfg, res);
+      if (stale) {
+        console.log(`本地的身份 ${cfg.name ?? cfg.agent ?? ''} 已不能使用（${stale}），已从配置中清除，用邀请码创建新身份。`);
+        forgetIdentity(configPath, cfg);
+        res = await api(cfg, 'POST', '/api/v1/join', body, { md: false });
+      }
       const data = JSON.parse(ok(res)) as { agent: { id: string; name: string }; token: string | null; project: { id: string } };
       if (data.token) cfg.token = data.token;
       cfg.agent = data.agent.id;
@@ -585,13 +602,21 @@ async function main(argv: string[]) {
         if (v.hub) runCfg.hub = v.hub.replace(/\/+$/, '');
         else if (!runCfg.hub) runCfg.hub = cfg.hub;
         if (!runCfg.hub) die('第一次在这个目录运行，需要 --hub http://地址:端口');
-        const res = await api(runCfg, 'POST', '/api/v1/join', {
+        const joinBody = {
           invite: v.invite,
           name: v.name,
           platform: v.platform ?? (harness === 'claude' ? 'claude-code' : harness === 'codex' ? 'codex' : 'other'),
           skills: list(v.skills),
           tags: list(v.tags),
-        }, { md: false });
+        };
+        let res = await api(runCfg, 'POST', '/api/v1/join', joinBody, { md: false });
+        const stale = rejectedToken(runCfg, res);
+        if (stale) {
+          // 旧身份已被停用或删除：清掉它，用这次的邀请码创建新身份
+          console.log(`这个目录原来的身份 ${runCfg.name ?? runCfg.agent ?? ''} 已不能使用（${stale}），已从配置中清除，用邀请码创建新身份。`);
+          forgetIdentity(runPath, runCfg);
+          res = await api(runCfg, 'POST', '/api/v1/join', joinBody, { md: false });
+        }
         if (res.status >= 400 && runCfg.token) {
           // 重复运行同一条命令时邀请码已经用过，沿用已有身份继续值守
           let msg = res.text;
@@ -612,6 +637,24 @@ async function main(argv: string[]) {
         }
       }
       if (!runPath) die('这个目录还没有加入 Hub：先运行 ahub join，或者用 ahub run --hub 地址 --invite 邀请码 --name 名字 一步加入并值守');
+      if (!v.invite && runCfg.token) {
+        // 续用已有身份：先确认它还能用，被停用或删除了就清掉本地配置并说明怎么重新加入
+        let me: { status: number; text: string } | null = null;
+        try {
+          me = await api(runCfg, 'GET', '/api/v1/me', undefined, { md: false });
+        } catch {
+          // 暂时连不上 Hub 时交给值守进程自己重连
+        }
+        const stale = me && rejectedToken(runCfg, me);
+        if (stale) {
+          const who = runCfg.name ?? runCfg.agent ?? '';
+          forgetIdentity(runPath, runCfg);
+          die(
+            `这个目录的身份 ${who} 不能再使用：${stale}。已从 ${runPath} 中清除它。\n` +
+              `如需继续，请向负责人要一个新的邀请码，然后运行：ahub run --harness ${harness === 'custom' ? 'codex' : harness} --invite <邀请码> --name <名字>`,
+          );
+        }
+      }
       if (harness !== 'custom' && !v['dry-run']) {
         // 值守唤起的 harness 优先读本地 skill：没装就装到运行目录，旧版本自动更新到和 ahub 一致
         const runDir = v.cwd ?? process.cwd();

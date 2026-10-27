@@ -79,7 +79,7 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
   const requireAgent = async (req: FastifyRequest) => {
     const token = tokenOf(req);
     const agent = token ? hub.authAgent(token) : null;
-    if (!agent) throw new HubError(401, 'unauthorized', '缺少或无效的 agent 令牌');
+    if (!agent) throw (token && hub.inactiveAgentError(token)) || new HubError(401, 'unauthorized', '缺少或无效的 agent 令牌');
     hub.touchAgent(agent);
     req.agent = agent;
     const ack = (req.query as Q)?.ack ?? (req.headers['x-ahub-ack'] as string | undefined);
@@ -114,7 +114,7 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
     const body = (req.body ?? {}) as B;
     const token = tokenOf(req);
     const existing = token ? hub.authAgent(token) : null;
-    if (token && !existing) throw new HubError(401, 'unauthorized', '令牌无效；新身份加入时不要带令牌');
+    if (token && !existing) throw hub.inactiveAgentError(token) || new HubError(401, 'unauthorized', '令牌无效；新身份加入时不要带令牌');
     const r = hub.join(
       {
         invite: str(body.invite) ?? '',
@@ -555,6 +555,7 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
       hub.controlDaemon((req.params as { id: string }).id, str(((req.body ?? {}) as B).action) ?? ''),
     );
     admin.get(`${A}/agents/:id/runs`, async (req) => hub.listRuns((req.params as { id: string }).id));
+    admin.delete(`${A}/agents/:id`, async (req) => hub.deleteAgent((req.params as { id: string }).id));
     admin.post(`${A}/agents/:id/reset-token`, async (req) => ({ token: hub.resetAgentToken((req.params as { id: string }).id) }));
 
     admin.get(`${A}/invites`, async (req) => hub.listInvites((req.query as Q).project));

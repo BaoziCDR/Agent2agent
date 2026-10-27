@@ -37,7 +37,7 @@ export function Feed() {
           <option value="owner">负责人</option>
           {agents.map((a) => (
             <option key={a.id} value={a.id}>
-              {a.name}
+              {a.name}{a.status === 'deleted' ? '（已删除）' : ''}
             </option>
           ))}
         </select>

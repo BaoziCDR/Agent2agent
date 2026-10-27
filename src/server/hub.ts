@@ -401,6 +401,16 @@ export class Hub {
     return row;
   }
 
+  /** 令牌对应的身份已被停用或删除时，给出具体原因，方便命令行清掉失效的本地配置。 */
+  inactiveAgentError(token: string): HubError | null {
+    const row = this.db.prepare('SELECT * FROM agents WHERE token_hash = ?').get(hashToken(token)) as AgentRow | undefined;
+    if (!row || row.status === 'active') return null;
+    const who = `${row.name}（${agentCode(row.id)}）`;
+    return row.status === 'deleted'
+      ? new HubError(401, 'agent_deleted', `身份 ${who}已被负责人删除`)
+      : new HubError(401, 'agent_disabled', `身份 ${who}已被负责人停用`);
+  }
+
   /** 记录 agent 出现；如果之前已判定离线，通知负责人它回来了。 */
   touchAgent(agent: AgentRow) {
     const now = this.iso();
@@ -927,7 +937,7 @@ export class Hub {
       }));
       const lower = kw.toLowerCase();
       result.agents = this.listAgents(project)
-        .filter((a) => a.id.toLowerCase() === lower || a.name.toLowerCase().includes(lower))
+        .filter((a) => a.status !== 'deleted' && (a.id.toLowerCase() === lower || a.name.toLowerCase().includes(lower)))
         .slice(0, 10);
     }
     return result;
@@ -1255,6 +1265,7 @@ export class Hub {
   ) {
     const a = this.requireAgentRow(code);
     if (actor.kind === 'agent' && actor.agent.id !== a.id) throw forbidden('只能修改自己的资料');
+    if (a.status === 'deleted') throw conflict(`${a.name}（${code}）已被删除`);
     if (input.status !== undefined) {
       if (actor.kind !== 'owner') throw forbidden('只有负责人可以停用或启用 agent');
       if (!['active', 'disabled'].includes(input.status)) throw invalid('status 只能是 active 或 disabled');
@@ -1291,8 +1302,43 @@ export class Hub {
     });
   }
 
+  /**
+   * 删除已停用的 agent：身份不能再用，也不再出现在成员列表里；
+   * 它做过的任务、评论、交付物和动态都保留，仍然显示它的名字。手上没做完的任务放回任务池。
+   */
+  deleteAgent(code: string) {
+    const a = this.requireAgentRow(code);
+    if (a.status === 'deleted') throw conflict(`${a.name}（${code}）已经删除过了`);
+    if (a.status !== 'disabled') throw conflict(`请先停用 ${a.name}（${code}）再删除`);
+    return this.write(() => {
+      const open = this.db
+        .prepare("SELECT * FROM tasks WHERE assignee_id = ? AND status IN ('assigned','working','input_required') ORDER BY project_id, num")
+        .all(a.id) as unknown as TaskRow[];
+      const released: string[] = [];
+      for (const t of open) {
+        const tc = taskCode(t.project_id, t.num);
+        this.setStatus(t, 'owner', 'open', {
+          assignee: null,
+          lease: null,
+          summary: `${a.name}（${code}）已被删除，${tc}「${t.title}」放回任务池`,
+        });
+        released.push(tc);
+      }
+      this.db.prepare('DELETE FROM memberships WHERE agent_id = ?').run(a.id);
+      this.db.prepare("UPDATE agents SET status = 'deleted', can_invite = 0, daemon_paused = 0 WHERE id = ?").run(a.id);
+      this.activity.delete(a.id);
+      this.emit('agent.updated', 'owner', {
+        audience: [],
+        data: { agent: code, deleted: true, released },
+        summary: `负责人删除了 ${a.name}（${code}）${released.length ? `，${released.join('、')} 放回了任务池` : ''}`,
+      });
+      return { deleted: code, released };
+    });
+  }
+
   resetAgentToken(code: string): string {
     const a = this.requireAgentRow(code);
+    if (a.status === 'deleted') throw conflict(`${a.name}（${code}）已被删除`);
     const token = newToken('ahub');
     this.db.prepare('UPDATE agents SET token_hash = ? WHERE id = ?').run(hashToken(token), a.id);
     return token;
