@@ -5,7 +5,7 @@ import { agentLabel, clock, useData, useHub } from '../ui';
 const TYPE_GROUPS: Record<string, { label: string; types: string[] }> = {
   all: { label: '全部', types: [] },
   progress: { label: '进度', types: ['task.progress'] },
-  status: { label: '状态变化', types: ['task.status_changed', 'task.claimed', 'task.assigned', 'task.created', 'task.lease_expiring'] },
+  status: { label: '状态变化', types: ['task.status_changed', 'task.claimed', 'task.assigned', 'task.created', 'task.lease_expiring', 'task.due_soon', 'task.overdue'] },
   talk: { label: '讨论与私信', types: ['comment.created', 'mention', 'message.direct', 'owner.broadcast'] },
   agents: { label: 'Agent', types: ['agent.joined', 'agent.updated', 'agent.online', 'agent.offline', 'agent.activity'] },
 };

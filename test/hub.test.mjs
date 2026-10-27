@@ -189,6 +189,29 @@ test('租约到期只提醒一次，不自动收回', () => {
   assert.equal(hub.overview().counts.lost, 0);
 });
 
+test('截止提醒：快到期和逾期各提醒一次，改截止时间后重新提醒', () => {
+  const { hub, p1, join, advance } = setup();
+  const a = join('甲');
+  assert.throws(() => hub.createTask({ kind: 'owner' }, { project: p1.id, title: 'x', due_at: '明天' }), /截止时间格式不对/);
+  const t = hub.createTask({ kind: 'owner' }, { project: p1.id, title: 'x', due_at: '2026-10-26T12:00:00+08:00' }); // 04:00Z 前已过
+  const later = hub.createTask({ kind: 'owner' }, { project: p1.id, title: 'y', due_at: '2026-10-26T11:00:00Z' });
+  const sub = hub.createTask({ kind: 'owner' }, { parent: later.id, title: 'y-1' });
+  assert.equal(hub.getTask(sub.id).due_at, '2026-10-26T11:00:00.000Z');
+  hub.claim(a.row, t.id);
+  assert.equal(hub.sweepDue(), 1); // t 已逾期；later 还有 3 小时
+  assert.equal(hub.sweepDue(), 0);
+  const inbox = hub.inbox(a.row);
+  assert.ok(inbox.needs_action.some((e) => e.type === 'task.overdue' && e.task === t.id));
+  assert.equal(hub.overview().counts.overdue, 1);
+  advance(65); // 09:05，later 还有不到 2 小时
+  assert.equal(hub.sweepDue(), 2); // later 和 sub 快到期
+  hub.updateTask(t.id, { due_at: '2026-10-27T08:00:00Z' });
+  assert.equal(hub.overview().counts.overdue, 0);
+  advance(24 * 60);
+  assert.equal(hub.sweepDue(), 3);
+  assert.equal(hub.sweepDue(), 0);
+});
+
 test('乐观锁：版本号不一致时拒绝修改', () => {
   const { hub, p1 } = setup();
   const t = hub.createTask({ kind: 'owner' }, { project: p1.id, title: 'x' });

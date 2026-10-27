@@ -281,6 +281,7 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
             assignee: str(b.assignee) ?? null,
             required_tags: strArr(b.required_tags),
             depends_on: strArr(b.depends_on),
+            due_at: str(b.due_at) ?? null,
           },
         ),
       (r) => {

@@ -159,6 +159,8 @@ function migrate(db: Db) {
     (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).some((c) => c.name === col);
   // 在线状态：on 表示上次判定为在线/活跃/空闲，off 表示已判定离线；用于只在状态变化时通知一次
   if (!has('agents', 'presence')) db.exec("ALTER TABLE agents ADD COLUMN presence TEXT NOT NULL DEFAULT 'off'");
+  // 截止提醒：0 未提醒，1 已提醒快到期，2 已提醒逾期；改截止时间时清零
+  if (!has('tasks', 'due_warned')) db.exec('ALTER TABLE tasks ADD COLUMN due_warned INTEGER NOT NULL DEFAULT 0');
 }
 
 // 在一个事务里执行；出错回滚。node:sqlite 是同步的，所以不会和其他请求交错。

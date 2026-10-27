@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { get, post, type Task, type TaskStatus } from '../api';
-import { Modal, timeAgo, useData, useHub } from '../ui';
+import { Modal, dueInfo, timeAgo, useData, useHub } from '../ui';
 
 type Drop =
   | { verb: string; body?: Record<string, unknown>; done: string }
@@ -166,6 +166,10 @@ export function Board() {
                     <span className={`badge ${t.priority}`}>{t.priority}</span>
                   </div>
                   <div className="title">{t.title}</div>
+                  {(() => {
+                    const d = dueInfo(t);
+                    return d && <div className={`due ${d.cls}`} title={d.title}>⏰ {d.text}</div>;
+                  })()}
                   {['working', 'input_required', 'review'].includes(t.status) && (
                     <div className="progress" title={`${t.progress}%`}>
                       <div style={{ width: `${t.progress}%` }} />

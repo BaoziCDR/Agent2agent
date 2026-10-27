@@ -76,7 +76,7 @@ export interface Invite {
 }
 
 export interface Overview {
-  counts: { working: number; review: number; input_required: number; open: number; lost: number };
+  counts: { working: number; review: number; input_required: number; open: number; lost: number; overdue: number };
   attention: Task[];
   mentions: HubEvent[];
   agents_online: number;

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { get, patch, post, type Part, type TaskDetail } from '../api';
-import { Modal, StatusBadge, clock, splitList, timeAgo, useData, useHub } from '../ui';
+import { Modal, StatusBadge, clock, dateTime, dueInfo, splitList, timeAgo, toLocalInput, useData, useHub } from '../ui';
 import { MentionText, MentionTextarea, agentCandidates } from '../mention';
 
 const fileSize = (n: number) => (n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`);
@@ -148,7 +148,15 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
               )}
               {t.status === 'input_required' && <p style={{ color: 'var(--bad)' }}>阻塞原因：{t.block_reason}</p>}
               {t.lease_until && !closed && <div className="faint">租约到期：{clock(t.lease_until)}</div>}
-              {t.due_at && <div className="faint">截止：{clock(t.due_at)}</div>}
+              {t.due_at && (
+                <div className="faint">
+                  截止：{dateTime(t.due_at)}
+                  {(() => {
+                    const d = dueInfo(t);
+                    return d?.cls && <span className={`due ${d.cls}`} style={{ marginLeft: 6 }}>{d.text}</span>;
+                  })()}
+                </div>
+              )}
               {t.depends_on.length > 0 && (
                 <div className="faint">
                   前置任务：
@@ -342,6 +350,7 @@ function EditTask({ task, onClose, onSaved }: { task: TaskDetail; onClose: () =>
   const [acceptance, setAcceptance] = useState(task.acceptance.join('\n'));
   const [priority, setPriority] = useState(task.priority);
   const [tags, setTags] = useState(task.required_tags.join(', '));
+  const [due, setDue] = useState(toLocalInput(task.due_at));
   return (
     <Modal title={`编辑 ${task.id}`} onClose={onClose}>
       <div className="field">
@@ -369,6 +378,10 @@ function EditTask({ task, onClose, onSaved }: { task: TaskDetail; onClose: () =>
           <label htmlFor="ed-tags">能力标签</label>
           <input id="ed-tags" className="input" value={tags} onChange={(e) => setTags(e.target.value)} />
         </div>
+        <div className="field">
+          <label htmlFor="ed-due">截止时间</label>
+          <input id="ed-due" type="datetime-local" className="input" value={due} onChange={(e) => setDue(e.target.value)} />
+        </div>
       </div>
       <div className="btn-row">
         <button
@@ -382,6 +395,7 @@ function EditTask({ task, onClose, onSaved }: { task: TaskDetail; onClose: () =>
                 acceptance: acceptance.split('\n').map((s) => s.trim()).filter(Boolean),
                 priority,
                 required_tags: splitList(tags),
+                ...(due !== toLocalInput(task.due_at) ? { due_at: due ? new Date(due).toISOString() : null } : {}),
                 version: task.version,
               });
               toast('已保存');

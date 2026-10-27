@@ -70,6 +70,8 @@ export type EventType =
   | 'task.status_changed'
   | 'task.progress'
   | 'task.lease_expiring'
+  | 'task.due_soon'
+  | 'task.overdue'
   | 'task.deliverable'
   | 'comment.created'
   | 'message.direct'
