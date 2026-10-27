@@ -1272,3 +1272,48 @@ table.table {
 .chip-x:hover {
   color: var(--bad);
 }
+
+/* ── 指派推荐 ── */
+.suggest {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.suggest-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.suggest-item:hover {
+  border-color: var(--accent);
+}
+
+.suggest-item.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.suggest-why {
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 220px;
+}
+
+.suggest-why.warn {
+  color: var(--warn);
+}

@@ -389,6 +389,10 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
       const csv = tasksCsv(hub, (req.query as Q).project);
       return reply.type('text/csv; charset=utf-8').send(csv);
     });
+    admin.get(`${A}/recommend`, async (req) => {
+      const q = req.query as Q;
+      return hub.recommend({ project: q.project, task: q.task, title: q.title, tags: q.tags?.split(/[,，\s]+/) });
+    });
     admin.get(`${A}/stats`, async (req) => {
       const q = req.query as Q;
       return hub.stats(q.project, Math.min(Math.max(Number(q.days) || 14, 1), 90));

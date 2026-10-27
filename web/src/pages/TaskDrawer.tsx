@@ -3,6 +3,7 @@ import { get, patch, post, uploadFile, type Part, type TaskDetail, type Uploaded
 import { Modal, StatusBadge, clock, dateTime, dueInfo, splitList, timeAgo, toLocalInput, useData, useHub } from '../ui';
 import { MentionTextarea, agentCandidates } from '../mention';
 import { Markdown } from '../markdown';
+import { Suggest, useRecommend } from '../suggest';
 
 const fileSize = (n: number) => (n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`);
 
@@ -84,6 +85,7 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
     }
   };
 
+  const recs = useRecommend({ task: id }, t?.status === 'open' && !t.assignee);
   const members = t ? agents.filter((a) => a.status === 'active' && a.projects.some((p) => p.id === t.project)) : [];
   const closed = t && ['completed', 'canceled'].includes(t.status);
 
@@ -187,6 +189,9 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
                 {t.assignee ? `${t.assignee_name}（${t.assignee}）` : '未指派'}
                 {t.required_tags.length > 0 && <span className="faint"> · 需要：{t.required_tags.join('、')}</span>}
               </div>
+              {!t.assignee && t.status === 'open' && (
+                <Suggest list={recs} label="推荐指派" onPick={(a) => void act('assign', { agent: a }, '已指派')} />
+              )}
               {t.status !== 'open' && t.status !== 'draft' && (
                 <div style={{ marginTop: 8 }}>
                   <div className="progress">

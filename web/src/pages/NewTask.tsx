@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { del, get, post, type Task, type Template } from '../api';
 import { Modal, splitList, useData, useHub } from '../ui';
+import { Suggest, useRecommend } from '../suggest';
 
 const lines = (s: string) =>
   s
@@ -30,6 +31,7 @@ export function NewTask() {
   const [saving, setSaving] = useState<string | null>(null);
   const { data: templates, reload: reloadTemplates } = useData(() => get<Template[]>('/templates'), []);
   const tpl = templates?.find((t) => String(t.id) === tplId);
+  const recs = useRecommend({ project: target, tags, title }, mode === 'single');
 
   const applyTemplate = (id: string) => {
     setTplId(id);
@@ -218,6 +220,7 @@ export function NewTask() {
                     </option>
                   ))}
                 </select>
+                <Suggest list={recs} selected={assignee} onPick={(id) => setAssignee(assignee === id ? '' : id)} />
               </div>
               <div className="field">
                 <label htmlFor="nt-deps">前置任务</label>

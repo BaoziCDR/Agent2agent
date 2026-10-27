@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { get, post, type Task, type TaskStatus } from '../api';
 import { Modal, dueInfo, timeAgo, useData, useHub } from '../ui';
 import { Graph } from './Graph';
+import { Suggest, useRecommend } from '../suggest';
 
 type Drop = { verb: string; body?: Record<string, unknown>; done: string } | { dialog: 'assign' | 'reject' | 'cancel' };
 
@@ -104,6 +105,7 @@ export function Board() {
     } else void act(t, a.verb, a.body, a.done);
   };
 
+  const recs = useRecommend({ task: pending?.task.id }, pending?.dialog === 'assign');
   const members = pending ? agents.filter((a) => a.status === 'active' && a.projects.some((p) => p.id === pending.task.project)) : [];
 
   const columns = COLUMNS.filter((c) => showClosed || c.status !== 'canceled' || dragging).filter(
@@ -269,6 +271,7 @@ export function Board() {
                   </option>
                 ))}
               </select>
+              <Suggest list={recs} selected={text} onPick={setText} />
             </div>
           ) : (
             <div className="field">
