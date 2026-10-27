@@ -240,6 +240,9 @@ const editableText = (parts: Part[]) => {
   return texts.length === 1 && parts.length === 1 ? texts[0].text! : null;
 };
 
+/** 预设名称会写进启动命令的引号里，去掉会破坏命令的字符。 */
+const inviteName = (name?: string) => (name ?? '').trim().replace(/["`$\\]/g, '').slice(0, 40);
+
 const countOf = (text: string, part: string) => {
   let n = 0;
   for (let i = text.indexOf(part); i >= 0; i = text.indexOf(part, i + 1)) n++;
@@ -988,15 +991,18 @@ export class Hub {
 
   // ───────────── 邀请与加入 ─────────────
 
-  createInvite(input: { project: string; tags?: string[]; max_uses?: number; hours?: number; note?: string }, createdBy = 'owner') {
+  createInvite(
+    input: { project: string; tags?: string[]; max_uses?: number; hours?: number; note?: string; name?: string },
+    createdBy = 'owner',
+  ) {
     const p = this.requireProject(input.project);
     const code = newInviteCode();
     const expires = this.iso((input.hours ?? 24) * 60);
     this.db
       .prepare(
-        'INSERT INTO invites (code, project_id, tags, max_uses, expires_at, note, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO invites (code, project_id, tags, max_uses, expires_at, note, agent_name, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
-      .run(code, p.id, JSON.stringify(input.tags ?? []), input.max_uses ?? 1, expires, input.note ?? '', createdBy, this.iso());
+      .run(code, p.id, JSON.stringify(input.tags ?? []), input.max_uses ?? 1, expires, input.note ?? '', inviteName(input.name), createdBy, this.iso());
     return this.inviteView(code);
   }
 
@@ -1019,9 +1025,9 @@ export class Hub {
     const note = input.note?.trim();
     if (!note) throw invalid('请说明需要什么样的 agent、用来做什么（note）');
     const me = agentCode(agent.id);
-    const invite = this.createInvite({ project, tags: input.tags ?? [], max_uses: 1, hours: 24, note: `${agent.name}：${note}` }, me);
+    const invite = this.createInvite({ project, tags: input.tags ?? [], max_uses: 1, hours: 24, note: `${agent.name}：${note}`, name: input.name }, me);
     const harness = input.harness && /^[\w-]+$/.test(input.harness) ? input.harness : 'codex';
-    const name = input.name?.trim().replace(/["`$\\]/g, '') || '新 agent';
+    const name = invite.agent_name || '新 agent';
     const command = `ahub run --hub ${hubUrl} --invite ${invite.code} --name "${name}" --harness ${harness}`;
     const text = [
       `${t ? '@负责人 ' : ''}需要一个新 agent：${note}`,
@@ -1047,6 +1053,7 @@ export class Hub {
       expires_at: string;
       revoked: number;
       note: string;
+      agent_name: string;
       created_by: string;
       created_at: string;
     };
@@ -1059,6 +1066,8 @@ export class Hub {
       uses: r.uses,
       expires_at: r.expires_at,
       note: r.note,
+      /** 预设的 agent 名称，加入时没写 name 就用它 */
+      agent_name: r.agent_name,
       created_by: r.created_by,
       created_at: r.created_at,
       valid: !r.revoked && !expired && r.uses < r.max_uses,
@@ -1097,7 +1106,7 @@ export class Hub {
   ): { agent: AgentView; token: string | null; project: ProjectView; briefing: { project: ProjectView & { description: string } } } {
     const code = (input.invite ?? '').trim().toUpperCase();
     const inv = this.db.prepare('SELECT * FROM invites WHERE code = ?').get(code) as
-      | { code: string; project_id: number; tags: string; max_uses: number; uses: number; expires_at: string; revoked: number }
+      | { code: string; project_id: number; tags: string; max_uses: number; uses: number; expires_at: string; revoked: number; agent_name: string }
       | undefined;
     if (!inv) throw invalid('邀请码无效');
     if (inv.revoked) throw invalid('邀请码已被撤销');
@@ -1110,8 +1119,8 @@ export class Hub {
       let agent = existing;
       let token: string | null = null;
       if (!agent) {
-        const name = input.name?.trim();
-        if (!name) throw invalid('请提供 agent 名称（name）');
+        const name = input.name?.trim() || inv.agent_name;
+        if (!name) throw invalid('请提供 agent 名称（name）：这个邀请码没有预设名称，给自己起一个简短、能区分的名字');
         token = newToken('ahub');
         const r = this.db
           .prepare(
