@@ -161,7 +161,7 @@ test('子任务：创建它的 agent 可以验收、退回，没人开工时可�
   // 取消：只在没人开工时
   const s2 = hub.createTask(asA, { parent: parent.id, title: '子2', assignee: b.agent.id });
   const s3 = hub.createTask(asA, { parent: parent.id, title: '子3', assignee: b.agent.id });
-  assert.equal(hub.cancel(s2.id, '不需要了', asA).status, 'canceled');
+  assert.equal(hub.cancel(s2.id, '不需要了', asA).status, 'archived');
   hub.accept(b.row, s3.id);
   assert.throws(() => hub.cancel(s3.id, '', asA), /已经有人开工/);
 
@@ -483,7 +483,7 @@ test('前置任务结束后通知下游：有负责人的唤起负责人，任�
   hub.cancel(up2.id, '不需要了');
   const ev = unlocked().find((e) => e.task === down.id);
   assert.deepEqual(ev.audience, [b.agent.id]);
-  assert.match(ev.summary, /前置任务 P1-T2 已取消，P1-T3「实现接口」的前置任务已全部结束，可以开始了/);
+  assert.match(ev.summary, /前置任务 P1-T2 已归档，P1-T3「实现接口」的前置任务已全部结束，可以开始了/);
   // 对乙来说这是需要处理的事项
   assert.ok(hub.inbox(b.row).needs_action.some((e) => e.type === 'task.unlocked' && e.task === down.id));
   assert.ok(!hub.inbox(a.row).needs_action.some((e) => e.type === 'task.unlocked'));
@@ -600,7 +600,7 @@ test('任务引用：同项目任意状态可引用，详情列出引用和被�
   const t = hub.createTask({ kind: 'owner' }, { project: p1.id, title: '新方案', assignee: a.agent.id, refs: [old.id, canceled.id, old.id] });
   assert.deepEqual(t.refs, [old.id, canceled.id]);
   const d = hub.getTask(t.id);
-  assert.deepEqual(d.ref_tasks.map((r) => [r.id, r.status]), [[old.id, 'completed'], [canceled.id, 'canceled']]);
+  assert.deepEqual(d.ref_tasks.map((r) => [r.id, r.status]), [[old.id, 'completed'], [canceled.id, 'archived']]);
   assert.deepEqual(hub.getTask(old.id).referenced_by.map((r) => r.id), [t.id]);
   const assigned = hub.inbox(a.row).needs_action.find((e) => e.type === 'task.assigned' && e.summary.includes('新方案'));
   assert.match(assigned.summary, new RegExp(`参考任务：${old.id}、${canceled.id}`));
@@ -612,8 +612,8 @@ test('任务引用：同项目任意状态可引用，详情列出引用和被�
   assert.throws(() => hub.updateTask(t.id, { refs: [t.id] }), /不能引用自己/);
   assert.deepEqual(hub.updateTask(t.id, { refs: [canceled.id] }).refs, [canceled.id]);
 
-  // agent 不用被引用也能查看同项目的历史任务（已完成、已取消）
-  assert.equal(hub.getTaskFor({ kind: 'agent', agent: a.row }, canceled.id).status, 'canceled');
+  // agent 不用被引用也能查看同项目的历史任务（已完成、已归档）
+  assert.equal(hub.getTaskFor({ kind: 'agent', agent: a.row }, canceled.id).status, 'archived');
   const history = hub.listTasks({ kind: 'agent', agent: a.row }, { status: 'completed,canceled' }).map((x) => x.id);
   assert.deepEqual(history, [old.id, canceled.id]);
   // agent 拆子任务时也能引用
@@ -798,4 +798,80 @@ test('智能领取：做过相关任务的加分，正在忙的减分', () => {
   const busy = hub.inbox(b.row).claimable.find((x) => x.id === child.id).fit;
   assert.equal(busy.rank, 2);
   assert.ok(busy.warnings.includes('正在处理别的事'));
+});
+
+test('归档：手动归档（原来的取消）和已完成 48 小时没有动静后自动归档', () => {
+  const { hub, p1, join, advance } = setup();
+  const a = join('甲');
+  const done = (title) => {
+    const t = hub.createTask({ kind: 'owner' }, { project: p1.id, title, assignee: a.agent.id });
+    hub.accept(a.row, t.id);
+    hub.submit(a.row, t.id, { summary: '好了' });
+    hub.approve(t.id);
+    return t;
+  };
+  const quiet = done('做完就没人管了');
+  const busy = done('做完还在讨论');
+  const manual = hub.createTask({ kind: 'owner' }, { project: p1.id, title: '不做了' });
+  const m = hub.cancel(manual.id, '方向变了');
+  assert.equal(m.status, 'archived');
+  assert.equal(m.archive_kind, 'manual');
+  assert.equal(m.status_label, '已归档（手动）');
+  assert.throws(() => hub.cancel(manual.id), /已经已归档（手动）/);
+
+  assert.equal(hub.archiveSettings().auto_archive_hours, 48);
+  advance(47 * 60);
+  hub.comment({ kind: 'owner' }, busy.id, '后续再看看');
+  assert.equal(hub.sweepArchive(), 0);
+  advance(2 * 60);
+  // quiet 完成后 49 小时没有动静，自动归档；busy 47 小时时还有评论，不算
+  assert.equal(hub.sweepArchive(), 1);
+  const q = hub.getTask(quiet.id);
+  assert.equal(q.status, 'archived');
+  assert.equal(q.archive_kind, 'auto');
+  assert.equal(q.status_label, '已归档（自动）');
+  assert.equal(hub.getTask(busy.id).status, 'completed');
+  // 自动归档只通知负责人
+  const ev = hub.eventsForOwner({ limit: 50 }).find((e) => e.type === 'task.status_changed' && e.task === quiet.id && e.data.to === 'archived');
+  assert.deepEqual(ev.audience, []);
+  assert.equal(ev.data.archive_kind, 'auto');
+  assert.match(ev.summary, /48 小时没有动静，已自动归档/);
+  assert.ok(!hub.inbox(a.row).needs_action.some((e) => e.task === quiet.id && e.data.to === 'archived'));
+
+  // 老的 status=canceled 查询仍然可用
+  assert.deepEqual(hub.listTasks({ kind: 'owner' }, { status: 'canceled' }).map((t) => t.id), [quiet.id, manual.id]);
+
+  // 设置：改成 0 不自动归档；超出范围报错
+  assert.throws(() => hub.setArchiveSettings({ auto_archive_hours: -1 }), /0 到 8760/);
+  assert.equal(hub.setArchiveSettings({ auto_archive_hours: 0 }).auto_archive_hours, 0);
+  advance(100 * 60);
+  assert.equal(hub.sweepArchive(), 0);
+  assert.equal(hub.setArchiveSettings({ auto_archive_hours: 24 }).auto_archive_hours, 24);
+  assert.equal(hub.sweepArchive(), 1);
+  assert.equal(hub.getTask(busy.id).archive_kind, 'auto');
+});
+
+test('归档迁移：老数据里已取消的任务迁为手动归档', async () => {
+  const { mkdtempSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join: pj } = await import('node:path');
+  const file = pj(mkdtempSync(pj(tmpdir(), 'ahub-mig-')), 'hub.db');
+  let db = openDb(file);
+  const hub = new Hub(db);
+  const p = hub.createProject({ name: '项目' });
+  const t = hub.createTask({ kind: 'owner' }, { project: p.id, title: '老任务' });
+  const keep = hub.createTask({ kind: 'owner' }, { project: p.id, title: '还在做' });
+  db.exec("UPDATE tasks SET status = 'canceled', updated_at = '2026-01-02T03:04:05.000Z' WHERE num = 1");
+  db.exec('ALTER TABLE tasks DROP COLUMN archive_kind');
+  db.exec('ALTER TABLE tasks DROP COLUMN archived_at');
+  db.close();
+  db = openDb(file);
+  const h = new Hub(db);
+  const v = h.getTask(t.id);
+  assert.equal(v.status, 'archived');
+  assert.equal(v.archive_kind, 'manual');
+  assert.equal(v.archived_at, '2026-01-02T03:04:05.000Z');
+  assert.equal(h.getTask(keep.id).status, 'open');
+  assert.equal(h.getTask(keep.id).archive_kind, null);
+  db.close();
 });

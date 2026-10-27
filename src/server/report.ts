@@ -46,7 +46,7 @@ export function renderReport(hub: Hub, opts: { project?: string; days: number; n
   const rowsOf = [...finished.keys()].map((id) => hub.db.prepare('SELECT project_id, num FROM tasks WHERE id = ?').get(id) as { project_id: number; num: number });
   const completed = rowsOf
     .map((r, i) => ({ task: tasks.find((t) => t.id === taskCode(r.project_id, r.num)), id: [...finished.keys()][i] }))
-    .filter((x): x is { task: TaskView; id: number } => !!x.task && x.task.status === 'completed');
+    .filter((x): x is { task: TaskView; id: number } => !!x.task && (x.task.status === 'completed' || x.task.archive_kind === 'auto'));
 
   const by = (st: string) => tasks.filter((t) => t.status === st);
   const nowIso = now.toISOString();

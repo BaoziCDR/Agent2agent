@@ -64,6 +64,9 @@ export interface Task {
   acceptance: string[];
   status: TaskStatus;
   status_label: string;
+  /** 归档方式：manual 手动归档，auto 已完成后长时间没动静自动归档；没归档时为 null */
+  archive_kind: 'manual' | 'auto' | null;
+  archived_at: string | null;
   priority: 'P0' | 'P1' | 'P2' | 'P3';
   assignee: string | null;
   assignee_name: string | null;

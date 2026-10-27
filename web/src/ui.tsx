@@ -141,7 +141,9 @@ export function StatusBadge({ task }: { task: Pick<Task, 'status' | 'status_labe
           ? 'warn'
           : task.status === 'working'
             ? 'accent'
-            : '';
+            : task.status === 'archived'
+              ? 'muted'
+              : '';
   return <span className={`badge ${cls}`}>{task.status_label}</span>;
 }
 

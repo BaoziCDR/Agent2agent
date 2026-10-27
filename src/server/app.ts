@@ -330,10 +330,11 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
         return `已让出 ${x.task}。${x.remaining ? `还有 ${x.remaining} 个 agent 可以领取它。` : '没有其他 agent 可以自动领取了，已提醒负责人。'}\n`;
       },
     );
-    // 创建子任务的 agent 验收、退回、取消自己拆出来的子任务（规则见 hub.reviewer）
+    // 创建子任务的 agent 验收、退回、归档自己拆出来的子任务（规则见 hub.reviewer）；归档沿用 cancel 路径，archive 是别名
     action('/api/v1/tasks/:id/approve', (a, id, b) => hub.approve(id, str(b.comment), { kind: 'agent', agent: a }), taskDone('验收通过'));
     action('/api/v1/tasks/:id/reject', (a, id, b) => hub.reject(id, str(b.reason) ?? '', { kind: 'agent', agent: a }), taskDone('退回'));
-    action('/api/v1/tasks/:id/cancel', (a, id, b) => hub.cancel(id, str(b.reason), { kind: 'agent', agent: a }), taskDone('取消'));
+    for (const verb of ['cancel', 'archive'])
+      action(`/api/v1/tasks/:id/${verb}`, (a, id, b) => hub.cancel(id, str(b.reason), { kind: 'agent', agent: a }), taskDone('归档'));
     action('/api/v1/tasks/:id/accept', (a, id) => hub.accept(a, id), taskDone('接受'));
     action('/api/v1/tasks/:id/decline', (a, id, b) => hub.decline(a, id, str(b.reason) ?? ''), taskDone('拒绝'));
     action(
@@ -638,6 +639,11 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
       const num = (v: unknown) => (v === undefined || v === null || v === '' ? undefined : Number(v));
       return hub.setPresenceSettings({ idle_minutes: num(b.idle_minutes), stream_grace_minutes: num(b.stream_grace_minutes) });
     });
+    admin.get(`${A}/archive-settings`, async () => hub.archiveSettings());
+    admin.patch(`${A}/archive-settings`, async (req) => {
+      const v = ((req.body ?? {}) as B).auto_archive_hours;
+      return hub.setArchiveSettings({ auto_archive_hours: v === undefined || v === null || v === '' ? undefined : Number(v) });
+    });
     admin.get(`${A}/agents/:id/sessions`, async (req) => hub.listSessions((req.params as { id: string }).id));
 
     admin.get(`${A}/invites`, async (req) => hub.listInvites((req.query as Q).project));
@@ -705,6 +711,7 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
     ownerAction('approve', (id, b) => hub.approve(id, str(b.comment)));
     ownerAction('reject', (id, b) => hub.reject(id, str(b.reason) ?? ''));
     ownerAction('cancel', (id, b) => hub.cancel(id, str(b.reason)));
+    ownerAction('archive', (id, b) => hub.cancel(id, str(b.reason)));
     ownerAction('answer', (id, b) => hub.answer(id, str(b.answer) ?? ''));
     ownerAction('unblock', (id, b) => hub.unblock({ kind: 'owner' }, id, str(b.note)));
     ownerAction('comments', (id, b) => hub.comment({ kind: 'owner' }, id, str(b.text) ?? '', strArr(b.files)));

@@ -254,9 +254,6 @@ pre {
   .main {
     padding: 16px 16px 40px;
   }
-  .board {
-    grid-auto-columns: minmax(78vw, 1fr);
-  }
   .table th,
   .table td {
     white-space: nowrap;
@@ -438,9 +435,7 @@ pre {
 }
 
 .board {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(172px, 1fr);
+  display: flex;
   gap: 10px;
   overflow-x: auto;
   padding-bottom: 8px;
@@ -449,11 +444,20 @@ pre {
 }
 
 .column {
+  flex: 1 1 0;
+  min-width: 172px;
   scroll-snap-align: start;
   background: var(--panel-2);
   border-radius: var(--radius);
   padding: 10px;
   min-height: 120px;
+}
+
+/* 空列收窄，把宽度让给有任务的列 */
+.column.col-empty {
+  flex: 0 0 auto;
+  min-width: 112px;
+  width: 112px;
 }
 
 .column.droppable {
@@ -2193,5 +2197,114 @@ table.table {
   }
   .tab {
     min-height: 40px;
+  }
+}
+
+/* 看板筛选栏 */
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.chip-group,
+.date-filter {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.filter-chip {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text-2);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.filter-chip:hover {
+  border-color: var(--accent);
+}
+
+.filter-chip.on {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.filter-check {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.filter-count {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.badge.archive-auto {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.badge.archive-manual {
+  background: var(--panel-2);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+}
+
+.graph-label {
+  font-size: 12px;
+  fill: var(--text-3);
+}
+
+.graph-pri {
+  margin-left: 6px;
+  font-weight: 600;
+}
+
+.graph-pri.P0 {
+  color: var(--bad);
+}
+
+.graph-pri.P1 {
+  color: var(--warn);
+}
+
+@media (max-width: 600px) {
+  .filter-bar .input,
+  .filter-bar .select {
+    flex: 1 1 140px;
+    width: auto !important;
+  }
+  .filter-count {
+    margin-left: 0;
+  }
+  .date-filter {
+    width: 100%;
+  }
+}
+
+@media (max-width: 960px) {
+  .column {
+    min-width: 78vw;
+  }
+  .column.col-empty {
+    min-width: 40vw;
+    width: 40vw;
   }
 }

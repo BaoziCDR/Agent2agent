@@ -137,7 +137,7 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
 
   const recs = useRecommend({ task: id }, t?.status === 'open' && !t.assignee);
   const members = t ? agents.filter((a) => a.status === 'active' && a.projects.some((p) => p.id === t.project)) : [];
-  const closed = t && ['completed', 'canceled'].includes(t.status);
+  const closed = t && ['completed', 'archived'].includes(t.status);
 
   return (
     <>
@@ -227,7 +227,7 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
                 )}
                 {!closed && (
                   <button className="btn danger" onClick={() => (setReason(''), setDialog('cancel'))}>
-                    取消任务
+                    归档任务
                   </button>
                 )}
               </div>
@@ -545,14 +545,14 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
         </Modal>
       )}
       {dialog === 'cancel' && (
-        <Modal title="取消任务" onClose={() => setDialog(null)}>
+        <Modal title="归档任务" onClose={() => setDialog(null)}>
           <div className="field">
             <label htmlFor="cancel-reason">原因（可选）</label>
             <input id="cancel-reason" className="input" value={reason} onChange={(e) => setReason(e.target.value)} autoFocus />
           </div>
           <div className="btn-row">
-            <button className="btn danger" onClick={async () => (await act('cancel', { reason }, '已取消')) && setDialog(null)}>
-              确认取消
+            <button className="btn danger" onClick={async () => (await act('cancel', { reason }, '已归档')) && setDialog(null)}>
+              确认归档
             </button>
             <button className="btn" onClick={() => setDialog(null)}>
               返回
