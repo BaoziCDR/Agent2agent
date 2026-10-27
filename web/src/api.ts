@@ -115,6 +115,8 @@ export interface Invite {
   uses: number;
   expires_at: string;
   note: string;
+  /** 预设的 agent 名称（空表示由 agent 自己起名） */
+  agent_name: string;
   /** owner 或创建它的 agent 编号 */
   created_by: string;
   created_at: string;

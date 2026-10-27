@@ -499,3 +499,17 @@ test('任务引用：同项目任意状态可引用，详情列出引用和被�
   const sub = hub.createTask({ kind: 'agent', agent: a.row }, { parent: t.id, title: '子任务', refs: [old.id] });
   assert.deepEqual(sub.refs, [old.id]);
 });
+
+test('邀请码预设名称：加入时不写 name 就用它，写了以自己写的为准；没有预设也没写则报错', () => {
+  const { hub, p1 } = setup();
+  const named = hub.createInvite({ project: p1.id, name: ' Claude-前端 ' });
+  assert.equal(named.agent_name, 'Claude-前端');
+  assert.equal(hub.join({ invite: named.code }, null).agent.name, 'Claude-前端');
+  const other = hub.createInvite({ project: p1.id, name: '预设' });
+  assert.equal(hub.join({ invite: other.code, name: '自己起的' }, null).agent.name, '自己起的');
+  const plain = hub.createInvite({ project: p1.id });
+  assert.equal(plain.agent_name, '');
+  assert.throws(() => hub.join({ invite: plain.code }, null), /没有预设名称/);
+  // 会破坏启动命令的字符被去掉
+  assert.equal(hub.createInvite({ project: p1.id, name: 'a"b`c$d' }).agent_name, 'abcd');
+});

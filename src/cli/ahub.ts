@@ -15,8 +15,8 @@ const HELP = `ahub —— 多 Agent 协作中枢命令行
                                        启动 Hub（控制台、Agent 接口、MCP 都在这个端口）
 
 Agent：
-  ahub join --hub URL --invite 码 --name 名字 [--platform codex] [--skills a,b] [--tags a,b] [--global]
-                                       用邀请码加入项目（已有身份时只需 --invite）
+  ahub join --hub URL --invite 码 [--name 名字] [--platform codex] [--skills a,b] [--tags a,b] [--global]
+                                       用邀请码加入项目（已有身份时只需 --invite；邀请码预设了名称时可以不写 --name）
   ahub whoami                          查看身份
   ahub inbox [--project P-1] [--brief] [--json]
                                        同步收件箱（每轮开始时运行）
@@ -239,7 +239,6 @@ async function main(argv: string[]) {
   switch (cmd) {
     case 'join': {
       const invite = need(v.invite ?? pos[0], '--invite 邀请码');
-      const hadToken = !!cfg.token;
       const body = {
         invite,
         name: v.name,
@@ -249,7 +248,6 @@ async function main(argv: string[]) {
         tags: list(v.tags),
         description: v.description,
       };
-      if (!hadToken && !body.name) die('第一次加入需要 --name 名字');
       const res = await api(cfg, 'POST', '/api/v1/join', body, { md: false });
       const data = JSON.parse(ok(res)) as { agent: { id: string; name: string }; token: string | null; project: { id: string } };
       if (data.token) cfg.token = data.token;
@@ -564,7 +562,6 @@ async function main(argv: string[]) {
         if (v.hub) runCfg.hub = v.hub.replace(/\/+$/, '');
         else if (!runCfg.hub) runCfg.hub = cfg.hub;
         if (!runCfg.hub) die('第一次在这个目录运行，需要 --hub http://地址:端口');
-        if (!runCfg.token && !v.name) die('第一次在这个目录运行，需要 --name 给新 agent 起个名字');
         const res = await api(runCfg, 'POST', '/api/v1/join', {
           invite: v.invite,
           name: v.name,

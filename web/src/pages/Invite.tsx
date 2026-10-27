@@ -2,14 +2,15 @@ import { useEffect, useState } from 'react';
 import { del, get, type Invite as InviteData, post } from '../api';
 import { CodeBox, Modal, agentLabel, clock, splitList, useData, useHub } from '../ui';
 
-function harnessPrompt(hub: string, code: string, platform: string, example: string, tags: string[]) {
+function harnessPrompt(hub: string, code: string, platform: string, name: string, tags: string[]) {
   const dir = platform === 'codex' ? '.codex/skills/ahub-collab' : '.claude/skills/ahub-collab';
+  const join = `ahub join --hub ${hub} --invite ${code} --name "${name || '<你的名字>'}" --platform ${platform}${tags.length ? ` --tags ${tags.join(',')}` : ''}`;
   return `请加入我的多 Agent 协作中枢（Hub），按它的规则领取任务、汇报进度、和其他 agent 协作。
 
 1. 安装命令行工具 ahub（已安装可跳过；Hub 升级后重新运行一次即可更新）：
    npm install -g ${hub}/ahub.tgz
-2. 在当前工作目录加入项目（名字自己起，简短、能区分）：
-   ahub join --hub ${hub} --invite ${code} --name "${example}" --platform ${platform}${tags.length ? ` --tags ${tags.join(',')}` : ''}
+2. 在当前工作目录加入项目${name ? `（你的名字已经定好：${name}）` : '（把 <你的名字> 换成你自己起的名字：简短、能看出你的平台和分工）'}：
+   ${join}
 3. 阅读接入说明：优先使用本地已安装的 ahub-collab skill（${dir}/SKILL.md）；没有的话运行
    ahub skill install
    安装（skill 内置在 ahub 里，版本与 ahub 一致），然后阅读它。也可以用 ahub skill show 直接查看。
@@ -39,6 +40,7 @@ export function InviteDialog({ onClose, onCreated }: { onClose: () => void; onCr
   const [uses, setUses] = useState(1);
   const [hours, setHours] = useState(24);
   const [note, setNote] = useState('');
+  const [name, setName] = useState('');
   const [created, setCreated] = useState<InviteData | null>(null);
   const [tab, setTab] = useState<'codex' | 'claude' | 'mcp' | 'other'>('codex');
   const { data: info } = useData(() => get<{ urls: string[] }>('/info'), []);
@@ -57,7 +59,7 @@ export function InviteDialog({ onClose, onCreated }: { onClose: () => void; onCr
 
   const create = async () => {
     try {
-      const inv = await post<InviteData>('/invites', { project: target, tags: splitList(tags), max_uses: uses, hours, note });
+      const inv = await post<InviteData>('/invites', { project: target, tags: splitList(tags), max_uses: uses, hours, note, name: uses === 1 ? name : '' });
       setCreated(inv);
       onCreated();
     } catch (err) {
@@ -67,8 +69,8 @@ export function InviteDialog({ onClose, onCreated }: { onClose: () => void; onCr
 
   const tagList = created?.tags ?? [];
   const prompts = created && {
-    codex: harnessPrompt(hub, created.code, 'codex', 'Codex-后端', tagList),
-    claude: harnessPrompt(hub, created.code, 'claude-code', 'Claude-前端', tagList),
+    codex: harnessPrompt(hub, created.code, 'codex', created.agent_name, tagList),
+    claude: harnessPrompt(hub, created.code, 'claude-code', created.agent_name, tagList),
     other: chatPrompt(hub, created.code),
   };
 
@@ -104,6 +106,17 @@ export function InviteDialog({ onClose, onCreated }: { onClose: () => void; onCr
             </div>
           </div>
           <div className="field">
+            <label htmlFor="iv-name">Agent 名称（可选）</label>
+            <input
+              id="iv-name"
+              className="input"
+              value={uses === 1 ? name : ''}
+              disabled={uses !== 1}
+              onChange={(e) => setName(e.target.value)}
+              placeholder={uses === 1 ? '如：Claude-前端；不填就让 agent 自己起名' : '可用多次的邀请码由每个 agent 自己起名'}
+            />
+          </div>
+          <div className="field">
             <label htmlFor="iv-note">备注</label>
             <input id="iv-note" className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="如：给笔记本上的 Codex" />
           </div>
@@ -126,7 +139,9 @@ export function InviteDialog({ onClose, onCreated }: { onClose: () => void; onCr
         <div>
           <div className="btn-row" style={{ justifyContent: 'space-between' }}>
             <div>
-              <div className="faint">邀请码（{created.project}，可用 {created.max_uses} 次，{clock(created.expires_at)} 前有效）</div>
+              <div className="faint">
+                邀请码（{created.project}，可用 {created.max_uses} 次，{clock(created.expires_at)} 前有效{created.agent_name ? `，预设名称 ${created.agent_name}` : ''}）
+              </div>
               <div className="invite-code">{created.code}</div>
             </div>
           </div>
@@ -211,7 +226,8 @@ export function InviteList({ version }: { version: number }) {
                 </td>
                 <td>{clock(i.expires_at)}</td>
                 <td>
-                  {i.note || '—'}
+                  {i.note || (i.agent_name ? '' : '—')}
+                  {i.agent_name && <div className="faint">预设名称：{i.agent_name}</div>}
                   {i.created_by !== 'owner' && <div className="faint">由 {agentLabel(agents, i.created_by)} 创建</div>}
                 </td>
                 <td>

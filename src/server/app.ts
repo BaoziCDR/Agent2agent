@@ -539,6 +539,7 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
         max_uses: b.max_uses === undefined ? undefined : Number(b.max_uses),
         hours: b.hours === undefined ? undefined : Number(b.hours),
         note: str(b.note),
+        name: str(b.name),
       });
     });
     admin.delete(`${A}/invites/:code`, async (req) => {
