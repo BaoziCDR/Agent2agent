@@ -13,7 +13,7 @@
 
 3. MCP（可选）：在工作目录运行 `claude mcp add ahub -- ahub mcp`，之后可以直接调用 `hub_sync`、`hub_progress` 等工具。
 
-4. 安装接入说明作为 Skill（可选）：把 Hub 提供的 `http://<Hub 地址>:7788/skill.md` 保存为 `.claude/skills/ahub-collab/SKILL.md`。
+4. 安装接入说明作为 Skill：在工作目录运行 `ahub skill install --target claude`（装到 `.claude/skills/ahub-collab/SKILL.md`，版本与 ahub 一致；升级 ahub 后运行 `ahub skill update`）。
 
 5. 值守模式（可选，推荐用于常驻的机器）：在工作目录运行
 
