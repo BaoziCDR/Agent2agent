@@ -1,6 +1,6 @@
 // 内置的接入说明 skill：随 ahub 一起打包，版本与命令行一致，不需要联网下载。
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -35,31 +35,45 @@ export function renderSkill(hub?: string): string {
   return text.slice(0, cut) + mark + text.slice(cut);
 }
 
-/** 各 harness 读取 skill 的位置：项目级在工作目录下，用户级在主目录下。 */
-export function skillPath(target: SkillTarget, scope: 'project' | 'user', projectDir: string): string {
-  const base = scope === 'user' ? homedir() : resolve(projectDir);
-  return join(base, target === 'claude' ? '.claude' : '.codex', 'skills', SKILL_NAME, 'SKILL.md');
+/** 各 harness 读取 skill 的位置：统一装在用户目录，在哪个目录运行都读同一份。 */
+export function skillPath(target: SkillTarget): string {
+  return join(homedir(), target === 'claude' ? '.claude' : '.codex', 'skills', SKILL_NAME, 'SKILL.md');
 }
 
 export interface SkillState {
   target: SkillTarget;
-  scope: 'project' | 'user';
   path: string;
   /** null 表示没装；'unknown' 表示不是 ahub 生成的 */
   version: string | null;
   current: boolean;
 }
 
-export function skillStates(projectDir: string): SkillState[] {
+function stateOf(target: SkillTarget, path: string, bundled: string): SkillState {
+  const version = existsSync(path) ? (VERSION_RE.exec(readFileSync(path, 'utf8'))?.[1] ?? 'unknown') : null;
+  return { target, path, version, current: version === bundled };
+}
+
+export function skillStates(): SkillState[] {
   const bundled = bundledVersion();
-  const out: SkillState[] = [];
-  for (const scope of ['project', 'user'] as const)
-    for (const target of SKILL_TARGETS) {
-      const path = skillPath(target, scope, projectDir);
-      const version = existsSync(path) ? (VERSION_RE.exec(readFileSync(path, 'utf8'))?.[1] ?? 'unknown') : null;
-      out.push({ target, scope, path, version, current: version === bundled });
-    }
-  return out;
+  return SKILL_TARGETS.map((target) => stateOf(target, skillPath(target), bundled));
+}
+
+/** 旧版装在工作目录里的 skill（.claude/skills、.codex/skills）：只认 ahub 生成的，会盖住用户目录那份 */
+export function projectCopies(dir: string): SkillState[] {
+  const bundled = bundledVersion();
+  const base = resolve(dir);
+  if (base === homedir()) return [];
+  return SKILL_TARGETS.map((target) => stateOf(target, join(base, target === 'claude' ? '.claude' : '.codex', 'skills', SKILL_NAME, 'SKILL.md'), bundled)).filter(
+    (st) => st.version && st.version !== 'unknown',
+  );
+}
+
+/** 删掉旧版 ahub 装在工作目录里的 skill，返回删掉的位置 */
+export function removeProjectCopies(dir: string): string[] {
+  return projectCopies(dir).map((st) => {
+    rmSync(dirname(st.path), { recursive: true, force: true });
+    return st.path;
+  });
 }
 
 export function installSkill(path: string, hub?: string) {
