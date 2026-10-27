@@ -149,7 +149,7 @@ test('@提及只发给被提及的成员；@负责人只给负责人', () => {
   assert.equal(ownerMentions.length, 1);
 });
 
-test('评论 @ 了别的 agent 时不唤醒任务负责的 agent；被 @ 的可以在这个任务下给自己建子任务', () => {
+test('评论 @ 了别的 agent 时不唤醒任务负责的 agent；别人负责的任务下可以给自己建子任务', () => {
   const { hub, p1, join } = setup();
   const a = join('甲'); // 任务负责
   const b = join('乙');
@@ -171,11 +171,11 @@ test('评论 @ 了别的 agent 时不唤醒任务负责的 agent；被 @ 的可�
   hub.comment(owner, t.id, '@负责人 自己备注');
   assert.equal(needs(a).length, 3, '只 @ 负责人不算点名给别的 agent');
 
-  // 乙被 @ 过，可以在甲的任务下给自己建子任务；丙没被 @ 过不行；乙不能指派给别人
+  // 乙可以在甲的任务下给自己建子任务，不能指派给别人
   const sub = hub.createTask({ kind: 'agent', agent: b.row }, { parent: t.id, title: '测试环境配置' });
   assert.equal(sub.assignee, b.agent.id);
   assert.equal(sub.status, 'assigned');
-  assert.throws(() => hub.createTask({ kind: 'agent', agent: c.row }, { parent: t.id, title: 'x' }), /被 @ 过/);
+  assert.equal(hub.createTask({ kind: 'agent', agent: c.row }, { parent: t.id, title: 'x' }).assignee, c.agent.id);
   assert.throws(() => hub.createTask({ kind: 'agent', agent: b.row }, { parent: t.id, title: 'x', assignee: c.agent.id }), /只能建指派给自己的子任务/);
   // 负责的甲照常可以给别人建
   assert.equal(hub.createTask({ kind: 'agent', agent: a.row }, { parent: t.id, title: 'y', assignee: c.agent.id }).assignee, c.agent.id);

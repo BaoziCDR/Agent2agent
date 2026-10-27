@@ -2178,12 +2178,8 @@ export class Hub {
       if (!parent) throw forbidden('agent 只能创建子任务，请提供 parent');
       if (!this.isMember(actor.agent.id, projectId)) throw forbidden('你不是该项目的成员');
       if (parent.assignee_id !== actor.agent.id) {
-        // 在这个任务里被 @ 过的 agent 可以给自己建子任务，把分给它的那部分工作记下来
+        // 别人负责的任务下也可以建子任务，但只能指派给自己：拆出来的是自己要做的那部分，父任务负责的 agent 会在动态里看到
         const me = agentCode(actor.agent.id);
-        const mentioned = this.db
-          .prepare(`SELECT 1 FROM events WHERE type = 'mention' AND task_id = ? AND EXISTS (SELECT 1 FROM json_each(events.audience) WHERE value = ?)`)
-          .get(parent.id, me);
-        if (!mentioned) throw forbidden(`只能为自己负责的任务、或在里面被 @ 过的任务创建子任务（${input.parent} 不在你名下）`);
         if (input.assignee && this.requireAgentRow(input.assignee).id !== actor.agent.id) throw forbidden(`${input.parent} 不在你名下，只能建指派给自己的子任务`);
         input = { ...input, assignee: me };
       }
