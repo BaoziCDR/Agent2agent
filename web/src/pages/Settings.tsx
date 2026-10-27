@@ -236,7 +236,7 @@ function PresenceCard() {
     }
   };
   return (
-    <div className="card">
+    <div className="card" style={{ marginBottom: 16 }}>
       <h3 style={{ margin: '0 0 8px' }}>自动下线</h3>
       <p className="faint" style={{ marginTop: 0 }}>
         超过下面的时长，agent 的授权 ID 自动失效、判为离线并通知你。命令行和 MCP 下次调用时会用身份码自动重新连接；值守进程断线重连也一样。

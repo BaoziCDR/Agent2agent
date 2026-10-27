@@ -229,7 +229,7 @@ pre {
 
 @media (max-width: 960px) {
   .two-col {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
   .app {
     grid-template-columns: minmax(0, 1fr);
@@ -667,6 +667,7 @@ table.table {
   grid-template-columns: minmax(0, 1fr) 300px;
   gap: 32px;
   align-items: start;
+  align-content: start;
 }
 
 .drawer.wide .drawer-grid {
@@ -1972,4 +1973,225 @@ table.table {
   background: var(--accent-soft);
   border-color: var(--accent);
   color: var(--accent);
+}
+
+/* ── 手机端 ── */
+.tabbar,
+.sheet-mask {
+  display: none;
+}
+
+@media (max-width: 720px) {
+  .app {
+    grid-template-rows: 52px minmax(0, 1fr) auto;
+  }
+  .sidebar,
+  .topbar-extra {
+    display: none;
+  }
+  .main {
+    padding: 14px 14px 32px;
+    overscroll-behavior: contain;
+  }
+  .page-title {
+    font-size: 17px;
+  }
+  .stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .stat {
+    padding: 10px 12px;
+  }
+  .stat-value {
+    font-size: 22px;
+  }
+
+  .drawer-widen {
+    display: none;
+  }
+
+  .tabbar {
+    display: flex;
+    position: relative;
+    z-index: 19; /* 盖过「更多」的遮罩，但在任务详情和弹窗下面 */
+    grid-column: 1 / -1;
+    background: var(--panel);
+    border-top: 1px solid var(--border);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .tabbar-item {
+    flex: 1;
+    min-height: 52px;
+    border: none;
+    background: none;
+    color: var(--text-2);
+    font-size: 13.5px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    cursor: pointer;
+    border-top: 2px solid transparent;
+  }
+  .tabbar-item.active {
+    color: var(--accent);
+    font-weight: 600;
+    border-top-color: var(--accent);
+  }
+  .tabbar-badge {
+    min-width: 18px;
+    padding: 0 5px;
+    border-radius: 9px;
+    background: var(--warn);
+    color: #fff;
+    font-size: 11px;
+    line-height: 18px;
+    font-weight: 600;
+  }
+
+  .sheet-mask {
+    display: flex;
+    align-items: flex-end;
+    position: fixed;
+    inset: 0;
+    z-index: 18;
+    background: rgba(10, 14, 20, 0.35);
+  }
+  .sheet {
+    width: 100%;
+    background: var(--panel);
+    border-radius: 14px 14px 0 0;
+    padding: 8px 8px calc(62px + env(safe-area-inset-bottom));
+    box-shadow: 0 -8px 24px rgba(16, 24, 40, 0.12);
+  }
+  .sheet-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    min-height: 48px;
+    padding: 0 14px;
+    border: none;
+    border-radius: 8px;
+    background: none;
+    text-align: left;
+    font-size: 15px;
+    cursor: pointer;
+  }
+  .sheet-item.active {
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .sheet-sep {
+    height: 1px;
+    margin: 6px 8px;
+    background: var(--border);
+  }
+
+  /* 输入框 16px，iOS 聚焦时不会自动放大页面 */
+  .input,
+  .select,
+  .textarea {
+    font-size: 16px;
+  }
+
+  /* 页签放不下时横向滑动，不再一个字一行 */
+  .tabs {
+    overflow-x: auto;
+    max-width: 100%;
+    scrollbar-width: none;
+  }
+  .tab {
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .card {
+    min-width: 0;
+  }
+  .list-item,
+  .md,
+  .comment,
+  .prose {
+    overflow-wrap: anywhere;
+  }
+
+  /* 弹窗从底部滑出，内容多时可滚动 */
+  .modal-mask {
+    place-items: end stretch;
+    padding: 0;
+  }
+  .modal,
+  .modal.wide {
+    width: 100%;
+    max-height: 92vh;
+    overflow-y: auto;
+    border-radius: 14px 14px 0 0;
+    padding: 18px 16px calc(18px + env(safe-area-inset-bottom));
+  }
+
+  .drawer-head {
+    padding-top: calc(12px + env(safe-area-inset-top));
+  }
+
+  .toast {
+    bottom: calc(68px + env(safe-area-inset-bottom));
+  }
+
+  /* 表格在手机上一行变成一张卡片，每格前面带列名 */
+  .table.stack thead {
+    display: none;
+  }
+  .table.stack,
+  .table.stack tbody,
+  .table.stack tr {
+    display: block;
+  }
+  .table.stack tr {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .table.stack tr:last-child {
+    border-bottom: none;
+  }
+  .table.stack td {
+    display: block;
+    position: relative;
+    min-height: 26px;
+    padding: 3px 0 3px 92px;
+    border: none;
+    white-space: normal;
+    text-align: left;
+  }
+  .table.stack td::before {
+    content: attr(data-label);
+    position: absolute;
+    left: 0;
+    top: 4px;
+    width: 84px;
+    color: var(--text-3);
+    font-size: 12.5px;
+  }
+  .table.stack td.stack-actions {
+    padding: 8px 0 0;
+  }
+  .table.stack td.stack-actions::before {
+    content: none;
+  }
+}
+
+/* 触屏上按钮和小按钮的点击区域放大 */
+@media (pointer: coarse) {
+  .btn {
+    min-height: 36px;
+  }
+  .btn.small {
+    min-height: 32px;
+    padding: 4px 11px;
+  }
+  .tab {
+    min-height: 40px;
+  }
 }

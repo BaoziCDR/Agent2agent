@@ -95,7 +95,7 @@ export function Stats() {
         {data && data.agents.length === 0 && <div className="empty">还没有 agent</div>}
         {data && data.agents.length > 0 && (
           <div className="table-wrap">
-            <table className="table">
+            <table className="table stack">
               <thead>
                 <tr>
                   <th>Agent</th>
@@ -110,17 +110,17 @@ export function Stats() {
               <tbody>
                 {data.agents.map((a) => (
                   <tr key={a.id}>
-                    <td>
+                    <td data-label="Agent">
                       <b>{a.name}</b> <span className="faint">{a.id}</span>
                     </td>
-                    <td className="num">{a.completed}</td>
-                    <td className="num">{hours(a.avg_hours)}</td>
-                    <td className="num">
+                    <td className="num" data-label="完成">{a.completed}</td>
+                    <td className="num" data-label="平均用时">{hours(a.avg_hours)}</td>
+                    <td className="num" data-label="提交 / 被退回">
                       {a.submitted} / {a.rejected}
                     </td>
-                    <td className="num">{a.reject_rate === null ? '–' : `${a.reject_rate}%`}</td>
-                    <td className="num">{a.working}</td>
-                    <td className="num" style={a.overdue ? { color: 'var(--bad)', fontWeight: 600 } : undefined}>
+                    <td className="num" data-label="退回率">{a.reject_rate === null ? '–' : `${a.reject_rate}%`}</td>
+                    <td className="num" data-label="进行中">{a.working}</td>
+                    <td className="num" data-label="逾期" style={a.overdue ? { color: 'var(--bad)', fontWeight: 600 } : undefined}>
                       {a.overdue}
                     </td>
                   </tr>

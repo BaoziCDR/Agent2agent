@@ -108,7 +108,7 @@ export function Agents({ startInvite = false }: { startInvite?: boolean }) {
             <div className="empty">还没有 agent 加入</div>
           ) : (
             <div className="table-wrap">
-            <table className="table">
+            <table className="table stack">
               <thead>
                 <tr>
                   <th>状态</th>
@@ -126,7 +126,7 @@ export function Agents({ startInvite = false }: { startInvite?: boolean }) {
                   const p = presence(a);
                   return (
                     <tr key={a.id} style={{ opacity: a.status === 'active' ? 1 : 0.55 }}>
-                      <td>
+                      <td data-label="状态">
                         <span className="btn-row" style={{ gap: 6 }}>
                           <span className={`dot ${p}`} />
                           {a.status !== 'active' ? '已停用' : a.pending ? '未连接过' : PRESENCE_LABEL[p]}
@@ -142,24 +142,24 @@ export function Agents({ startInvite = false }: { startInvite?: boolean }) {
                           </div>
                         )}
                       </td>
-                      <td>
+                      <td data-label="名称">
                         <b>{a.name || '（待命名）'}</b>
                         <div className="faint">{a.id}</div>
                       </td>
-                      <td>
+                      <td data-label="平台 / 接入">
                         {PLATFORM_LABEL[a.platform] ?? a.platform}
                         <div className="faint">
                           {a.tier} {TIER[a.tier]}
                         </div>
                       </td>
-                      <td>
+                      <td data-label="项目与标签">
                         {a.projects.map((pr) => (
                           <div key={pr.id}>
                             {pr.id} {pr.tags.length > 0 && <span className="faint">· {pr.tags.join('、')}</span>}
                           </div>
                         ))}
                       </td>
-                      <td>
+                      <td data-label="进行中">
                         {a.active_tasks.length === 0 && <span className="faint">—</span>}
                         {a.active_tasks.map((t) => (
                           <a key={t} href="#" style={{ marginRight: 6 }} onClick={(e) => (e.preventDefault(), openTask(t))}>
@@ -167,7 +167,7 @@ export function Agents({ startInvite = false }: { startInvite?: boolean }) {
                           </a>
                         ))}
                       </td>
-                      <td>
+                      <td data-label="值守">
                         {(() => {
                           const d = daemonState(a);
                           return <span className={`badge ${d.cls}`}>{d.text}</span>;
@@ -194,8 +194,8 @@ export function Agents({ startInvite = false }: { startInvite?: boolean }) {
                           </button>
                         </div>
                       </td>
-                      <td className="faint">{timeAgo(a.last_seen_at)}</td>
-                      <td>
+                      <td className="faint" data-label="最后出现">{timeAgo(a.last_seen_at)}</td>
+                      <td className="stack-actions">
                         <div className="btn-row">
                           {a.status === 'active' && (
                             <button className="btn small" title="身份码、值守命令和接入提示词；换机器、重启都用同一个身份码" onClick={() => setLaunchOf(a)}>
