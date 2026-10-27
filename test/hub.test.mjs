@@ -117,12 +117,13 @@ test('拒绝指派会回到任务池；只有负责人能改派', () => {
   assert.ok(hub.inbox(b.row).events.some((e) => e.summary.includes('改派走了')));
 });
 
-test('子任务：只能为自己负责的任务创建，直接发布并指派', () => {
+test('子任务：自己负责的任务下直接发布并指派；别人的任务下只能指派给自己', () => {
   const { hub, p1, join } = setup();
   const a = join('甲');
   const b = join('乙');
   const parent = hub.createTask({ kind: 'owner' }, { project: p1.id, title: '父任务' });
-  assert.throws(() => hub.createTask({ kind: 'agent', agent: a.row }, { parent: parent.id, title: '子' }), /自己负责/);
+  assert.throws(() => hub.createTask({ kind: 'agent', agent: a.row }, { parent: parent.id, title: '子', assignee: b.agent.id }), /只能建指派给自己的子任务/);
+  assert.equal(hub.createTask({ kind: 'agent', agent: a.row }, { parent: parent.id, title: '我来做一部分' }).assignee, a.agent.id);
   assert.throws(() => hub.createTask({ kind: 'agent', agent: a.row }, { project: p1.id, title: '顶层' }), /只能创建子任务/);
   hub.claim(a.row, parent.id);
   const sub = hub.createTask({ kind: 'agent', agent: a.row }, { parent: parent.id, title: '子', assignee: b.agent.id });
@@ -147,6 +148,38 @@ test('@提及只发给被提及的成员；@负责人只给负责人', () => {
   assert.equal(cNeeds.length, 0);
   const ownerMentions = hub.overview().mentions;
   assert.equal(ownerMentions.length, 1);
+});
+
+test('评论 @ 了别的 agent 时不唤醒任务负责的 agent；别人负责的任务下可以给自己建子任务', () => {
+  const { hub, p1, join } = setup();
+  const a = join('甲'); // 任务负责
+  const b = join('乙');
+  const c = join('丙');
+  const t = hub.createTask({ kind: 'owner' }, { project: p1.id, title: '结算分析', assignee: a.agent.id });
+  const needs = (who) => hub.inbox(who.row).needs_action.filter((e) => e.task === t.id && ['comment.created', 'mention'].includes(e.type)).map((e) => e.type);
+  const owner = { kind: 'owner' };
+
+  hub.comment(owner, t.id, `@${b.agent.id} 去测试环境配置一下`);
+  assert.deepEqual(needs(a), [], '点名给乙，不唤醒甲');
+  assert.deepEqual(needs(b), ['mention']);
+
+  hub.comment(owner, t.id, '大家注意截止时间');
+  assert.deepEqual(needs(a), ['comment.created'], '没有 @ 任何 agent 时照常唤醒负责的 agent');
+
+  hub.comment(owner, t.id, `@${a.agent.id} @${b.agent.id} 你们对一下接口`);
+  assert.deepEqual(needs(a), ['comment.created', 'mention'], '甲也被 @ 了，只多一条 mention');
+
+  hub.comment(owner, t.id, '@负责人 自己备注');
+  assert.equal(needs(a).length, 3, '只 @ 负责人不算点名给别的 agent');
+
+  // 乙可以在甲的任务下给自己建子任务，不能指派给别人
+  const sub = hub.createTask({ kind: 'agent', agent: b.row }, { parent: t.id, title: '测试环境配置' });
+  assert.equal(sub.assignee, b.agent.id);
+  assert.equal(sub.status, 'assigned');
+  assert.equal(hub.createTask({ kind: 'agent', agent: c.row }, { parent: t.id, title: 'x' }).assignee, c.agent.id);
+  assert.throws(() => hub.createTask({ kind: 'agent', agent: b.row }, { parent: t.id, title: 'x', assignee: c.agent.id }), /只能建指派给自己的子任务/);
+  // 负责的甲照常可以给别人建
+  assert.equal(hub.createTask({ kind: 'agent', agent: a.row }, { parent: t.id, title: 'y', assignee: c.agent.id }).assignee, c.agent.id);
 });
 
 test('负责人读过的 @ 和私信不再留在「需要你处理」里', () => {
