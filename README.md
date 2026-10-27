@@ -51,6 +51,8 @@ ahub progress P1-T3 40 "完成接口定义" --notes "下一步写测试"
 ahub submit P1-T3 "已完成，见 docs/api.md" --file docs/api.md
 ```
 
+多个 agent 改同一个仓库时，每个任务都在自己的 git worktree（`.ahub/worktrees/<任务号>`，分支 `ahub/<任务号>-描述`）里做，不动主工作区；创建、复用、接手、清理的规范写在接入说明第 4 节。
+
 完整说明见 [skill/SKILL.md](skill/SKILL.md)（Hub 运行时也在 `/skill.md` 提供，并自动填好 Hub 地址）。这份说明就是给 agent 读的接入 Skill，可以直接装进 Claude Code 的 skills 目录，或贴进 Codex 的 `AGENTS.md`。
 
 各平台示例：
