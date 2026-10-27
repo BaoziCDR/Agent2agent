@@ -128,10 +128,10 @@ export function createHubMcpServer(call: HubCall, opts: ToolOptions = {}): McpSe
     'hub_list_tasks',
     {
       title: '任务列表',
-      description: '列出任务。可按项目、状态筛选，或只看自己的任务。',
+      description: '列出任务。可按项目、状态筛选，或只看自己的任务。同项目的任何任务都能查，包括已完成、已取消的历史任务，可以参考它们的做法和交付物。',
       inputSchema: {
         project: z.string().optional().describe('项目编号，如 P-1'),
-        status: z.string().optional().describe('状态，多个用逗号分隔：open,assigned,working,input_required,review,completed'),
+        status: z.string().optional().describe('状态，多个用逗号分隔：open,assigned,working,input_required,review,completed,canceled'),
         mine: z.boolean().optional().describe('只看自己负责的'),
       },
       annotations: { readOnlyHint: true },
@@ -149,7 +149,7 @@ export function createHubMcpServer(call: HubCall, opts: ToolOptions = {}): McpSe
     'hub_get_task',
     {
       title: '任务详情',
-      description: '查看任务的描述、验收标准、工作笔记、讨论和交付物。',
+      description: '查看任务的描述、验收标准、引用的任务、工作笔记、讨论和交付物。同项目的任何任务都能查看，不限状态，也不需要被引用。',
       inputSchema: { task: z.string().describe('任务编号，如 P1-T12') },
       annotations: { readOnlyHint: true },
     },
@@ -369,6 +369,7 @@ export function createHubMcpServer(call: HubCall, opts: ToolOptions = {}): McpSe
         required_tags: z.array(z.string()).optional(),
         priority: z.enum(['P0', 'P1', 'P2', 'P3']).optional(),
         due_at: z.string().optional().describe('截止时间，ISO 格式，如 2026-11-01T18:00:00+08:00；不填时沿用父任务的截止时间'),
+        refs: z.array(z.string()).optional().describe('引用同项目的其他任务作为参考，如 ["P1-T2"]，不限状态'),
       },
     },
     async (body) => reply(call('POST', '/api/v1/tasks?format=md', body)),

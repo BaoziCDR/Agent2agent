@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { del, get, post, type Task, type Template } from '../api';
 import { Modal, splitList, useData, useHub } from '../ui';
 import { Suggest, useRecommend } from '../suggest';
+import { TaskPicker } from '../taskpicker';
 
 const lines = (s: string) =>
   s
@@ -22,6 +23,7 @@ export function NewTask() {
   const [assignee, setAssignee] = useState('');
   const [tags, setTags] = useState('');
   const [depends, setDepends] = useState('');
+  const [refs, setRefs] = useState<string[]>([]);
   const [due, setDue] = useState('');
   const [batch, setBatch] = useState('');
   const [subtasks, setSubtasks] = useState('');
@@ -84,6 +86,7 @@ export function NewTask() {
           assignee: assignee || null,
           required_tags: splitList(tags),
           depends_on: splitList(depends),
+          refs,
           due_at: due ? new Date(due).toISOString() : null,
           draft,
         });
@@ -107,6 +110,7 @@ export function NewTask() {
         setAcceptance('');
         setAssignee('');
         setSubtasks('');
+        setRefs([]);
         setTplId('');
         openTask(t.id);
       } else {
@@ -173,7 +177,7 @@ export function NewTask() {
         <div className="field-row">
           <div className="field">
             <label htmlFor="nt-project">项目</label>
-            <select id="nt-project" className="select" value={target} onChange={(e) => setTarget(e.target.value)}>
+            <select id="nt-project" className="select" value={target} onChange={(e) => (setTarget(e.target.value), setRefs([]))}>
               {active.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.id} · {p.name}
@@ -208,6 +212,11 @@ export function NewTask() {
             <div className="field">
               <label htmlFor="nt-acc">验收标准</label>
               <textarea id="nt-acc" className="textarea" style={{ minHeight: 64 }} value={acceptance} onChange={(e) => setAcceptance(e.target.value)} placeholder="每行一条" />
+            </div>
+            <div className="field">
+              <label htmlFor="nt-refs">引用历史任务（可选）</label>
+              <TaskPicker id="nt-refs" project={target} value={refs} onChange={setRefs} />
+              <span className="hint">同项目的任何任务都可以引用，不限状态；agent 开工前会读它们的详情、交付物和讨论</span>
             </div>
             <div className="field-row">
               <div className="field">

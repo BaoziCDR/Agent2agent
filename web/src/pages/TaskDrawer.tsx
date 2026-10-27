@@ -6,6 +6,7 @@ import { Markdown } from '../markdown';
 import { Suggest, useRecommend } from '../suggest';
 import { AnswerBox } from '../answer';
 import { Artifacts, FilePart } from './Artifacts';
+import { TaskPicker } from '../taskpicker';
 
 const fileSize = (n: number) => (n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`);
 
@@ -253,6 +254,25 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
                 </div>
               )}
 
+              {t.ref_tasks.length > 0 && (
+                <div className="section">
+                  <h4>
+                    引用的任务<span className="h4-hint">参考资料，agent 可以读取它们的详情、交付物和讨论</span>
+                  </h4>
+                  <div className="list">
+                    {t.ref_tasks.map((r) => (
+                      <div key={r.id} className="list-item clickable" onClick={() => openTask(r.id)}>
+                        <StatusBadge task={r} />
+                        <div style={{ flex: 1 }}>
+                          <b>{r.id}</b> {r.title}
+                          <div className="faint">{r.assignee_name ?? '未指派'}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {t.notes && (
                 <div className="section">
                   <h4>工作笔记</h4>
@@ -380,6 +400,16 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
                     })()}
                   </div>
                 )}
+                {t.referenced_by.length > 0 && (
+                  <div className="faint">
+                    被引用：
+                    {t.referenced_by.map((r) => (
+                      <a key={r.id} href="#" style={{ marginRight: 6 }} title={r.title} onClick={(e) => (e.preventDefault(), openTask(r.id))}>
+                        {r.id}
+                      </a>
+                    ))}
+                  </div>
+                )}
                 {t.depends_on.length > 0 && (
                   <div className="faint">
                     前置任务：
@@ -497,6 +527,7 @@ function EditTask({ task, onClose, onSaved }: { task: TaskDetail; onClose: () =>
   const [tags, setTags] = useState(task.required_tags.join(', '));
   const [due, setDue] = useState(toLocalInput(task.due_at));
   const [deps, setDeps] = useState(task.depends_on.join(', '));
+  const [refs, setRefs] = useState(task.refs);
   return (
     <Modal title={`编辑 ${task.id}`} onClose={onClose}>
       <div className="field">
@@ -534,6 +565,11 @@ function EditTask({ task, onClose, onSaved }: { task: TaskDetail; onClose: () =>
         <input id="ed-deps" className="input" value={deps} onChange={(e) => setDeps(e.target.value)} placeholder="如：P1-T3, P1-T4" />
         <div className="hint">前置任务全部完成后，这个任务才能被领取</div>
       </div>
+      <div className="field">
+        <label htmlFor="ed-refs">引用的任务</label>
+        <TaskPicker id="ed-refs" project={task.project} value={refs} onChange={setRefs} exclude={task.id} />
+        <div className="hint">同项目的历史任务都可以引用（不限状态），agent 开工前会参考它们</div>
+      </div>
       <div className="btn-row">
         <button
           className="btn primary"
@@ -548,6 +584,7 @@ function EditTask({ task, onClose, onSaved }: { task: TaskDetail; onClose: () =>
                 required_tags: splitList(tags),
                 ...(due !== toLocalInput(task.due_at) ? { due_at: due ? new Date(due).toISOString() : null } : {}),
                 ...(splitList(deps).join(',') !== task.depends_on.join(',') ? { depends_on: splitList(deps).map((d) => d.toUpperCase()) } : {}),
+                ...(refs.join(',') !== task.refs.join(',') ? { refs } : {}),
                 version: task.version,
               });
               toast('已保存');

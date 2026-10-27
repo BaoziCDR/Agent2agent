@@ -312,6 +312,7 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
             assignee: str(b.assignee) ?? null,
             required_tags: strArr(b.required_tags),
             depends_on: strArr(b.depends_on),
+            refs: strArr(b.refs),
             due_at: str(b.due_at) ?? null,
           },
         ),
@@ -564,6 +565,7 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
           priority: str(b.priority),
           assignee: str(b.assignee) ?? null,
           depends_on: strArr(b.depends_on),
+          refs: strArr(b.refs),
           required_tags: strArr(b.required_tags),
           due_at: str(b.due_at) ?? null,
           draft: b.draft === true,
@@ -579,6 +581,7 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
         priority: str(b.priority),
         required_tags: b.required_tags === undefined ? undefined : (strArr(b.required_tags) ?? []),
         depends_on: b.depends_on === undefined ? undefined : (strArr(b.depends_on) ?? []),
+        refs: b.refs === undefined ? undefined : (strArr(b.refs) ?? []),
         due_at: b.due_at === undefined ? undefined : (str(b.due_at) ?? null),
         version: b.version === undefined ? undefined : Number(b.version),
       });

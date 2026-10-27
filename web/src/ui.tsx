@@ -103,7 +103,7 @@ export const PLATFORM_LABEL: Record<string, string> = {
   other: '其他',
 };
 
-export function StatusBadge({ task }: { task: Task }) {
+export function StatusBadge({ task }: { task: Pick<Task, 'status' | 'status_label'> }) {
   const cls =
     task.status === 'completed'
       ? 'good'

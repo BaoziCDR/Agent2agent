@@ -10,7 +10,8 @@ function taskLine(t: TaskView) {
   const who = t.assignee ? ` · ${t.assignee_name}（${t.assignee}）` : '';
   const progress = ['working', 'input_required'].includes(t.status) ? ` · ${t.progress}%` : '';
   const tags = t.required_tags.length ? ` · 需要：${t.required_tags.join('、')}` : '';
-  return `- **${t.id}** [${t.priority}] ${t.title} — ${t.status_label}${who}${progress}${tags}${dueNote(t)}`;
+  const refs = t.refs.length ? ` · 参考：${t.refs.join('、')}` : '';
+  return `- **${t.id}** [${t.priority}] ${t.title} — ${t.status_label}${who}${progress}${tags}${refs}${dueNote(t)}`;
 }
 
 /** 截止时间的简短说明，如「 · 截止 11-01 18:00（剩 3 小时）」；已结束或待验收的任务不提示剩余时间。 */
@@ -55,6 +56,18 @@ export function renderTask(t: TaskDetail, hubUrl = '') {
     lines.push('## 验收标准');
     lines.push('');
     for (const a of t.acceptance) lines.push(`- ${a}`);
+  }
+  if (t.ref_tasks.length) {
+    lines.push('');
+    lines.push('## 引用的任务（参考资料）');
+    lines.push('');
+    for (const r of t.ref_tasks) lines.push(`- **${r.id}** ${r.title}（${r.status_label}${r.assignee ? ` · ${r.assignee_name}` : ''}）`);
+    lines.push('');
+    lines.push(`> 开工前用 \`ahub task <编号>\` 读一遍：描述、工作笔记、交付物和讨论都在里面。`);
+  }
+  if (t.referenced_by.length) {
+    lines.push('');
+    lines.push(`被这些任务引用：${t.referenced_by.map((r) => `${r.id}（${r.status_label}）`).join('、')}`);
   }
   if (t.notes) {
     lines.push('');
