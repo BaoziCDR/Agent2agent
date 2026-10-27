@@ -403,6 +403,22 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
       });
     });
 
+    admin.get(`${A}/templates`, async () => hub.listTemplates());
+    const templateInput = (b: B) => ({
+      name: str(b.name),
+      title: str(b.title),
+      description: str(b.description),
+      acceptance: strArr(b.acceptance),
+      priority: str(b.priority),
+      required_tags: strArr(b.required_tags),
+      subtasks: strArr(b.subtasks),
+      chain: b.chain === true,
+    });
+    admin.post(`${A}/templates`, async (req) => hub.saveTemplate(templateInput((req.body ?? {}) as B)));
+    admin.put(`${A}/templates/:id`, async (req) =>
+      hub.saveTemplate({ ...templateInput((req.body ?? {}) as B), id: Number((req.params as { id: string }).id) }),
+    );
+    admin.delete(`${A}/templates/:id`, async (req) => hub.deleteTemplate(Number((req.params as { id: string }).id)));
     admin.get(`${A}/projects`, async () => hub.listProjects());
     admin.post(`${A}/projects`, async (req, reply) => {
       const b = (req.body ?? {}) as B;

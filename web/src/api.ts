@@ -95,6 +95,19 @@ export interface Run {
   summary: string;
 }
 
+export interface Template {
+  id: number;
+  name: string;
+  title: string;
+  description: string;
+  acceptance: string[];
+  priority: Task['priority'];
+  required_tags: string[];
+  subtasks: string[];
+  chain: boolean;
+  updated_at: string;
+}
+
 export interface Message {
   id: number;
   sender: string;
@@ -151,4 +164,5 @@ export async function api<T>(method: string, path: string, body?: unknown): Prom
 export const get = <T>(path: string) => api<T>('GET', path);
 export const post = <T>(path: string, body: unknown = {}) => api<T>('POST', path, body);
 export const patch = <T>(path: string, body: unknown) => api<T>('PATCH', path, body);
+export const put = <T>(path: string, body: unknown) => api<T>('PUT', path, body);
 export const del = <T>(path: string) => api<T>('DELETE', path);
