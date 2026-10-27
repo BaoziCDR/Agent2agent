@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { del, get, type Invite as InviteData, post } from '../api';
 import { CodeBox, Modal, agentLabel, clock, splitList, useData, useHub } from '../ui';
 
-function harnessPrompt(hub: string, code: string, platform: string, name: string, tags: string[]) {
+function harnessPrompt(hub: string, code: string, platform: string, name: string, tags: string[], resident = false) {
   const dir = platform === 'codex' ? '.codex/skills/ahub-collab' : '.claude/skills/ahub-collab';
   const join = `ahub join --hub ${hub} --invite ${code} --name "${name || '<你的名字>'}" --platform ${platform}${tags.length ? ` --tags ${tags.join(',')}` : ''}`;
   return `请加入我的多 Agent 协作中枢（Hub），按它的规则领取任务、汇报进度、和其他 agent 协作。
@@ -16,7 +16,14 @@ function harnessPrompt(hub: string, code: string, platform: string, name: string
    安装（skill 内置在 ahub 里，版本与 ahub 一致），然后阅读它。也可以用 ahub skill show 直接查看。
 4. 运行 ahub inbox 同步收件箱，然后按接入说明里的「每轮工作循环」工作：
    每轮开始先 ahub inbox；只做已领取或已接受的任务；每轮结束前 ahub progress 上报进度和工作笔记。
-`;
+${
+    resident
+      ? `5. 常驻待命：这个会话要一直开着接任务。手上没有可做的事时，运行 ahub wait --resident 等待新事件（每次最多 9 分钟）：
+   返回了收件箱就按第 4 步处理，处理完再回到等待；提示没有新事件就立即再运行一次，不用向我汇报。
+   直到我让你停下为止（规则见 skill 里的「交互式会话里常驻待命」）。
+`
+      : ''
+  }`;
 }
 
 /** 在 agent 所在机器的终端直接运行：一步加入并进入值守，收到任务时自动唤起 harness。 */
@@ -41,10 +48,11 @@ function chatPrompt(hub: string, code: string) {
 function InvitePrompts({ invite, hub }: { invite: InviteData; hub: string }) {
   const [tab, setTab] = useState<'codex' | 'claude' | 'mcp' | 'other'>('codex');
   const [bypass, setBypass] = useState(false);
+  const [resident, setResident] = useState(false);
   const tags = invite.tags;
   const prompts = {
-    codex: harnessPrompt(hub, invite.code, 'codex', invite.agent_name, tags),
-    claude: harnessPrompt(hub, invite.code, 'claude-code', invite.agent_name, tags),
+    codex: harnessPrompt(hub, invite.code, 'codex', invite.agent_name, tags, resident),
+    claude: harnessPrompt(hub, invite.code, 'claude-code', invite.agent_name, tags, resident),
     other: chatPrompt(hub, invite.code),
   };
   const run = (harness: 'codex' | 'claude') => (
@@ -75,6 +83,14 @@ function InvitePrompts({ invite, hub }: { invite: InviteData; hub: string }) {
           其他 agent
         </button>
       </div>
+      {(tab === 'codex' || tab === 'claude') && (
+        <div className="btn-row" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+          <span className="faint">{resident ? '常驻待命：agent 在这个会话里一直等新任务，适合需要你开着的交互式会话（如 Mac 上用 computer use）' : '粘贴给 agent：它会自己安装 ahub、加入项目，做完手上的事就结束本轮'}</span>
+          <label className="faint" style={{ display: 'flex', gap: 4, alignItems: 'center', whiteSpace: 'nowrap' }}>
+            <input type="checkbox" checked={resident} onChange={(e) => setResident(e.target.checked)} /> 常驻待命
+          </label>
+        </div>
+      )}
       {tab === 'codex' && (
         <>
           <CodeBox text={prompts.codex} />
