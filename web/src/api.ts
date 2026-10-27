@@ -26,6 +26,9 @@ export interface Agent {
   presence: Presence;
   /** 值守进程正在处理时的说明 */
   activity: { state: string; note: string; at: string } | null;
+  /** 值守进程（ahub run）是否在线、是否被暂停 */
+  daemon: boolean;
+  daemon_paused: boolean;
   projects: { id: string; name: string; tags: string[] }[];
   active_tasks: string[];
 }
@@ -80,6 +83,16 @@ export interface Overview {
   attention: Task[];
   mentions: HubEvent[];
   agents_online: number;
+}
+
+export interface Run {
+  id: number;
+  harness: string;
+  trigger: string;
+  started_at: string;
+  ended_at: string;
+  code: number | null;
+  summary: string;
 }
 
 export interface Template {

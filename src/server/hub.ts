@@ -47,6 +47,7 @@ export interface AgentRow {
   created_at: string;
   last_seen_at: string | null;
   presence: 'on' | 'off';
+  daemon_paused: number;
 }
 
 interface ProjectRow {
@@ -112,6 +113,9 @@ export interface AgentView {
   presence_label: string;
   /** ahub run 守护进程最近一次上报的状态，如「正在处理 P1-T3」 */
   activity: { state: string; note: string; at: string } | null;
+  /** 值守进程（ahub run）是否连着 Hub，是否被负责人暂停 */
+  daemon: boolean;
+  daemon_paused: boolean;
   projects: { id: string; name: string; tags: string[] }[];
   active_tasks: string[];
 }
@@ -562,7 +566,11 @@ export class Hub {
   /** 收件箱：从 since（默认为已确认的位置）之后的可见事件，加上当前状态快照。 */
   inbox(agent: AgentRow, opts: { since?: number; project?: string; limit?: number } = {}): InboxResult {
     const since = opts.since ?? agent.ack_seq;
-    const { events, more } = this.eventsForAgent(agent, since, opts.limit ?? 50, opts.project);
+    const page = this.eventsForAgent(agent, since, opts.limit ?? 50, opts.project);
+    const more = page.more;
+    // 值守控制事件只给 ahub run 看，不放进 harness 的收件箱；但事件号照常推进
+    const events = page.events.filter((e) => e.type !== 'agent.control');
+    const lastSeq = page.events.length ? page.events[page.events.length - 1].seq : Math.max(since, 0);
     const me = agentCode(agent.id);
     const needs = events.filter((e) => this.needsAction(e, me));
     const projectFilter = opts.project ? this.requireProject(opts.project).id : null;
@@ -575,7 +583,7 @@ export class Hub {
     return {
       agent: me,
       ack_seq: agent.ack_seq,
-      last_seq: events.length ? events[events.length - 1].seq : Math.max(since, 0),
+      last_seq: lastSeq,
       more,
       events,
       needs_action: needs,
@@ -799,6 +807,56 @@ export class Hub {
     return result;
   }
 
+  // ───────────── 值守进程管理 ─────────────
+
+  /** 负责人暂停、恢复或立即唤醒某个 agent 的值守进程（ahub run）。 */
+  controlDaemon(code: string, action: string) {
+    const a = this.requireAgentRow(code);
+    if (!['pause', 'resume', 'wake'].includes(action)) throw invalid('操作只能是 pause、resume 或 wake');
+    if (action === 'wake') {
+      if (!this.hasDaemon(a.id)) throw conflict(`${a.name} 的值守进程不在线`);
+      if (a.daemon_paused) throw conflict(`${a.name} 的值守进程已暂停，请先恢复`);
+    }
+    const who = `${a.name}（${agentCode(a.id)}）`;
+    this.write(() => {
+      if (action !== 'wake') this.db.prepare('UPDATE agents SET daemon_paused = ? WHERE id = ?').run(action === 'pause' ? 1 : 0, a.id);
+      this.emit('agent.control', 'owner', {
+        audience: [agentCode(a.id)],
+        data: { agent: agentCode(a.id), action },
+        summary: { pause: `负责人暂停了${who}的值守进程`, resume: `负责人恢复了${who}的值守进程`, wake: `负责人让${who}立即检查一遍收件箱` }[action]!,
+      });
+    });
+    return this.agentView(this.requireAgentRow(code));
+  }
+
+  /** 值守进程每次唤起 harness 结束后上报一条运行记录；每个 agent 只保留最近 100 条。 */
+  recordRun(agent: AgentRow, input: { started_at?: string; ended_at?: string; code?: number | null; trigger?: string; summary?: string; harness?: string }) {
+    const now = this.iso();
+    const at = (v?: string) => (v && !Number.isNaN(Date.parse(v)) ? new Date(v).toISOString() : now);
+    this.db
+      .prepare('INSERT INTO runs (agent_id, harness, trigger, started_at, ended_at, code, summary) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(
+        agent.id,
+        String(input.harness ?? '').slice(0, 20),
+        String(input.trigger ?? '').slice(0, 500),
+        at(input.started_at),
+        at(input.ended_at),
+        typeof input.code === 'number' ? input.code : null,
+        String(input.summary ?? '').slice(0, 2000),
+      );
+    this.db
+      .prepare('DELETE FROM runs WHERE agent_id = ? AND id NOT IN (SELECT id FROM runs WHERE agent_id = ? ORDER BY id DESC LIMIT 100)')
+      .run(agent.id, agent.id);
+    return { ok: true };
+  }
+
+  listRuns(code: string, limit = 50) {
+    const a = this.requireAgentRow(code);
+    return this.db
+      .prepare('SELECT id, harness, trigger, started_at, ended_at, code, summary FROM runs WHERE agent_id = ? ORDER BY id DESC LIMIT ?')
+      .all(a.id, limit) as { id: number; harness: string; trigger: string; started_at: string; ended_at: string; code: number | null; summary: string }[];
+  }
+
   // ───────────── 任务模板 ─────────────
 
   listTemplates(): TemplateView[] {
@@ -997,6 +1055,8 @@ export class Hub {
       presence,
       presence_label: PRESENCE_LABELS[presence],
       activity: presence === 'online' ? (this.activity.get(a.id) ?? null) : null,
+      daemon: this.hasDaemon(a.id),
+      daemon_paused: !!a.daemon_paused,
       projects: this.agentProjects(a.id),
       active_tasks: active.map((t) => taskCode(t.project_id, t.num)),
     };

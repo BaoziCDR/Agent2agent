@@ -63,6 +63,7 @@ export type EventType =
   | 'agent.online'
   | 'agent.offline'
   | 'agent.activity'
+  | 'agent.control'
   | 'task.created'
   | 'task.updated'
   | 'task.assigned'
