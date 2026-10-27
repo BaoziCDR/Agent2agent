@@ -6,10 +6,14 @@ import {
   type HubEvent,
   type Part,
   type Presence,
+  type ArchiveKind,
   type Priority,
   type TaskStatus,
   type Tier,
   ACTIVE_STATUSES,
+  ARCHIVE_LABELS,
+  CLOSED_STATUSES,
+  DEFAULT_AUTO_ARCHIVE_HOURS,
   LEASE_MINUTES,
   PRESENCE_LABELS,
   PRIORITIES,
@@ -126,6 +130,8 @@ interface TaskRow {
   stall_warned: number;
   due_at: string | null;
   opened_at: string | null;
+  archive_kind: ArchiveKind | null;
+  archived_at: string | null;
   created_at: string;
   updated_at: string;
   version: number;
@@ -216,6 +222,9 @@ export interface TaskView {
   acceptance: string[];
   status: TaskStatus;
   status_label: string;
+  /** 归档方式：manual 手动归档（原来的取消），auto 已完成后长时间没有动静被自动归档；没归档时为 null */
+  archive_kind: ArchiveKind | null;
+  archived_at: string | null;
   priority: Priority;
   assignee: string | null;
   assignee_name: string | null;
@@ -353,6 +362,12 @@ export interface InboxResult {
   projects: { id: string; name: string }[];
   /** 长轮询等待落空时给 agent 的提示；skipped 表示这次没有真正等待就直接返回了 */
   wait?: { skipped: boolean; hint: string };
+}
+
+/** 状态的中文名；归档的带上归档方式，如「已归档（自动）」 */
+export function statusLabel(t: { status: TaskStatus; archive_kind?: ArchiveKind | null }): string {
+  if (t.status !== 'archived') return STATUS_LABELS[t.status];
+  return `${STATUS_LABELS.archived}（${ARCHIVE_LABELS[t.archive_kind ?? 'manual'].slice(0, 2)}）`;
 }
 
 export const projectCode = (id: number) => `P-${id}`;
@@ -1317,7 +1332,7 @@ export class Hub {
     const rows = this.db
       .prepare(`SELECT status FROM tasks WHERE id IN (${deps.map(() => '?').join(',')})`)
       .all(...deps) as { status: string }[];
-    return rows.every((r) => r.status === 'completed' || r.status === 'canceled');
+    return rows.every((r) => CLOSED_STATUSES.includes(r.status as TaskStatus));
   }
 
   // ───────────── 项目 ─────────────
@@ -1981,7 +1996,7 @@ export class Hub {
       id: taskCode(t.project_id, t.num),
       title: t.title,
       status: t.status,
-      status_label: STATUS_LABELS[t.status],
+      status_label: statusLabel(t),
       assignee: t.assignee_id === null ? null : agentCode(t.assignee_id),
       assignee_name: this.agentName(t.assignee_id),
     };
@@ -2017,7 +2032,9 @@ export class Hub {
       description: t.description,
       acceptance: json<string[]>(t.acceptance, []),
       status: t.status,
-      status_label: STATUS_LABELS[t.status],
+      status_label: statusLabel(t),
+      archive_kind: t.status === 'archived' ? (t.archive_kind ?? 'manual') : null,
+      archived_at: t.status === 'archived' ? t.archived_at : null,
       priority: t.priority,
       assignee: t.assignee_id === null ? null : agentCode(t.assignee_id),
       assignee_name: this.agentName(t.assignee_id),
@@ -2105,7 +2122,8 @@ export class Hub {
       params.push(actor.agent.id);
     }
     if (filter.status) {
-      const statuses = filter.status.split(',');
+      // 老版本命令行和 skill 用的是 canceled（已取消），现在叫 archived（已归档）
+      const statuses = [...new Set(filter.status.split(',').map((x) => (x.trim() === 'canceled' ? 'archived' : x.trim())))];
       where.push(`status IN (${statuses.map(() => '?').join(',')})`);
       params.push(...statuses);
     }
@@ -2345,7 +2363,15 @@ export class Hub {
     t: TaskRow,
     actor: string,
     to: TaskStatus,
-    extra: { assignee?: number | null; lease?: string | null; block_reason?: string; summary: string; data?: Record<string, unknown> },
+    extra: {
+      assignee?: number | null;
+      lease?: string | null;
+      block_reason?: string;
+      archive?: ArchiveKind;
+      audience?: string[] | null;
+      summary: string;
+      data?: Record<string, unknown>;
+    },
   ): TaskRow {
     const assignee = extra.assignee === undefined ? t.assignee_id : extra.assignee;
     const r = this.db
@@ -2364,15 +2390,20 @@ export class Hub {
       );
     if (r.changes === 0) throw conflict('任务刚刚被其他人修改，请重试');
     if (to === 'open') this.db.prepare('UPDATE tasks SET opened_at = ? WHERE id = ?').run(this.iso(), t.id);
+    this.db
+      .prepare('UPDATE tasks SET archive_kind = ?, archived_at = ? WHERE id = ?')
+      .run(to === 'archived' ? (extra.archive ?? 'manual') : null, to === 'archived' ? this.iso() : null, t.id);
     const updated = this.taskById(t.id);
     // agent 自己接受、提交、阻塞或放下任务，说明指派这件事已经处理了
     const self = parseId(actor, 'A');
     if (self !== null) this.settleOwn(self, { task: t.id });
     this.emit('task.status_changed', actor, {
       task: updated,
+      ...(extra.audience !== undefined ? { audience: extra.audience } : {}),
       data: {
         from: t.status,
         to,
+        ...(to === 'archived' ? { archive_kind: updated.archive_kind } : {}),
         assignee: assignee === null ? null : agentCode(assignee),
         // agent 拆的子任务记下创建者：提交待验收时唤起它来验收
         ...(updated.parent_id !== null && updated.created_by !== 'owner' ? { creator: updated.created_by } : {}),
@@ -2380,12 +2411,13 @@ export class Hub {
       },
       summary: extra.summary,
     });
-    if (to === 'completed' || to === 'canceled') this.unlockDependents(updated);
+    // 自动归档的任务之前已经完成过、通知过下游，不用再通知一遍
+    if (to === 'completed' || (to === 'archived' && t.status !== 'completed')) this.unlockDependents(updated);
     return updated;
   }
 
   /**
-   * 一个任务完成（或取消）后，找出以它为前置、且前置现在全部结束的下游任务：
+   * 一个任务完成（或手动归档）后，找出以它为前置、且前置现在全部结束的下游任务：
    * 已有负责人的直接通知负责人（会唤起值守进程）；还在任务池里的通知项目成员可以领取了。
    */
   private unlockDependents(t: TaskRow) {
@@ -2400,7 +2432,7 @@ export class Hub {
       if (!this.depsDone(d)) continue;
       if (d.status === 'open') this.db.prepare('UPDATE tasks SET opened_at = ? WHERE id = ?').run(this.iso(), d.id);
       const dcode = taskCode(d.project_id, d.num);
-      const how = t.status === 'canceled' ? `前置任务 ${code} 已取消` : `前置任务 ${code}「${excerpt(t.title)}」已完成`;
+      const how = t.status === 'archived' ? `前置任务 ${code} 已归档` : `前置任务 ${code}「${excerpt(t.title)}」已完成`;
       const assignee = d.assignee_id === null ? null : agentCode(d.assignee_id);
       this.emit('task.unlocked', 'owner', {
         task: d,
@@ -2423,7 +2455,7 @@ export class Hub {
 
   assign(code: string, to: string | null, message?: string): TaskView {
     const t = this.requireTask(code);
-    if (['completed', 'canceled'].includes(t.status)) throw conflict(`${code} 已经${STATUS_LABELS[t.status]}，不能再指派`);
+    if (CLOSED_STATUSES.includes(t.status)) throw conflict(`${code} 已经${statusLabel(t)}，不能再指派`);
     let agent: AgentRow | null = null;
     if (to) {
       agent = this.requireAgentRow(to);
@@ -2676,15 +2708,15 @@ export class Hub {
   }
 
   /**
-   * 验收、退回、取消通常由负责人做；agent 拆出来的子任务，创建它的 agent 也可以验收、退回，
-   * 在还没人开工（待领取、已指派）时取消。指派给自己的子任务不能自己验收。父任务最终仍由负责人验收。
+   * 验收、退回、归档（原来的取消）通常由负责人做；agent 拆出来的子任务，创建它的 agent 也可以验收、退回，
+   * 在还没人开工（待领取、已指派）时归档。指派给自己的子任务不能自己验收。父任务最终仍由负责人验收。
    */
-  private reviewer(actor: Actor, t: TaskRow, code: string, what: '验收' | '退回' | '取消'): { by: string; who: string } {
+  private reviewer(actor: Actor, t: TaskRow, code: string, what: '验收' | '退回' | '归档'): { by: string; who: string } {
     if (actor.kind === 'owner') return { by: 'owner', who: '负责人' };
     const me = agentCode(actor.agent.id);
     if (t.parent_id === null || t.created_by !== me) throw forbidden(`只有负责人或创建这个子任务的 agent 可以${what} ${code}`);
-    if (what !== '取消' && t.assignee_id === actor.agent.id) throw forbidden(`${code} 指派给了你自己，不能自己${what}，请等负责人处理`);
-    if (what === '取消' && !['open', 'assigned'].includes(t.status)) throw forbidden(`${code} 已经有人开工了，只有负责人可以取消`);
+    if (what !== '归档' && t.assignee_id === actor.agent.id) throw forbidden(`${code} 指派给了你自己，不能自己${what}，请等负责人处理`);
+    if (what === '归档' && !['open', 'assigned'].includes(t.status)) throw forbidden(`${code} 已经有人开工了，只有负责人可以归档`);
     return { by: me, who: `${actor.agent.name}（${me}）` };
   }
 
@@ -2719,19 +2751,68 @@ export class Hub {
     });
   }
 
+  /** 手动归档（原来的「取消」）：任务不再做了，收进归档；接口名沿用 cancel，兼容老版本命令行。 */
   cancel(code: string, reason?: string, actor: Actor = { kind: 'owner' }): TaskView {
     const t = this.requireTask(code);
-    if (['completed', 'canceled'].includes(t.status)) throw conflict(`${code} 已经${STATUS_LABELS[t.status]}`);
-    const { by, who } = this.reviewer(actor, t, code, '取消');
+    if (CLOSED_STATUSES.includes(t.status)) throw conflict(`${code} 已经${statusLabel(t)}`);
+    const { by, who } = this.reviewer(actor, t, code, '归档');
     return this.write(() =>
       this.taskView(
-        this.setStatus(t, by, 'canceled', {
+        this.setStatus(t, by, 'archived', {
           lease: null,
-          summary: `${who}取消了 ${code}「${t.title}」${reason ? `：${reason}` : ''}`,
+          archive: 'manual',
+          summary: `${who}归档了 ${code}「${t.title}」${reason ? `：${reason}` : ''}`,
           data: { reason: reason ?? '' },
         }),
       ),
     );
+  }
+
+  /** 自动归档：已完成超过多少小时没有动静就收进归档；0 表示不自动归档 */
+  archiveSettings() {
+    const row = this.db.prepare("SELECT value FROM settings WHERE key = 'auto_archive_hours'").get() as { value: string } | undefined;
+    const hours = row ? Number(row.value) : DEFAULT_AUTO_ARCHIVE_HOURS;
+    return { auto_archive_hours: Number.isInteger(hours) && hours >= 0 ? hours : DEFAULT_AUTO_ARCHIVE_HOURS };
+  }
+
+  setArchiveSettings(input: { auto_archive_hours?: number }) {
+    const v = input.auto_archive_hours;
+    if (v !== undefined) {
+      if (!Number.isInteger(v) || v < 0 || v > 24 * 365) throw invalid('自动归档时间要在 0 到 8760 小时之间（0 表示不自动归档）');
+      this.db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('auto_archive_hours', ?)").run(String(v));
+    }
+    return this.archiveSettings();
+  }
+
+  /**
+   * 定时调用：已完成的任务超过设定时长（默认 48 小时）没有任何动静，就自动归档。
+   * 动静指任务本身的更新和与它相关的事件（评论、交付物修改、被引用等都会记事件）。
+   * 只通知负责人，不打扰 agent。
+   */
+  sweepArchive(): number {
+    const { auto_archive_hours: hours } = this.archiveSettings();
+    if (hours <= 0) return 0;
+    const before = this.iso(-hours * 60);
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM tasks t WHERE status = 'completed' AND updated_at < ?
+           AND COALESCE((SELECT MAX(at) FROM events e WHERE e.task_id = t.id), '') < ? ORDER BY id`,
+      )
+      .all(before, before) as unknown as TaskRow[];
+    if (rows.length === 0) return 0;
+    this.write(() => {
+      for (const t of rows) {
+        const code = taskCode(t.project_id, t.num);
+        this.setStatus(t, 'owner', 'archived', {
+          archive: 'auto',
+          lease: null,
+          audience: [],
+          summary: `${code}「${t.title}」完成后 ${hours} 小时没有动静，已自动归档`,
+          data: { hours },
+        });
+      }
+    });
+    return rows.length;
   }
 
   // ───────────── 文件 ─────────────
@@ -3052,7 +3133,7 @@ export class Hub {
   ): ArtifactView {
     const t = this.requireTask(code);
     this.assertVisible(actor, t);
-    if (t.status === 'canceled') throw conflict(`${code} 已取消，不能再改交付物`);
+    if (t.status === 'archived' && t.archive_kind !== 'auto') throw conflict(`${code} 已手动归档，不能再改交付物`);
     const a = this.requireArtifact(t, id);
     const baseRev = Number(input.base_rev);
     if (!Number.isInteger(baseRev) || baseRev < 1) throw invalid('请带上 base_rev：你是在第几版的基础上修改的（先读取交付物拿到当前版本号）');
@@ -3321,7 +3402,7 @@ export class Hub {
     };
     const mine = grams(title);
     const done = this.db
-      .prepare(`SELECT assignee_id, num, title FROM tasks WHERE project_id = ? AND status = 'completed' AND assignee_id IS NOT NULL ORDER BY updated_at DESC LIMIT 300`)
+      .prepare(`SELECT assignee_id, num, title FROM tasks WHERE project_id = ? AND (status = 'completed' OR (status = 'archived' AND archive_kind = 'auto')) AND assignee_id IS NOT NULL ORDER BY updated_at DESC LIMIT 300`)
       .all(projectId) as { assignee_id: number; num: number; title: string }[];
 
     return this.listAgents(project)

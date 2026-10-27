@@ -132,10 +132,10 @@ export function createHubMcpServer(call: HubCall, opts: ToolOptions = {}): McpSe
     'hub_list_tasks',
     {
       title: '任务列表',
-      description: '列出任务。可按项目、状态筛选，或只看自己的任务。同项目的任何任务都能查，包括已完成、已取消的历史任务，可以参考它们的做法和交付物。',
+      description: '列出任务。可按项目、状态筛选，或只看自己的任务。同项目的任何任务都能查，包括已完成、已归档的历史任务，可以参考它们的做法和交付物。',
       inputSchema: {
         project: z.string().optional().describe('项目编号，如 P-1'),
-        status: z.string().optional().describe('状态，多个用逗号分隔：open,assigned,working,input_required,review,completed,canceled'),
+        status: z.string().optional().describe('状态，多个用逗号分隔：open,assigned,working,input_required,review,completed,archived（已归档，含手动归档和已完成后自动归档的）'),
         mine: z.boolean().optional().describe('只看自己负责的'),
       },
       annotations: { readOnlyHint: true },
@@ -267,17 +267,17 @@ export function createHubMcpServer(call: HubCall, opts: ToolOptions = {}): McpSe
   server.registerTool(
     'hub_review_subtask',
     {
-      title: '验收、退回或取消自己拆出的子任务',
+      title: '验收、退回或归档自己拆出的子任务',
       description:
-        '你创建的子任务提交后，由你验收（approve）或退回修改（reject，必须写意见）；还没人开工（待领取、已指派）时可以取消（cancel）。指派给你自己的子任务不能自己验收，父任务最终仍由负责人验收。',
+        '你创建的子任务提交后，由你验收（approve）或退回修改（reject，必须写意见）；还没人开工（待领取、已指派）、不需要了时可以归档（archive，原来叫 cancel）。指派给你自己的子任务不能自己验收，父任务最终仍由负责人验收。',
       inputSchema: {
         task: z.string().describe('子任务编号'),
-        action: z.enum(['approve', 'reject', 'cancel']),
-        text: z.string().optional().describe('验收评语、退回的修改意见或取消理由'),
+        action: z.enum(['approve', 'reject', 'archive', 'cancel']),
+        text: z.string().optional().describe('验收评语、退回的修改意见或归档理由'),
       },
     },
     async ({ task, action, text }) =>
-      reply(call('POST', `/api/v1/tasks/${enc(task)}/${action}?format=md`, action === 'approve' ? { comment: text } : { reason: text })),
+      reply(call('POST', `/api/v1/tasks/${enc(task)}/${action === 'archive' ? 'cancel' : action}?format=md`, action === 'approve' ? { comment: text } : { reason: text })),
   );
 
   server.registerTool(

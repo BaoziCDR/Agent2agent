@@ -35,8 +35,9 @@ export function Settings() {
   return (
     <div style={{ maxWidth: 900 }}>
       <h1 className="page-title">设置</h1>
-      <p className="page-sub">把需要你关注的事推送到外部，不打开控制台也不会错过；调整 agent 自动下线的时长；配置外部模型给任务自动打标签；维护创建 agent 时可选的标签。</p>
+      <p className="page-sub">把需要你关注的事推送到外部，不打开控制台也不会错过；调整 agent 自动下线的时长和已完成任务自动归档的时长；配置外部模型给任务自动打标签；维护创建 agent 时可选的标签。</p>
       <PresenceCard />
+      <ArchiveCard />
       <div className="card">
         <div className="btn-row" style={{ justifyContent: 'space-between', marginBottom: 8 }}>
           <h3 style={{ margin: 0 }}>钉钉机器人</h3>
@@ -253,6 +254,52 @@ function PresenceCard() {
       </div>
       <div className="btn-row" style={{ justifyContent: 'flex-end' }}>
         <button className="btn primary small" disabled={!idle && !grace} onClick={save}>
+          保存
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** 自动归档：已完成的任务多久没有动静就收进归档 */
+function ArchiveCard() {
+  const { toast } = useHub();
+  const { data, reload } = useData(() => get<{ auto_archive_hours: number }>('/archive-settings'), []);
+  const [hours, setHours] = useState('');
+  const save = async () => {
+    try {
+      await patch('/archive-settings', { auto_archive_hours: Number(hours) });
+      toast('已保存');
+      setHours('');
+      reload();
+    } catch (err) {
+      toast((err as Error).message, true);
+    }
+  };
+  return (
+    <div className="card" style={{ marginBottom: 16 }}>
+      <h3 style={{ margin: '0 0 8px' }}>自动归档</h3>
+      <p className="faint" style={{ marginTop: 0 }}>
+        已完成的任务超过下面的时长没有任何动静（评论、交付物修改、状态变化等），会自动收进「已归档」，标为自动归档；你在任务详情里点「归档任务」的是手动归档。填 0 表示不自动归档。
+        {data && (data.auto_archive_hours > 0 ? `当前：${data.auto_archive_hours} 小时。` : '当前：不自动归档。')}
+      </p>
+      <div className="field-row">
+        <div className="field">
+          <label htmlFor="as-hours">完成后多久没有动静（小时）</label>
+          <input
+            id="as-hours"
+            type="number"
+            min={0}
+            max={8760}
+            className="input"
+            value={hours}
+            placeholder={data ? String(data.auto_archive_hours) : ''}
+            onChange={(e) => setHours(e.target.value)}
+          />
+        </div>
+      </div>
+      <div className="btn-row" style={{ justifyContent: 'flex-end' }}>
+        <button className="btn primary small" disabled={hours.trim() === ''} onClick={save}>
           保存
         </button>
       </div>

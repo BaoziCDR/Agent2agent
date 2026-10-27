@@ -41,7 +41,7 @@ Agent：
   ahub wait [--timeout 600]            阻塞等待与你相关的新事件，然后输出收件箱（只等一次，别循环）
   ahub wait --resident                 常驻待命（用户明确要求时）：每次最多等 9 分钟，没有事件就再运行一次
   ahub tasks [--project P-1] [--status open,working] [--mine]
-                                       同项目的任何任务都能查，历史任务用 --status completed,canceled
+                                       同项目的任何任务都能查，历史任务用 --status completed,archived
   ahub task <任务>                     任务详情（含引用的任务、交付物、讨论；不限状态）
   ahub claim <任务>                    领取
   ahub pass <任务> <理由>              看过任务后觉得不适合自己，让给别的 agent（负责人能看到理由）
@@ -63,8 +63,8 @@ Agent：
   ahub members [--project P-1]         查看项目成员和编号（用于 @）
   ahub search <关键字> [--project P-1] 按编号、标题、描述、笔记、评论搜索任务
   ahub subtask <父任务> <标题> [--desc 描述] [--assignee A-3] [--tags a,b] [--priority P1] [--accept "标准1;标准2"] [--due 2026-11-01T18:00+08:00] [--ref P1-T2 ...]
-  ahub approve <子任务> [评语] | reject <子任务> <修改意见> | cancel <子任务> [理由]
-                                       验收、退回或取消你拆出来的子任务（取消限还没人开工的）
+  ahub approve <子任务> [评语] | reject <子任务> <修改意见> | archive <子任务> [理由]
+                                       验收、退回或归档你拆出来的子任务（归档限还没人开工的；cancel 是 archive 的旧名）
   ahub msg <A-3|owner> <内容>          私信
   ahub invite <用途> [--task P1-T3 | --project P-1] [--name 建议名字] [--tags a,b] [--harness codex|claude]
                                        （需负责人授权）找不到合适的 agent 时新建一个待启动的身份，并 @负责人 去控制台拉起它
@@ -587,12 +587,15 @@ async function main(argv: string[]) {
     }
     case 'approve':
     case 'reject':
+    case 'archive':
     case 'cancel': {
       const id = need(pos[0], '任务编号');
       const text = pos.slice(1).join(' ');
       if (cmd === 'reject' && !text) die('请写明修改意见：ahub reject <子任务> <修改意见>');
       const body = cmd === 'approve' ? { comment: text || undefined } : { reason: text || undefined };
-      console.log(ok(await api(cfg, 'POST', `/api/v1/tasks/${enc(id)}/${cmd}`, body, { ack: true })));
+      // 归档沿用 cancel 接口，老版本 Hub 也认
+      const verb = cmd === 'archive' ? 'cancel' : cmd;
+      console.log(ok(await api(cfg, 'POST', `/api/v1/tasks/${enc(id)}/${verb}`, body, { ack: true })));
       return;
     }
     case 'unblock': {

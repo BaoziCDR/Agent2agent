@@ -7,7 +7,7 @@ export const TASK_STATUSES = [
   'input_required',
   'review',
   'completed',
-  'canceled',
+  'archived',
 ] as const;
 export type TaskStatus = (typeof TASK_STATUSES)[number];
 
@@ -19,8 +19,21 @@ export const STATUS_LABELS: Record<TaskStatus, string> = {
   input_required: '阻塞',
   review: '待验收',
   completed: '已完成',
-  canceled: '已取消',
+  archived: '已归档',
 };
+
+// 归档分两种：手动归档（原来的「取消」，负责人或拆子任务的 agent 操作）；
+// 自动归档（已完成的任务一段时间没有动静后由 Hub 自动收起，默认 48 小时，可在设置里改）
+export const ARCHIVE_KINDS = ['manual', 'auto'] as const;
+export type ArchiveKind = (typeof ARCHIVE_KINDS)[number];
+export const ARCHIVE_LABELS: Record<ArchiveKind, string> = {
+  manual: '手动归档',
+  auto: '自动归档',
+};
+export const DEFAULT_AUTO_ARCHIVE_HOURS = 48;
+
+/** 已经结束的状态：不能再指派、开工 */
+export const CLOSED_STATUSES: TaskStatus[] = ['completed', 'archived'];
 
 export const ACTIVE_STATUSES: TaskStatus[] = ['assigned', 'working', 'input_required', 'review'];
 

@@ -288,6 +288,13 @@ function migrate(db: Db) {
     created_at TEXT NOT NULL,
     UNIQUE (artifact_id, rev)
   )`);
+  // 「已取消」改为「已归档」：archive_kind 区分手动归档（原来的取消）和自动归档（完成后长时间没有动静），archived_at 是归档时间。
+  // 老数据里已取消的任务迁为手动归档，归档时间取最后更新时间
+  if (!has('tasks', 'archive_kind')) {
+    db.exec('ALTER TABLE tasks ADD COLUMN archive_kind TEXT');
+    db.exec('ALTER TABLE tasks ADD COLUMN archived_at TEXT');
+  }
+  db.exec("UPDATE tasks SET status = 'archived', archive_kind = 'manual', archived_at = COALESCE(archived_at, updated_at) WHERE status = 'canceled'");
   // 还没有版本记录的交付物（包括老数据）补一条第 1 版
   db.exec(`INSERT INTO artifact_revisions (artifact_id, rev, author, parts, created_at)
     SELECT a.id, a.rev, a.author, a.parts, a.created_at FROM artifacts a

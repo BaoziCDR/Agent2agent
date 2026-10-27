@@ -57,7 +57,7 @@ export interface WakeInfo {
   relations: TaskRelations[];
   /** 本次是对已有任务的跟进（退回、评论、@、交付物被改）的任务 */
   followups: string[];
-  /** 已经完成或取消的任务（只需要覆盖候选会话里的任务） */
+  /** 已经完成或归档的任务（只需要覆盖候选会话里的任务） */
   closed: string[];
   /** 读不到 Hub 上的任务关系，只按同一任务匹配 */
   offline?: boolean;
