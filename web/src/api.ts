@@ -29,6 +29,7 @@ export interface Agent {
   /** 值守进程（ahub run）是否在线、是否被暂停 */
   daemon: boolean;
   daemon_paused: boolean;
+  can_invite: boolean;
   projects: { id: string; name: string; tags: string[] }[];
   active_tasks: string[];
 }
@@ -78,6 +79,8 @@ export interface Invite {
   uses: number;
   expires_at: string;
   note: string;
+  /** owner 或创建它的 agent 编号 */
+  created_by: string;
   created_at: string;
   valid: boolean;
 }

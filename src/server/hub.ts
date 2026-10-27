@@ -48,6 +48,7 @@ export interface AgentRow {
   last_seen_at: string | null;
   presence: 'on' | 'off';
   daemon_paused: number;
+  can_invite: number;
 }
 
 interface ProjectRow {
@@ -118,6 +119,8 @@ export interface AgentView {
   /** 值守进程（ahub run）是否连着 Hub，是否被负责人暂停 */
   daemon: boolean;
   daemon_paused: boolean;
+  /** 负责人允许它为所在项目创建邀请 */
+  can_invite: boolean;
   projects: { id: string; name: string; tags: string[] }[];
   active_tasks: string[];
 }
@@ -922,16 +925,53 @@ export class Hub {
 
   // ───────────── 邀请与加入 ─────────────
 
-  createInvite(input: { project: string; tags?: string[]; max_uses?: number; hours?: number; note?: string }) {
+  createInvite(input: { project: string; tags?: string[]; max_uses?: number; hours?: number; note?: string }, createdBy = 'owner') {
     const p = this.requireProject(input.project);
     const code = newInviteCode();
     const expires = this.iso((input.hours ?? 24) * 60);
     this.db
       .prepare(
-        'INSERT INTO invites (code, project_id, tags, max_uses, expires_at, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO invites (code, project_id, tags, max_uses, expires_at, note, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
       )
-      .run(code, p.id, JSON.stringify(input.tags ?? []), input.max_uses ?? 1, expires, input.note ?? '', this.iso());
+      .run(code, p.id, JSON.stringify(input.tags ?? []), input.max_uses ?? 1, expires, input.note ?? '', createdBy, this.iso());
     return this.inviteView(code);
+  }
+
+  /**
+   * 被授权的 agent（通常是协调者）找不到合适的人时，为自己所在的项目创建一个一次性邀请，
+   * 并 @负责人 说明用途和启动命令。拉起新 agent 始终由负责人手动完成。
+   */
+  agentInvite(
+    agent: AgentRow,
+    input: { project?: string; task?: string; note: string; name?: string; tags?: string[]; harness?: string },
+    hubUrl: string,
+  ) {
+    if (!agent.can_invite) throw forbidden('负责人还没有允许你创建邀请');
+    const t = input.task ? this.requireTask(input.task) : null;
+    const project = t ? projectCode(t.project_id) : input.project;
+    if (!project) throw invalid('需要指定项目（project）或任务（task）');
+    const p = this.requireProject(project);
+    if (!this.isMember(agent.id, p.id)) throw forbidden(`你不是项目 ${project} 的成员`);
+    if (p.status !== 'active') throw conflict(`项目 ${project} 已归档`);
+    const note = input.note?.trim();
+    if (!note) throw invalid('请说明需要什么样的 agent、用来做什么（note）');
+    const me = agentCode(agent.id);
+    const invite = this.createInvite({ project, tags: input.tags ?? [], max_uses: 1, hours: 24, note: `${agent.name}：${note}` }, me);
+    const harness = input.harness && /^[\w-]+$/.test(input.harness) ? input.harness : 'codex';
+    const name = input.name?.trim().replace(/["`$\\]/g, '') || '新 agent';
+    const command = `ahub run --hub ${hubUrl} --invite ${invite.code} --name "${name}" --harness ${harness}`;
+    const text = [
+      `${t ? '@负责人 ' : ''}需要一个新 agent：${note}`,
+      '',
+      `我创建了邀请码 \`${invite.code}\`（项目 ${project}，24 小时内有效，只能用一次${invite.tags.length ? `，能力标签：${invite.tags.join('、')}` : ''}）。请在要让它工作的目录里运行：`,
+      '',
+      '```',
+      command,
+      '```',
+    ].join('\n');
+    if (t) this.comment({ kind: 'agent', agent }, input.task!, text);
+    else this.message({ kind: 'agent', agent }, 'owner', text);
+    return { ...invite, command };
   }
 
   private inviteView(code: string) {
@@ -944,6 +984,7 @@ export class Hub {
       expires_at: string;
       revoked: number;
       note: string;
+      created_by: string;
       created_at: string;
     };
     const expired = r.expires_at < this.iso();
@@ -955,6 +996,7 @@ export class Hub {
       uses: r.uses,
       expires_at: r.expires_at,
       note: r.note,
+      created_by: r.created_by,
       created_at: r.created_at,
       valid: !r.revoked && !expired && r.uses < r.max_uses,
     };
@@ -1080,6 +1122,7 @@ export class Hub {
       activity: presence === 'online' ? (this.activity.get(a.id) ?? null) : null,
       daemon: this.hasDaemon(a.id),
       daemon_paused: !!a.daemon_paused,
+      can_invite: !!a.can_invite,
       projects: this.agentProjects(a.id),
       active_tasks: active.map((t) => taskCode(t.project_id, t.num)),
     };
@@ -1096,24 +1139,30 @@ export class Hub {
     return rows.map((a) => this.agentView(a));
   }
 
-  updateAgent(actor: Actor, code: string, input: { status?: string; name?: string; description?: string; skills?: string[]; tier?: string }) {
+  updateAgent(
+    actor: Actor,
+    code: string,
+    input: { status?: string; name?: string; description?: string; skills?: string[]; tier?: string; can_invite?: boolean },
+  ) {
     const a = this.requireAgentRow(code);
     if (actor.kind === 'agent' && actor.agent.id !== a.id) throw forbidden('只能修改自己的资料');
     if (input.status !== undefined) {
       if (actor.kind !== 'owner') throw forbidden('只有负责人可以停用或启用 agent');
       if (!['active', 'disabled'].includes(input.status)) throw invalid('status 只能是 active 或 disabled');
     }
+    if (input.can_invite !== undefined && actor.kind !== 'owner') throw forbidden('只有负责人可以授权创建邀请');
     const tier = input.tier ? (input.tier.toUpperCase() as Tier) : a.tier;
     if (!TIERS.includes(tier)) throw invalid('tier 只能是 L1、L2、L3、L4');
     return this.write(() => {
       this.db
-        .prepare('UPDATE agents SET status = ?, name = ?, description = ?, skills = ?, tier = ? WHERE id = ?')
+        .prepare('UPDATE agents SET status = ?, name = ?, description = ?, skills = ?, tier = ?, can_invite = ? WHERE id = ?')
         .run(
           input.status ?? a.status,
           input.name?.trim() || a.name,
           input.description ?? a.description,
           JSON.stringify(input.skills ?? json<string[]>(a.skills, [])),
           tier,
+          input.can_invite === undefined ? a.can_invite : input.can_invite ? 1 : 0,
           a.id,
         );
       const who = actor.kind === 'owner' ? 'owner' : agentCode(a.id);
@@ -1125,7 +1174,9 @@ export class Hub {
             ? `负责人停用了 ${a.name}（${code}）`
             : input.status === 'active'
               ? `负责人启用了 ${a.name}（${code}）`
-              : `${a.name}（${code}）的资料已更新`,
+              : input.can_invite !== undefined
+                ? `负责人${input.can_invite ? '允许' : '取消了'} ${a.name}（${code}）创建邀请`
+                : `${a.name}（${code}）的资料已更新`,
       });
       return this.agentView(this.requireAgentRow(code));
     });

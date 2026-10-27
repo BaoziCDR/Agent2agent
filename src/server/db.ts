@@ -201,6 +201,9 @@ function migrate(db: Db) {
   if (!has('tasks', 'block_options')) db.exec("ALTER TABLE tasks ADD COLUMN block_options TEXT NOT NULL DEFAULT '[]'");
   // 疑似原地打转：已提醒负责人为 1，进度有变化或状态变化时清零
   if (!has('tasks', 'stall_warned')) db.exec('ALTER TABLE tasks ADD COLUMN stall_warned INTEGER NOT NULL DEFAULT 0');
+  // 负责人授权后，agent（如协调者）可以为自己所在的项目创建邀请
+  if (!has('agents', 'can_invite')) db.exec('ALTER TABLE agents ADD COLUMN can_invite INTEGER NOT NULL DEFAULT 0');
+  if (!has('invites', 'created_by')) db.exec("ALTER TABLE invites ADD COLUMN created_by TEXT NOT NULL DEFAULT 'owner'");
   if (!has('tasks', 'due_warned')) db.exec('ALTER TABLE tasks ADD COLUMN due_warned INTEGER NOT NULL DEFAULT 0');
 }
 

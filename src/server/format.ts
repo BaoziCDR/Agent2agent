@@ -194,6 +194,7 @@ export function renderMe(a: AgentView) {
     ...(a.projects.length ? a.projects.map((p) => `- ${p.id}「${p.name}」${p.tags.length ? ` · 标签：${p.tags.join('、')}` : ''}`) : ['（无）']),
     '',
     `进行中的任务：${a.active_tasks.join('、') || '无'}`,
+    a.can_invite ? '\n你已获负责人授权：项目里没有合适的 agent 时，可以用 `ahub invite`（或 hub_create_invite）创建邀请，请负责人拉起新 agent。' : '',
   ];
   return lines.filter((l) => l !== null).join('\n') + '\n';
 }

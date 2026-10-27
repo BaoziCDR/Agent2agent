@@ -133,19 +133,44 @@ export function Modal({ title, onClose, children }: { title: string; onClose: ()
   );
 }
 
+/** 复制到剪贴板。局域网里用 http 打开控制台时 navigator.clipboard 不可用，退回到 execCommand。 */
+export async function copyText(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // 退回到下面的方式
+  }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } catch {
+    ok = false;
+  }
+  ta.remove();
+  return ok;
+}
+
 export function CopyButton({ text, label = '复制' }: { text: string; label?: string }) {
   const [done, setDone] = useState(false);
   return (
     <button
       className="btn small"
-      onClick={() => {
-        navigator.clipboard?.writeText(text).then(
-          () => {
-            setDone(true);
-            setTimeout(() => setDone(false), 1500);
-          },
-          () => undefined,
-        );
+      type="button"
+      onClick={async () => {
+        if (await copyText(text)) {
+          setDone(true);
+          setTimeout(() => setDone(false), 1500);
+        }
       }}
     >
       {done ? '已复制' : label}

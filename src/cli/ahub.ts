@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
-import { readFileSync } from 'node:fs';
-import { basename } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { basename, join, resolve } from 'node:path';
 import { type CliConfig, defaultConfigPath, loadConfig, saveConfig } from './config.js';
 import { fileArtifact, uploadFile } from './files.js';
 
@@ -34,10 +34,13 @@ Agent：
   ahub search <关键字> [--project P-1] 按编号、标题、描述、笔记、评论搜索任务
   ahub subtask <父任务> <标题> [--desc 描述] [--assignee A-3] [--tags a,b] [--priority P1] [--accept "标准1;标准2"] [--due 2026-11-01T18:00+08:00]
   ahub msg <A-3|owner> <内容>          私信
+  ahub invite <用途> [--task P1-T3 | --project P-1] [--name 建议名字] [--tags a,b] [--harness codex|claude]
+                                       （需负责人授权）找不到合适的 agent 时创建一次性邀请，并 @负责人 去运行它
   ahub use <项目>                      设置当前目录的默认项目
   ahub stream                          持续输出实时事件（SSE）
   ahub mcp [--hub URL]                 以 stdio 方式运行 MCP 服务（供 Codex、Claude Code 等配置）
   ahub run --harness codex|claude      值守模式：保持在线，收到指派、@、私信、退回时自动唤起 harness 处理
+           [--hub URL --invite 邀请码 --name 名字]  在还没加入过的目录一步完成加入并开始值守
            [--cwd 目录] [--max-runs 10] [--run-timeout 60] [--wake-on-open] [--new-session]
            [--harness-arg 参数 ...] [--cmd "自定义命令"] [--dry-run]
 
@@ -118,6 +121,7 @@ async function main(argv: string[]) {
       description: { type: 'string' },
       global: { type: 'boolean' },
       project: { type: 'string' },
+      task: { type: 'string' },
       status: { type: 'string' },
       mine: { type: 'boolean' },
       json: { type: 'boolean' },
@@ -375,6 +379,13 @@ async function main(argv: string[]) {
       console.log(ok(await api(cfg, 'POST', '/api/v1/tasks', body, { ack: true })));
       return;
     }
+    case 'invite': {
+      const note = need(pos.join(' '), '需要什么样的 agent、用来做什么');
+      const tags = (v.tags ?? []).flatMap((t) => t.split(/[,，]/)).map((t) => t.trim()).filter(Boolean);
+      const body = { note, task: v.task, project: v.task ? undefined : (v.project ?? cfg.project), name: v.name, tags, harness: v.harness };
+      console.log(ok(await api(cfg, 'POST', '/api/v1/invites', body, { ack: true })));
+      return;
+    }
     case 'msg': {
       const to = need(pos[0], '收件人（A-3 或 owner）');
       const text = need(pos.slice(1).join(' '), '内容');
@@ -405,9 +416,46 @@ async function main(argv: string[]) {
       const harness = (v.harness ?? (v.cmd ? 'custom' : '')) as 'codex' | 'claude' | 'custom';
       if (!['codex', 'claude', 'custom'].includes(harness)) die('请用 --harness codex 或 --harness claude 指定要唤起的 agent，或用 --cmd 给出自定义命令');
       if (harness === 'custom' && !v.cmd) die('--harness custom 需要同时给出 --cmd');
-      if (!loaded.path) die('请先在这个目录运行 ahub join 加入 Hub');
+      let runCfg = cfg;
+      let runPath = loaded.path;
+      if (v.invite) {
+        // 带邀请码启动：身份只看运行目录自己的 .ahub/config.json，不继承上级目录或主目录的身份
+        const dir = resolve(v.cwd ?? process.cwd());
+        runPath = join(dir, '.ahub', 'config.json');
+        runCfg = existsSync(runPath) ? (JSON.parse(readFileSync(runPath, 'utf8')) as CliConfig) : {};
+        if (v.hub) runCfg.hub = v.hub.replace(/\/+$/, '');
+        else if (!runCfg.hub) runCfg.hub = cfg.hub;
+        if (!runCfg.hub) die('第一次在这个目录运行，需要 --hub http://地址:端口');
+        if (!runCfg.token && !v.name) die('第一次在这个目录运行，需要 --name 给新 agent 起个名字');
+        const res = await api(runCfg, 'POST', '/api/v1/join', {
+          invite: v.invite,
+          name: v.name,
+          platform: v.platform ?? (harness === 'claude' ? 'claude-code' : harness === 'codex' ? 'codex' : 'other'),
+          skills: list(v.skills),
+          tags: list(v.tags),
+        }, { md: false });
+        if (res.status >= 400 && runCfg.token) {
+          // 重复运行同一条命令时邀请码已经用过，沿用已有身份继续值守
+          let msg = res.text;
+          try {
+            msg = JSON.parse(res.text).error?.message ?? msg;
+          } catch {
+            // 保留原文
+          }
+          console.log(`邀请码没有用上（${msg}），继续以 ${runCfg.name ?? runCfg.agent}（${runCfg.agent}）的身份值守。`);
+        } else {
+          const data = JSON.parse(ok(res)) as { agent: { id: string; name: string }; token: string | null; project: { id: string } };
+          if (data.token) runCfg.token = data.token;
+          runCfg.agent = data.agent.id;
+          runCfg.name = data.agent.name;
+          runCfg.project = data.project.id;
+          saveConfig(runPath, runCfg);
+          console.log(`已加入项目 ${data.project.id}，身份 ${data.agent.name}（${data.agent.id}），配置保存在 ${runPath}`);
+        }
+      }
+      if (!runPath) die('这个目录还没有加入 Hub：先运行 ahub join，或者用 ahub run --hub 地址 --invite 邀请码 --name 名字 一步加入并值守');
       const { runDaemon } = await import('./run.js');
-      await runDaemon(cfg, loaded.path, {
+      await runDaemon(runCfg, runPath, {
         harness,
         cmd: v.cmd,
         harnessArgs: v['harness-arg']?.length ? v['harness-arg'] : undefined,

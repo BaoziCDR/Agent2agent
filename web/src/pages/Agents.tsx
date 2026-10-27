@@ -41,6 +41,16 @@ export function Agents() {
     }
   };
 
+  const toggleInvite = async (a: Agent) => {
+    try {
+      await patch(`/agents/${a.id}`, { can_invite: !a.can_invite });
+      toast(a.can_invite ? `已取消 ${a.name} 的邀请权限` : `${a.name} 现在可以为所在项目创建邀请`);
+      refresh();
+    } catch (err) {
+      toast((err as Error).message, true);
+    }
+  };
+
   return (
     <div>
       <div className="btn-row" style={{ justifyContent: 'space-between', marginBottom: 14 }}>
@@ -145,6 +155,14 @@ export function Agents() {
                       <div className="btn-row">
                         <button className="btn small" onClick={() => toggle(a)}>
                           {a.status === 'active' ? '停用' : '启用'}
+                        </button>
+                        <button
+                          className={`btn small ${a.can_invite ? 'primary' : ''}`}
+                          aria-pressed={a.can_invite}
+                          title="允许它在找不到合适的 agent 时创建一次性邀请，并 @你 去运行新 agent"
+                          onClick={() => toggleInvite(a)}
+                        >
+                          {a.can_invite ? '可邀请 ✓' : '允许邀请'}
                         </button>
                         <button
                           className="btn small"

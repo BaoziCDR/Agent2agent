@@ -300,3 +300,31 @@ test('阻塞提问：agent 给出选项，负责人点选后解除阻塞并通�
   assert.ok(inbox.needs_action.some((e) => e.type === 'task.status_changed' && /负责人回答了 P1-T1 的问题：PostgreSQL/.test(e.summary)));
   assert.equal((await req('POST', `/api/v1/admin/tasks/${t.id}/answer`, { answer: 'x' })).status, 409);
 });
+
+test('授权 agent 创建邀请：未授权拒绝，授权后生成一次性邀请并 @负责人', async () => {
+  const { req, project, join: joinAgent } = await setup();
+  const a = await joinAgent('协调者');
+  const t = (await req('POST', '/api/v1/admin/tasks', { project: project.id, title: '审核 PR #12' })).json();
+  const body = { task: t.id, note: '需要一个熟悉前端的审核者', name: '审核-前端', tags: ['前端'], harness: 'claude' };
+  assert.equal((await req('POST', '/api/v1/invites', body, a.headers)).status, 403);
+  assert.equal((await req('PATCH', `/api/v1/admin/agents/${a.agent.id}`, { can_invite: true })).status, 200);
+  assert.match((await req('GET', '/api/v1/me?format=md', undefined, a.headers)).text, /已获负责人授权/);
+  const r = await req('POST', '/api/v1/invites', body, a.headers);
+  assert.equal(r.status, 200);
+  const inv = r.json();
+  assert.equal(inv.max_uses, 1);
+  assert.equal(inv.created_by, a.agent.id);
+  assert.match(inv.command, new RegExp(`^ahub run --hub http://[^ ]+ --invite ${inv.code} --name "审核-前端" --harness claude$`));
+  // 任务下有评论 @负责人，负责人收到提及
+  const c = (await req('GET', `/api/v1/admin/tasks/${t.id}`)).json().comments.at(-1);
+  assert.match(c.parts[0].text, /^@负责人 需要一个新 agent：需要一个熟悉前端的审核者/);
+  const events = (await req('GET', '/api/v1/admin/events?limit=10')).json();
+  assert.ok(events.some((e) => e.type === 'mention' && e.audience.length === 0));
+  // 邀请可以正常使用，带上标签
+  const j = (await req('POST', '/api/v1/join', { invite: inv.code, name: '审核-前端' }, {})).json();
+  assert.deepEqual(j.agent.projects[0].tags, ['前端']);
+  // 取消授权后又被拒绝；agent 不能自己改权限
+  assert.equal((await req('PATCH', '/api/v1/me', { can_invite: true }, a.headers)).status, 200);
+  await req('PATCH', `/api/v1/admin/agents/${a.agent.id}`, { can_invite: false });
+  assert.equal((await req('POST', '/api/v1/invites', body, a.headers)).status, 403);
+});
