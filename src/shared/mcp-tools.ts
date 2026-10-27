@@ -70,7 +70,8 @@ export function createHubMcpServer(call: HubCall, opts: ToolOptions = {}): McpSe
       annotations: { readOnlyHint: true },
     },
     async ({ ack, project }) => {
-      const q = new URLSearchParams({ format: 'md' });
+      // mark：读到的待处理事项自动打上「处理中」的回执，负责人在控制台能看到
+      const q = new URLSearchParams({ format: 'md', mark: '1' });
       if (ack !== undefined) q.set('ack', String(ack));
       if (project) q.set('project', project);
       return reply(call('GET', `/api/v1/inbox?${q}`));

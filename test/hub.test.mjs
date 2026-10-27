@@ -555,3 +555,83 @@ test('邀请码预设名称：加入时不写 name 就用它，写了以自己�
   // 会破坏启动命令的字符被去掉
   assert.equal(hub.createInvite({ project: p1.id, name: 'a"b`c$d' }).agent_name, 'abcd');
 });
+
+test('回执：值守进程唤起时打 👌，这一轮跑完统一改成 ✅，中途回复不提前结束；别人的事项打不上', () => {
+  const { hub, p1, join } = setup();
+  const a = join('甲');
+  const b = join('乙');
+  const t = hub.createTask({ kind: 'owner' }, { project: p1.id, title: '写接口', assignee: a.agent.id });
+  hub.comment({ kind: 'owner' }, t.id, `@甲 先看一下接口文档`);
+  hub.message({ kind: 'owner' }, a.agent.id, '今天能交吗');
+  const seqs = hub.inbox(a.row).needs_action.map((e) => e.seq);
+
+  // 乙拿甲的事件号来打回执，什么都打不上
+  assert.equal(hub.markReceipts(b.row, { state: 'working', seqs }).updated, 0);
+
+  hub.reportActivity(a.row, { state: 'working', note: '处理新事项' });
+  const r = hub.markReceipts(a.row, { state: 'working', seqs });
+  assert.equal(r.updated, 3); // 指派、评论（评论和 @ 是同一条）、私信
+  let d = hub.getTask(t.id);
+  assert.deepEqual(d.receipts.map((x) => [x.agent, x.state]), [[a.agent.id, 'working']]);
+  assert.deepEqual(d.comments[0].receipts.map((x) => [x.agent_name, x.state]), [['甲', 'working']]);
+  assert.equal(hub.listMessages()[0].receipts[0].state, 'working');
+
+  // 这一轮还没跑完：回了一句「收到」也不提前打勾
+  hub.comment({ kind: 'agent', agent: a.row }, t.id, '收到，在改');
+  hub.accept(a.row, t.id);
+  assert.equal(hub.getTask(t.id).comments[0].receipts[0].state, 'working');
+
+  // 回执事件只给负责人，不会再唤醒 agent
+  assert.ok(!hub.inbox(a.row).events.some((e) => e.type === 'receipt.updated'));
+  assert.ok(hub.eventsForOwner({}).some((e) => e.type === 'receipt.updated' && e.data.state === 'working'));
+
+  assert.equal(hub.markReceipts(a.row, { state: 'done' }).updated, 3);
+  hub.reportActivity(a.row, { state: 'idle' });
+  d = hub.getTask(t.id);
+  assert.equal(d.receipts[0].state, 'done');
+  assert.equal(d.comments[0].receipts[0].state, 'done');
+  assert.equal(hub.listMessages()[0].receipts[0].state, 'done');
+  assert.throws(() => hub.markReceipts(a.row, { state: 'ok' }), /state/);
+});
+
+test('回执：交互式会话读收件箱时打 👌，回复评论、回私信、接受任务后自动 ✅', () => {
+  const { hub, p1, join } = setup();
+  const a = join('甲');
+  const t = hub.createTask({ kind: 'owner' }, { project: p1.id, title: '写接口', assignee: a.agent.id });
+  hub.comment({ kind: 'owner' }, t.id, '注意兼容老接口');
+  hub.message({ kind: 'owner' }, a.agent.id, '今天能交吗');
+
+  hub.inbox(a.row); // 不带 mark（比如钩子里只看不确认）不打回执
+  assert.equal(hub.getTask(t.id).receipts.length, 0);
+  hub.inbox(a.row, { mark: true });
+  assert.equal(hub.getTask(t.id).receipts[0].state, 'working');
+  assert.equal(hub.getTask(t.id).comments[0].receipts[0].state, 'working');
+  assert.equal(hub.listMessages()[0].receipts[0].state, 'working');
+
+  hub.accept(a.row, t.id);
+  assert.equal(hub.getTask(t.id).receipts[0].state, 'done');
+  assert.equal(hub.getTask(t.id).comments[0].receipts[0].state, 'working');
+  hub.comment({ kind: 'agent', agent: a.row }, t.id, '好的，会兼容');
+  assert.equal(hub.getTask(t.id).comments[0].receipts[0].state, 'done');
+  hub.message({ kind: 'agent', agent: a.row }, 'owner', '能交');
+  assert.equal(hub.listMessages().find((m) => m.sender === 'owner').receipts[0].state, 'done');
+});
+
+test('回执：运行失败标 ⚠️ 并带原因；值守进程退出时还在处理中的标 ⏸', () => {
+  const { hub, p1, join } = setup();
+  const a = join('甲');
+  const t1 = hub.createTask({ kind: 'owner' }, { project: p1.id, title: '一', assignee: a.agent.id });
+  const t2 = hub.createTask({ kind: 'owner' }, { project: p1.id, title: '二', assignee: a.agent.id });
+  hub.markReceipts(a.row, { state: 'working', tasks: [t1.id] });
+  hub.markReceipts(a.row, { state: 'failed', note: '运行达到单次上限 30 分钟，已结束' });
+  assert.deepEqual(
+    hub.getTask(t1.id).receipts.map((r) => [r.state, r.note]),
+    [['failed', '运行达到单次上限 30 分钟，已结束']],
+  );
+  // 下一轮重新接手会再变回处理中
+  hub.markReceipts(a.row, { state: 'working', tasks: [t1.id, t2.id] });
+  assert.equal(hub.getTask(t1.id).receipts[0].state, 'working');
+  hub.reportActivity(a.row, { state: 'stopped' });
+  assert.equal(hub.getTask(t1.id).receipts[0].state, 'stopped');
+  assert.equal(hub.getTask(t2.id).receipts[0].state, 'stopped');
+});

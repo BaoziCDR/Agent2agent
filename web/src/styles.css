@@ -1900,3 +1900,43 @@ table.table {
   flex-direction: column;
   gap: 2px;
 }
+
+/* 回执：评论、私信、任务下的 👌/✅ 小标签 */
+.receipts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.receipt {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 20px;
+  cursor: default;
+}
+
+.receipt.working {
+  background: var(--accent-soft);
+  border-color: transparent;
+  color: var(--accent);
+}
+
+.receipt.done {
+  background: var(--good-soft);
+  border-color: transparent;
+  color: var(--good);
+}
+
+.receipt.failed {
+  background: var(--warn-soft);
+  border-color: transparent;
+  color: var(--warn);
+}

@@ -18,7 +18,7 @@ export function Feed() {
   const { data } = useData(() => get<HubEvent[]>(`/events?limit=${limit}${project ? `&project=${project}` : ''}`), [project, limit]);
 
   const types = TYPE_GROUPS[group].types;
-  const events = (data ?? []).filter((e) => (types.length === 0 || types.includes(e.type)) && (!agent || e.actor === agent));
+  const events = (data ?? []).filter((e) => e.type !== 'receipt.updated' && (types.length === 0 || types.includes(e.type)) && (!agent || e.actor === agent));
 
   return (
     <div style={{ maxWidth: 900 }}>

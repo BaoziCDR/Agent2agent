@@ -80,7 +80,8 @@ export type EventType =
   | 'comment.created'
   | 'message.direct'
   | 'mention'
-  | 'owner.broadcast';
+  | 'owner.broadcast'
+  | 'receipt.updated';
 
 export interface HubEvent {
   seq: number;

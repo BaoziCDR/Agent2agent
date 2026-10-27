@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { get, markOwnerRead, type Message, post } from '../api';
-import { clock, useData, useHub } from '../ui';
+import { Receipts, clock, useData, useHub } from '../ui';
 import { Markdown } from '../markdown';
 
 export function Messages() {
@@ -103,6 +103,7 @@ export function Messages() {
                   {m.sender_name} → {m.recipient_name}
                 </div>
                 <Markdown text={m.body} agents={agents} />
+                <Receipts list={m.receipts} />
               </div>
               {m.sender !== 'owner' && agents.some((a) => a.id === m.sender && a.status === 'active') && (
                 <button

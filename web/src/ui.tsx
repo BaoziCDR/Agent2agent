@@ -1,5 +1,5 @@
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useState } from 'react';
-import type { Agent, HubEvent, Presence, Project, Task } from './api';
+import type { Agent, HubEvent, Presence, Project, Receipt, Task } from './api';
 
 export interface HubCtx {
   projects: Project[];
@@ -49,6 +49,34 @@ export function timeAgo(iso: string | null | undefined): string {
   if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`;
   if (diff < 86400) return `${Math.floor(diff / 3600)} 小时前`;
   return `${Math.floor(diff / 86400)} 天前`;
+}
+
+const RECEIPT: Record<Receipt['state'], { icon: string; label: string }> = {
+  working: { icon: '👌', label: '处理中' },
+  done: { icon: '✅', label: '已处理' },
+  failed: { icon: '⚠️', label: '处理失败' },
+  stopped: { icon: '⏸', label: '处理中断' },
+};
+
+/** 消息下面一排小标签：哪个 agent 接手了、处理到哪一步，像聊天软件里的表情回应。 */
+export function Receipts({ list }: { list: Receipt[] | undefined }) {
+  if (!list?.length) return null;
+  return (
+    <div className="receipts">
+      {list.map((r) => {
+        const s = RECEIPT[r.state] ?? RECEIPT.working;
+        return (
+          <span
+            key={r.agent}
+            className={`receipt ${r.state}`}
+            title={`${r.agent_name}（${r.agent}）${s.label} · ${clock(r.updated_at)}${r.note ? `\n${r.note}` : ''}`}
+          >
+            <span aria-label={s.label}>{s.icon}</span> {r.agent_name}
+          </span>
+        );
+      })}
+    </div>
+  );
 }
 
 export function clock(iso: string): string {

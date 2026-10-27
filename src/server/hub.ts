@@ -186,9 +186,24 @@ export interface TaskDetail extends TaskView {
   /** 引用的任务和引用了本任务的任务，带标题和状态方便直接展示 */
   ref_tasks: TaskBrief[];
   referenced_by: TaskBrief[];
-  comments: { id: number; author: string; author_name: string; parts: Part[]; created_at: string }[];
+  comments: { id: number; author: string; author_name: string; parts: Part[]; created_at: string; receipts: ReceiptView[] }[];
+  /** 指派、退回等需要处理的事项被 agent 接手的回执 */
+  receipts: ReceiptView[];
   artifacts: ArtifactView[];
   progress_log: { author: string; percent: number; note: string; created_at: string }[];
+}
+
+export type ReceiptKind = 'comment' | 'message' | 'task';
+/** working 处理中 👌、done 已处理 ✅、failed 处理失败 ⚠️、stopped 处理中断 ⏸ */
+export type ReceiptState = 'working' | 'done' | 'failed' | 'stopped';
+const RECEIPT_STATES: ReceiptState[] = ['working', 'done', 'failed', 'stopped'];
+
+export interface ReceiptView {
+  agent: string;
+  agent_name: string;
+  state: ReceiptState;
+  note: string;
+  updated_at: string;
 }
 
 export interface TaskBrief {
@@ -480,6 +495,7 @@ export class Hub {
     this.write(() => {
       for (const a of gone) {
         this.db.prepare("UPDATE agents SET presence = 'off' WHERE id = ?").run(a.id);
+        this.settleReceipts(a, 'stopped', { note: '值守进程断开，处理中断' });
         if (a.status !== 'active') continue; // 被停用的不必再通知
         const tasks = this.agentView(a).active_tasks;
         const lost = this.streamLostAt.has(a.id);
@@ -503,7 +519,9 @@ export class Hub {
     if (state === 'working') this.activity.set(agent.id, { state, note, at });
     else this.activity.delete(agent.id);
     const who = `${agent.name}（${agentCode(agent.id)}）`;
-    this.write(() =>
+    this.write(() => {
+      // 值守进程退出时，还挂着「处理中」的回执改成中断
+      if (state === 'stopped') this.settleReceipts(agent, 'stopped', { note: '值守进程已退出，处理中断' });
       this.emit('agent.activity', agentCode(agent.id), {
         audience: [],
         data: { agent: agentCode(agent.id), state, note },
@@ -513,8 +531,8 @@ export class Hub {
             : state === 'stopped'
               ? `${who}的值守进程已退出`
               : `${who}处理完毕，回到待命${note ? `：${note}` : ''}`,
-      }),
-    );
+      });
+    });
     return { ok: true };
   }
 
@@ -664,7 +682,7 @@ export class Hub {
   }
 
   /** 收件箱：从 since（默认为已确认的位置）之后的可见事件，加上当前状态快照。 */
-  inbox(agent: AgentRow, opts: { since?: number; project?: string; limit?: number } = {}): InboxResult {
+  inbox(agent: AgentRow, opts: { since?: number; project?: string; limit?: number; mark?: boolean } = {}): InboxResult {
     const since = opts.since ?? agent.ack_seq;
     const page = this.eventsForAgent(agent, since, opts.limit ?? 50, opts.project);
     const more = page.more;
@@ -673,6 +691,8 @@ export class Hub {
     const lastSeq = page.events.length ? page.events[page.events.length - 1].seq : Math.max(since, 0);
     const me = agentCode(agent.id);
     const needs = events.filter((e) => this.needsAction(e, me));
+    // 交互式会话读到需要处理的事项，就在对应的评论、私信、任务上打「处理中」的回执
+    if (opts.mark && needs.length) this.write(() => this.applyReceipts(agent, needs.flatMap((e) => this.receiptTargets(e)), 'working'));
     const projectFilter = opts.project ? this.requireProject(opts.project).id : null;
     const myRows = this.db
       .prepare(
@@ -1393,6 +1413,7 @@ export class Hub {
     const log = this.db
       .prepare('SELECT author, percent, note, created_at FROM progress_log WHERE task_id = ? ORDER BY id')
       .all(t.id) as { author: string; percent: number; note: string; created_at: string }[];
+    const commentReceipts = this.receiptsFor('comment', comments.map((c) => c.id));
     return {
       ...this.taskView(t),
       subtasks: subtasks.map((s) => this.taskView(s)),
@@ -1408,7 +1429,9 @@ export class Hub {
         author_name: this.actorName(c.author),
         parts: json<Part[]>(c.parts, []),
         created_at: c.created_at,
+        receipts: commentReceipts.get(c.id) ?? [],
       })),
+      receipts: this.receiptsFor('task', [t.id]).get(t.id) ?? [],
       artifacts: artifacts.map((a) => this.artifactView(a)),
       progress_log: log,
     };
@@ -1678,6 +1701,9 @@ export class Hub {
       );
     if (r.changes === 0) throw conflict('任务刚刚被其他人修改，请重试');
     const updated = this.taskById(t.id);
+    // agent 自己接受、提交、阻塞或放下任务，说明指派这件事已经处理了
+    const self = parseId(actor, 'A');
+    if (self !== null) this.settleOwn(self, { task: t.id });
     this.emit('task.status_changed', actor, {
       task: updated,
       data: {
@@ -2082,9 +2108,13 @@ export class Hub {
     if (author === 'owner') this.db.prepare(`UPDATE events SET owner_read = 1 WHERE type = 'mention' AND audience = '[]' AND task_id = ?`).run(t.id);
     const who = this.actorName(author);
     const assignee = t.assignee_id === null ? null : agentCode(t.assignee_id);
+    const commentId = Number(r.lastInsertRowid);
+    // agent 在任务下回复了，它在这个任务里接手的评论和指派都算处理完
+    const self = parseId(author, 'A');
+    if (self !== null) this.settleOwn(self, { task: t.id, comments: true });
     this.emit('comment.created', author, {
       task: t,
-      data: { comment_id: Number(r.lastInsertRowid), text, assignee, files: files.map((f) => f.name) },
+      data: { comment_id: commentId, text, assignee, files: files.map((f) => f.name) },
       summary: `${who}在 ${code} 下评论：${text ? excerpt(text) : ''}${files.length ? `${text ? ' ' : ''}〔附件：${files.map((f) => f.name).join('、')}〕` : ''}`,
     });
     const mentioned = new Set<string>();
@@ -2094,10 +2124,178 @@ export class Hub {
       this.emit('mention', author, {
         task: t,
         audience: target === 'owner' ? [] : [target],
-        data: { target, text },
+        data: { target, text, comment_id: commentId },
         summary: `${who}在 ${code} 里 @了${target === 'owner' ? '负责人' : '你'}：${excerpt(text)}`,
       });
     }
+  }
+
+  // ───────────── 回执 ─────────────
+
+  /** 一个需要处理的事件落在哪条评论、私信或任务上。老事件没有记录编号的就没有回执。 */
+  private receiptTargets(e: HubEvent): { kind: ReceiptKind; id: number }[] {
+    switch (e.type) {
+      case 'comment.created':
+      case 'mention':
+        return typeof e.data.comment_id === 'number' ? [{ kind: 'comment', id: e.data.comment_id }] : [];
+      case 'message.direct':
+        return typeof e.data.message_id === 'number' ? [{ kind: 'message', id: e.data.message_id }] : [];
+      case 'task.assigned':
+      case 'task.status_changed':
+      case 'task.unlocked': {
+        const t = e.task ? this.findTask(e.task) : null;
+        return t ? [{ kind: 'task', id: t.id }] : [];
+      }
+      default:
+        return [];
+    }
+  }
+
+  private findTask(code: string): TaskRow | null {
+    try {
+      return this.requireTask(code);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * ahub 命令行上报回执。working 时给出这次唤起的事件号（seqs）和手上的任务（tasks），只认真正需要它处理的；
+   * done / failed / stopped 不给目标时，把它所有「处理中」的回执一起结束。
+   */
+  markReceipts(agent: AgentRow, input: { state?: string; seqs?: number[]; tasks?: string[]; note?: string }) {
+    const state = input.state as ReceiptState;
+    if (!RECEIPT_STATES.includes(state)) throw invalid('state 只能是 working、done、failed 或 stopped');
+    const note = String(input.note ?? '').slice(0, 300);
+    const me = agentCode(agent.id);
+    const targets: { kind: ReceiptKind; id: number }[] = [];
+    const seqs = (input.seqs ?? []).filter((n) => Number.isInteger(n)).slice(0, 200);
+    if (seqs.length) {
+      const rows = this.db
+        .prepare(`SELECT * FROM events WHERE seq IN (${seqs.map(() => '?').join(',')})`)
+        .all(...seqs) as unknown as EventRow[];
+      for (const row of rows) {
+        const e = this.toEvent(row);
+        if (this.canSee(agent, e) && this.needsAction(e, me)) targets.push(...this.receiptTargets(e));
+      }
+    }
+    for (const code of (input.tasks ?? []).slice(0, 200)) {
+      const t = this.findTask(String(code));
+      if (t && t.assignee_id === agent.id) targets.push({ kind: 'task', id: t.id });
+    }
+    const explicit = seqs.length > 0 || (input.tasks ?? []).length > 0;
+    const updated = this.write(() =>
+      state === 'working' || explicit ? this.applyReceipts(agent, targets, state, note) : this.settleReceipts(agent, state, { note }),
+    );
+    return { ok: true, updated };
+  }
+
+  /** 写入回执并通知控制台；working 新建或重新打开，其他状态只结束「处理中」的。返回改动的条数。 */
+  private applyReceipts(agent: AgentRow, targets: { kind: ReceiptKind; id: number }[], state: ReceiptState, note = ''): number {
+    const at = this.iso();
+    const seen = new Set<string>();
+    const changed: { kind: ReceiptKind; id: number }[] = [];
+    for (const t of targets) {
+      const key = `${t.kind}:${t.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const r =
+        state === 'working'
+          ? this.db
+              .prepare(
+                `INSERT INTO receipts (kind, target_id, agent_id, state, note, created_at, updated_at) VALUES (?, ?, ?, 'working', ?, ?, ?)
+                 ON CONFLICT (kind, target_id, agent_id) DO UPDATE SET state = 'working', note = excluded.note, updated_at = excluded.updated_at
+                 WHERE receipts.state <> 'working'`,
+              )
+              .run(t.kind, t.id, agent.id, note, at, at)
+          : this.db
+              .prepare(`UPDATE receipts SET state = ?, note = ?, updated_at = ? WHERE kind = ? AND target_id = ? AND agent_id = ? AND state = 'working'`)
+              .run(state, note, at, t.kind, t.id, agent.id);
+      if (r.changes) changed.push(t);
+    }
+    this.receiptEvent(agent, state, changed);
+    return changed.length;
+  }
+
+  /** 结束 agent 「处理中」的回执：不给范围就是全部，task 限定在某个任务里（comments 时连同该任务下的评论），replyTo 是回私信的对象。 */
+  private settleReceipts(
+    agent: AgentRow,
+    state: ReceiptState,
+    scope: { note?: string; task?: number; comments?: boolean; replyTo?: string } = {},
+  ): number {
+    const where = ["agent_id = ?", "state = 'working'"];
+    const params: (string | number)[] = [agent.id];
+    if (scope.task !== undefined) {
+      where.push(
+        scope.comments
+          ? "((kind = 'task' AND target_id = ?) OR (kind = 'comment' AND target_id IN (SELECT id FROM comments WHERE task_id = ?)))"
+          : "kind = 'task' AND target_id = ?",
+      );
+      params.push(scope.task, ...(scope.comments ? [scope.task] : []));
+    } else if (scope.replyTo !== undefined) {
+      where.push("kind = 'message' AND target_id IN (SELECT id FROM messages WHERE sender = ? AND recipient = ?)");
+      params.push(scope.replyTo, agentCode(agent.id));
+    }
+    const rows = this.db.prepare(`SELECT kind, target_id FROM receipts WHERE ${where.join(' AND ')}`).all(...params) as {
+      kind: ReceiptKind;
+      target_id: number;
+    }[];
+    if (!rows.length) return 0;
+    this.db
+      .prepare(`UPDATE receipts SET state = ?, note = ?, updated_at = ? WHERE ${where.join(' AND ')}`)
+      .run(state, scope.note ?? '', this.iso(), ...params);
+    this.receiptEvent(agent, state, rows.map((r) => ({ kind: r.kind, id: r.target_id })));
+    return rows.length;
+  }
+
+  /**
+   * agent 自己回复、接受或提交时顺手把相关回执标成已处理。
+   * 值守进程唤起的这一轮还没跑完时不动，等跑完再由 ahub run 统一标记，免得回了一句「收到」就显示处理完。
+   */
+  private settleOwn(agentId: number, scope: { task?: number; comments?: boolean; replyTo?: string }) {
+    if (this.activity.get(agentId)?.state === 'working') return;
+    const agent = this.db.prepare('SELECT * FROM agents WHERE id = ?').get(agentId) as unknown as AgentRow | undefined;
+    if (agent) this.settleReceipts(agent, 'done', scope);
+  }
+
+  private receiptEvent(agent: AgentRow, state: ReceiptState, targets: { kind: ReceiptKind; id: number }[]) {
+    if (!targets.length) return;
+    const who = `${agent.name}（${agentCode(agent.id)}）`;
+    const verb = { working: '开始处理', done: '处理完', failed: '没能处理完', stopped: '中断了处理' }[state];
+    // 事件挂在相关任务上，控制台据此只刷新打开的那个任务
+    const taskIds = new Set<number>();
+    for (const t of targets) {
+      if (t.kind === 'task') taskIds.add(t.id);
+      else if (t.kind === 'comment') {
+        const c = this.db.prepare('SELECT task_id FROM comments WHERE id = ?').get(t.id) as { task_id: number } | undefined;
+        if (c) taskIds.add(c.task_id);
+      }
+    }
+    const task = taskIds.size === 1 ? this.taskById([...taskIds][0]) : null;
+    this.emit('receipt.updated', agentCode(agent.id), {
+      task,
+      audience: [],
+      data: { agent: agentCode(agent.id), state, targets },
+      summary: `${who}${verb} ${targets.length} 条事项`,
+    });
+  }
+
+  /** 一批评论、私信或任务上的回执，按对象分组，先接手的排前面。 */
+  private receiptsFor(kind: ReceiptKind, ids: number[]): Map<number, ReceiptView[]> {
+    const out = new Map<number, ReceiptView[]>();
+    if (!ids.length) return out;
+    const rows = this.db
+      .prepare(
+        `SELECT r.*, a.name FROM receipts r JOIN agents a ON a.id = r.agent_id
+         WHERE r.kind = ? AND r.target_id IN (${ids.map(() => '?').join(',')}) ORDER BY r.created_at, r.agent_id`,
+      )
+      .all(kind, ...ids) as { target_id: number; agent_id: number; name: string; state: ReceiptState; note: string; updated_at: string }[];
+    for (const r of rows) {
+      const list = out.get(r.target_id) ?? [];
+      list.push({ agent: agentCode(r.agent_id), agent_name: r.name, state: r.state, note: r.note, updated_at: r.updated_at });
+      out.set(r.target_id, list);
+    }
+    return out;
   }
 
   // ───────────── 交付物版本 ─────────────
@@ -2251,14 +2449,16 @@ export class Hub {
       }
     }
     return this.write(() => {
-      this.db
+      const r = this.db
         .prepare('INSERT INTO messages (sender, recipient, body, created_at) VALUES (?, ?, ?, ?)')
         .run(from, target, body.trim(), this.iso());
+      // agent 回了私信，对方发给它、它接手了的私信都算处理完
+      if (actor.kind === 'agent') this.settleOwn(actor.agent.id, { replyTo: target });
       // 负责人回了私信，就当已读过对方发来的私信
       if (from === 'owner') this.db.prepare(`UPDATE events SET owner_read = 1 WHERE type = 'message.direct' AND audience = '[]' AND actor = ?`).run(target);
       this.emit('message.direct', from, {
         audience: target === 'owner' ? [] : [target],
-        data: { from, to: target, body: body.trim() },
+        data: { from, to: target, body: body.trim(), message_id: Number(r.lastInsertRowid) },
         summary: `${this.actorName(from)}给${target === 'owner' ? '负责人' : '你'}发来私信：${excerpt(body)}`,
       });
       return { ok: true };
@@ -2273,7 +2473,13 @@ export class Hub {
             .all(filter.agent, filter.agent)
         : this.db.prepare('SELECT * FROM messages ORDER BY id DESC LIMIT 200').all()
     ) as { id: number; sender: string; recipient: string; body: string; created_at: string }[];
-    return rows.map((m) => ({ ...m, sender_name: this.actorName(m.sender), recipient_name: this.actorName(m.recipient) }));
+    const receipts = this.receiptsFor('message', rows.map((m) => m.id));
+    return rows.map((m) => ({
+      ...m,
+      sender_name: this.actorName(m.sender),
+      recipient_name: this.actorName(m.recipient),
+      receipts: receipts.get(m.id) ?? [],
+    }));
   }
 
   broadcast(project: string, body: string) {

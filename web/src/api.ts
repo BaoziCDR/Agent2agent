@@ -76,11 +76,21 @@ export interface TaskBrief {
   assignee_name: string | null;
 }
 
+/** agent 接手评论、私信、指派后的回执 */
+export interface Receipt {
+  agent: string;
+  agent_name: string;
+  state: 'working' | 'done' | 'failed' | 'stopped';
+  note: string;
+  updated_at: string;
+}
+
 export interface TaskDetail extends Task {
   subtasks: Task[];
   ref_tasks: TaskBrief[];
   referenced_by: TaskBrief[];
-  comments: { id: number; author: string; author_name: string; parts: Part[]; created_at: string }[];
+  comments: { id: number; author: string; author_name: string; parts: Part[]; created_at: string; receipts: Receipt[] }[];
+  receipts: Receipt[];
   artifacts: Artifact[];
   progress_log: { author: string; percent: number; note: string; created_at: string }[];
 }
@@ -164,6 +174,7 @@ export interface Message {
   recipient_name: string;
   body: string;
   created_at: string;
+  receipts: Receipt[];
 }
 
 const TOKEN_KEY = 'ahub.owner-token';

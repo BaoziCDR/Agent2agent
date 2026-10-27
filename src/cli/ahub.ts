@@ -344,6 +344,8 @@ async function main(argv: string[]) {
       const q = new URLSearchParams();
       if (v.project) q.set('project', v.project);
       if (cfg.last_seq) q.set('ack', String(cfg.last_seq));
+      // 读到需要处理的事项就在控制台打上 👌（处理中）；值守进程唤起的这一轮由 ahub run 自己打
+      if (!process.env.AHUB_RUN) q.set('mark', '1');
       if (v.json) q.set('format', 'json');
       const text = ok(await api(cfg, 'GET', `/api/v1/inbox?${q}`, undefined, { md: !v.json }));
       const seq = v.json ? (JSON.parse(text) as { last_seq: number }).last_seq : Number(LAST_SEQ_RE.exec(text)?.[1] ?? 0);
@@ -385,7 +387,7 @@ async function main(argv: string[]) {
           return;
         }
         if (json.events.length > 0) {
-          const q2 = new URLSearchParams();
+          const q2 = new URLSearchParams({ mark: '1' });
           if (cfg.last_seq) q2.set('since', String(cfg.last_seq));
           const text = ok(await api(cfg, 'GET', `/api/v1/inbox?${q2}`));
           const seq = Number(LAST_SEQ_RE.exec(text)?.[1] ?? 0);
