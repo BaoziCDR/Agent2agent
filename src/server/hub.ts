@@ -169,6 +169,8 @@ export interface InboxResult {
   pending_assignments: TaskView[];
   claimable: TaskView[];
   projects: { id: string; name: string }[];
+  /** 长轮询等待落空时给 agent 的提示；skipped 表示这次没有真正等待就直接返回了 */
+  wait?: { skipped: boolean; hint: string };
 }
 
 export const projectCode = (id: number) => `P-${id}`;
@@ -212,6 +214,8 @@ export class Hub {
   private streamLostAt = new Map<number, number>();
   /** agent id → 守护进程上报的当前状态 */
   private activity = new Map<number, { state: string; note: string; at: string }>();
+  private daemons = new Map<number, number>();
+  private emptyWaits = new Map<number, { n: number; at: number }>();
   private offlineAfterMs: number;
   private streamGraceMs: number;
 
@@ -321,6 +325,28 @@ export class Hub {
       this.streamLostAt.set(agentId, this.now().getTime());
       this.activity.delete(agentId);
     }
+  }
+
+  /** `ahub run` 值守进程的实时连接计数：有值守进程时，agent 不需要自己等待 */
+  markDaemon(agentId: number, delta: 1 | -1) {
+    const n = (this.daemons.get(agentId) ?? 0) + delta;
+    if (n <= 0) this.daemons.delete(agentId);
+    else this.daemons.set(agentId, n);
+  }
+
+  hasDaemon(agentId: number) {
+    return (this.daemons.get(agentId) ?? 0) > 0;
+  }
+
+  /** 连续落空的等待次数（30 分钟没再等过就重新计数） */
+  idleWaits(agentId: number): number {
+    const w = this.emptyWaits.get(agentId);
+    return w && this.now().getTime() - w.at < 30 * 60_000 ? w.n : 0;
+  }
+
+  noteWait(agentId: number, empty: boolean) {
+    if (!empty) this.emptyWaits.delete(agentId);
+    else this.emptyWaits.set(agentId, { n: this.idleWaits(agentId) + 1, at: this.now().getTime() });
   }
 
   isLive(agentId: number) {

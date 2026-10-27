@@ -143,15 +143,38 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
       const wait = Math.min(Math.max(Number(q.wait ?? 0) || 0, 0), maxWait);
       let result = hub.inbox(agent, { since, project: q.project });
       if (wait > 0 && result.events.length === 0) {
-        await waitForEvent(hub, agent, wait * 1000, req);
-        result = hub.inbox(agent, { since, project: q.project });
+        // cont=1 是 ahub wait 内部的续等，不算 agent 又调用了一次
+        const cont = q.cont === '1';
+        const idle = hub.idleWaits(agent.id);
+        const daemon = hub.hasDaemon(agent.id);
+        const skip = daemon || (!cont && idle >= 2);
+        if (!skip) {
+          await waitForEvent(hub, agent, wait * 1000, req);
+          result = hub.inbox(agent, { since, project: q.project });
+        }
+        if (result.events.length === 0) {
+          if (!cont) hub.noteWait(agent.id, true);
+          result.wait = {
+            skipped: skip,
+            hint: daemon
+              ? '你的值守进程（ahub run）在线，有新事项会自动唤醒你。不用等待，直接结束本轮。'
+              : skip
+                ? `你已经连续 ${idle + 1} 次等待都没有新事件。不要再循环等待：结束本轮，向用户简短汇报即可。需要常驻待命请让用户在工作目录运行 \`ahub run\`。`
+                : '这次等待没有新事件。可以结束本轮了，不要反复调用等待；需要常驻待命请让用户运行 `ahub run`。',
+          };
+        }
       }
+      if (result.events.length > 0) hub.noteWait(agent.id, false);
       return send(req, reply, result, () => renderInbox(result));
     });
 
     agentApi.get('/api/v1/stream', async (req, reply) => {
       const agent = req.agent!;
       const lastId = Number(req.headers['last-event-id'] ?? (req.query as Q).since ?? agent.ack_seq) || 0;
+      if ((req.query as Q).daemon === '1') {
+        hub.markDaemon(agent.id, 1);
+        req.raw.on('close', () => hub.markDaemon(agent.id, -1));
+      }
       streamEvents(hub, req, reply, lastId, (e) => hub.canSee(agent, e), () => hub.eventsForAgent(agent, lastId, 1000).events, agent.id);
     });
 

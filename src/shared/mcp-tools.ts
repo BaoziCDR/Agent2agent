@@ -79,7 +79,8 @@ export function createHubMcpServer(call: HubCall, opts: ToolOptions = {}): McpSe
     'hub_wait',
     {
       title: '等待新事件',
-      description: '空闲时调用：挂起直到有与你相关的新事件（最多 50 秒），然后返回收件箱。可以连续调用几次来待命。',
+      description:
+        '空闲时最多调用一次：挂起直到有与你相关的新事件（最多 50 秒），然后返回收件箱。没有新事件就结束本轮，不要循环调用；连续落空时 Hub 会直接返回提示。',
       inputSchema: {
         since: z.number().int().optional().describe('只等这个事件号之后的新事件，一般传上次同步返回的事件号'),
         seconds: z.number().int().min(1).max(50).optional().describe('最长等待秒数，默认 45'),
