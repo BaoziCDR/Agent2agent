@@ -117,6 +117,28 @@ test('常驻等待：不受连续落空限制，控制台显示常驻', async ()
   assert.equal((await w('&resident=1')).wait.skipped, true);
 });
 
+test('并发领取：同一个任务只有一个 agent 领到', async () => {
+  const { req, join, project, hub } = await setup();
+  const agents = [];
+  for (const n of ['甲', '乙', '丙', '丁', '戊']) agents.push(await join(n));
+  for (let round = 0; round < 5; round++) {
+    const t = (await req('POST', '/api/v1/admin/tasks', { project: project.id, title: `抢任务 ${round}` })).json();
+    const results = await Promise.all(agents.map((a) => req('POST', `/api/v1/tasks/${t.id}/claim`, {}, a.headers)));
+    const won = results.filter((r) => r.status === 200);
+    assert.equal(won.length, 1);
+    assert.ok(results.filter((r) => r.status !== 200).every((r) => r.status === 409));
+    const detail = (await req('GET', `/api/v1/admin/tasks/${t.id}`)).json();
+    assert.match(detail.assignee, /^A-\d+$/);
+    assert.equal(detail.assignee, won[0].json().assignee);
+    assert.equal(detail.status, 'working');
+  }
+  // 两个 Hub 进程共用数据库时：读到旧版本的写入会被版本号拦下
+  const t = (await req('POST', '/api/v1/admin/tasks', { project: project.id, title: '旧版本' })).json();
+  const stale = hub.db.prepare('SELECT * FROM tasks WHERE num = ? AND project_id = (SELECT id FROM projects LIMIT 1)').get(Number(t.id.split('-T')[1]));
+  await req('POST', `/api/v1/tasks/${t.id}/claim`, {}, agents[0].headers);
+  assert.throws(() => hub.setStatus(stale, 'A-2', 'working', { assignee: 2, summary: 'x' }), /刚刚被其他人修改/);
+});
+
 test('搜索：任务、评论、私信；agent 只能搜自己的项目', async () => {
   const { req, join, project } = await setup();
   const a = await join('甲');
