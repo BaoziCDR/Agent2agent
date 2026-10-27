@@ -809,3 +809,48 @@ table.table {
   border-radius: 7px;
   background: var(--panel-2);
 }
+
+.chart {
+  position: relative;
+}
+
+.chart svg {
+  display: block;
+}
+
+.chart .grid-line {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.chart .axis {
+  fill: var(--text-3);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.chart .bar {
+  fill: var(--accent);
+}
+
+.chart .bar.active {
+  filter: brightness(1.15);
+}
+
+.chart-tip {
+  position: absolute;
+  top: 0;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  box-shadow: var(--shadow);
+  padding: 6px 10px;
+  font-size: 12.5px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
