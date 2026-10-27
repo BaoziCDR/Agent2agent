@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { del, get, type Invite as InviteData, post } from '../api';
-import { CodeBox, agentLabel, clock, splitList, useData, useHub } from '../ui';
+import { CodeBox, Modal, agentLabel, clock, splitList, useData, useHub } from '../ui';
 
 function harnessPrompt(hub: string, code: string, platform: string, example: string, tags: string[]) {
   return `请加入我的多 Agent 协作中枢（Hub），按它的规则领取任务、汇报进度、和其他 agent 协作。
@@ -27,8 +27,9 @@ function chatPrompt(hub: string, code: string) {
 `;
 }
 
-export function Invite() {
-  const { projects, project, agents, toast } = useHub();
+/** 「Agent」页里的「邀请 Agent」弹窗：先填表生成邀请码，再给出各平台的接入提示词。 */
+export function InviteDialog({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const { projects, project, toast } = useHub();
   const active = projects.filter((p) => p.status === 'active');
   const [targetChoice, setTarget] = useState('');
   const target = targetChoice || (project ?? active[0]?.id ?? '');
@@ -40,19 +41,23 @@ export function Invite() {
   const [tab, setTab] = useState<'codex' | 'claude' | 'mcp' | 'other'>('codex');
   const { data: info } = useData(() => get<{ urls: string[] }>('/info'), []);
   const [hub, setHub] = useState('');
-  const { data: invites, reload } = useData(() => get<InviteData[]>(`/invites${project ? `?project=${project}` : ''}`), [project]);
 
   useEffect(() => {
     if (!hub && info) setHub(info.urls.find((u) => !u.includes('127.0.0.1')) ?? info.urls[0] ?? location.origin);
   }, [info, hub]);
 
-  if (active.length === 0) return <p className="muted">请先在「项目」页创建一个项目。</p>;
+  if (active.length === 0)
+    return (
+      <Modal title="邀请 Agent" onClose={onClose}>
+        <p className="muted">请先在「项目」页创建一个项目。</p>
+      </Modal>
+    );
 
   const create = async () => {
     try {
       const inv = await post<InviteData>('/invites', { project: target, tags: splitList(tags), max_uses: uses, hours, note });
       setCreated(inv);
-      reload();
+      onCreated();
     } catch (err) {
       toast((err as Error).message, true);
     }
@@ -66,51 +71,57 @@ export function Invite() {
   };
 
   return (
-    <div style={{ maxWidth: 860 }}>
-      <h1 className="page-title">邀请 Agent</h1>
-      <p className="page-sub">生成邀请码，把接入提示词粘贴给 Codex、Claude Code 等 agent，它就会自己加入并开始工作。</p>
-
-      <div className="card" style={{ marginBottom: 16 }}>
-        <div className="field-row">
-          <div className="field">
-            <label htmlFor="iv-project">加入哪个项目</label>
-            <select id="iv-project" className="select" value={target} onChange={(e) => setTarget(e.target.value)}>
-              {active.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.id} · {p.name}
-                </option>
-              ))}
-            </select>
+    <Modal title={created ? '邀请码已生成' : '邀请 Agent'} onClose={onClose} wide>
+      <p className="muted" style={{ marginTop: -6 }}>
+        {created ? '把对应平台的提示词粘贴给 agent，它会自己安装 ahub、加入项目并开始工作。' : '生成邀请码，把接入提示词粘贴给 Codex、Claude Code 等 agent，它就会自己加入并开始工作。'}
+      </p>
+      {!created && (
+        <div>
+          <div className="field-row">
+            <div className="field">
+              <label htmlFor="iv-project">加入哪个项目</label>
+              <select id="iv-project" className="select" value={target} onChange={(e) => setTarget(e.target.value)}>
+                {active.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.id} · {p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="iv-tags">能力标签</label>
+              <input id="iv-tags" className="input" value={tags} onChange={(e) => setTags(e.target.value)} placeholder="如：后端, 测试" />
+            </div>
+            <div className="field">
+              <label htmlFor="iv-uses">可用次数</label>
+              <input id="iv-uses" type="number" min={1} className="input" value={uses} onChange={(e) => setUses(Number(e.target.value) || 1)} />
+            </div>
+            <div className="field">
+              <label htmlFor="iv-hours">有效期（小时）</label>
+              <input id="iv-hours" type="number" min={1} className="input" value={hours} onChange={(e) => setHours(Number(e.target.value) || 24)} />
+            </div>
           </div>
           <div className="field">
-            <label htmlFor="iv-tags">能力标签</label>
-            <input id="iv-tags" className="input" value={tags} onChange={(e) => setTags(e.target.value)} placeholder="如：后端, 测试" />
+            <label htmlFor="iv-note">备注</label>
+            <input id="iv-note" className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="如：给笔记本上的 Codex" />
           </div>
           <div className="field">
-            <label htmlFor="iv-uses">可用次数</label>
-            <input id="iv-uses" type="number" min={1} className="input" value={uses} onChange={(e) => setUses(Number(e.target.value) || 1)} />
+            <label htmlFor="iv-hub">Hub 地址（agent 能访问到的地址）</label>
+            <input id="iv-hub" className="input" value={hub} onChange={(e) => setHub(e.target.value)} />
+            {info && info.urls.length > 1 && <span className="hint">本机可用地址：{info.urls.join('  ')}。其他机器上的 agent 请用局域网地址。</span>}
           </div>
-          <div className="field">
-            <label htmlFor="iv-hours">有效期（小时）</label>
-            <input id="iv-hours" type="number" min={1} className="input" value={hours} onChange={(e) => setHours(Number(e.target.value) || 24)} />
+          <div className="btn-row" style={{ justifyContent: 'flex-end' }}>
+            <button className="btn" onClick={onClose}>
+              取消
+            </button>
+            <button className="btn primary" onClick={create}>
+              生成邀请码
+            </button>
           </div>
         </div>
-        <div className="field">
-          <label htmlFor="iv-note">备注</label>
-          <input id="iv-note" className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="如：给笔记本上的 Codex" />
-        </div>
-        <div className="field">
-          <label htmlFor="iv-hub">Hub 地址（agent 能访问到的地址）</label>
-          <input id="iv-hub" className="input" value={hub} onChange={(e) => setHub(e.target.value)} />
-          {info && info.urls.length > 1 && <span className="hint">本机可用地址：{info.urls.join('  ')}。其他机器上的 agent 请用局域网地址。</span>}
-        </div>
-        <button className="btn primary" onClick={create}>
-          生成邀请码
-        </button>
-      </div>
-
+      )}
       {created && prompts && (
-        <div className="card" style={{ marginBottom: 16 }}>
+        <div>
           <div className="btn-row" style={{ justifyContent: 'space-between' }}>
             <div>
               <div className="faint">邀请码（{created.project}，可用 {created.max_uses} 次，{clock(created.expires_at)} 前有效）</div>
@@ -150,62 +161,76 @@ export function Invite() {
               </div>
             </div>
           )}
+          <div className="btn-row" style={{ justifyContent: 'flex-end', marginTop: 14 }}>
+            <button className="btn" onClick={() => setCreated(null)}>
+              再生成一个
+            </button>
+            <button className="btn primary" onClick={onClose}>
+              完成
+            </button>
+          </div>
         </div>
       )}
+    </Modal>
+  );
+}
 
-      <div className="card">
-        <h3>邀请码记录</h3>
-        {invites && invites.length === 0 && <div className="empty">还没有邀请码</div>}
-        {invites && invites.length > 0 && (
-          <div className="table-wrap">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>邀请码</th>
-                <th>项目</th>
-                <th>标签</th>
-                <th>已用</th>
-                <th>有效期至</th>
-                <th>备注</th>
-                <th />
+/** 邀请码记录：负责人生成的和授权 agent 创建的都在这里，可以撤销还有效的。 */
+export function InviteList({ version }: { version: number }) {
+  const { project, agents } = useHub();
+  const { data: invites, reload } = useData(() => get<InviteData[]>(`/invites${project ? `?project=${project}` : ''}`), [project, version]);
+  return (
+    <div className="card" style={{ padding: 0, overflowX: 'auto' }}>
+      {invites && invites.length === 0 && <div className="empty">还没有邀请码，点右上角「邀请 Agent」生成一个</div>}
+      {invites && invites.length > 0 && (
+        <div className="table-wrap">
+        <table className="table">
+          <thead>
+            <tr>
+              <th>邀请码</th>
+              <th>项目</th>
+              <th>标签</th>
+              <th>已用</th>
+              <th>有效期至</th>
+              <th>备注</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {invites.map((i) => (
+              <tr key={i.code}>
+                <td>
+                  <code>{i.code}</code> {!i.valid && <span className="badge">已失效</span>}
+                </td>
+                <td>{i.project}</td>
+                <td>{i.tags.join('、') || '—'}</td>
+                <td>
+                  {i.uses} / {i.max_uses}
+                </td>
+                <td>{clock(i.expires_at)}</td>
+                <td>
+                  {i.note || '—'}
+                  {i.created_by !== 'owner' && <div className="faint">由 {agentLabel(agents, i.created_by)} 创建</div>}
+                </td>
+                <td>
+                  {i.valid && (
+                    <button
+                      className="btn small danger"
+                      onClick={async () => {
+                        await del(`/invites/${i.code}`);
+                        reload();
+                      }}
+                    >
+                      撤销
+                    </button>
+                  )}
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {invites.map((i) => (
-                <tr key={i.code}>
-                  <td>
-                    <code>{i.code}</code> {!i.valid && <span className="badge">已失效</span>}
-                  </td>
-                  <td>{i.project}</td>
-                  <td>{i.tags.join('、') || '—'}</td>
-                  <td>
-                    {i.uses} / {i.max_uses}
-                  </td>
-                  <td>{clock(i.expires_at)}</td>
-                  <td>
-                    {i.note || '—'}
-                    {i.created_by !== 'owner' && <div className="faint">由 {agentLabel(agents, i.created_by)} 创建</div>}
-                  </td>
-                  <td>
-                    {i.valid && (
-                      <button
-                        className="btn small danger"
-                        onClick={async () => {
-                          await del(`/invites/${i.code}`);
-                          reload();
-                        }}
-                      >
-                        撤销
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          </div>
-        )}
-      </div>
+            ))}
+          </tbody>
+        </table>
+        </div>
+      )}
     </div>
   );
 }
