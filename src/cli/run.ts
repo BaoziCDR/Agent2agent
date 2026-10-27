@@ -3,6 +3,7 @@ import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, wr
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import type { CliConfig } from './config.js';
+import { type JudgeMode, applyVerdict, judgePrompt, runJudge, shouldJudge } from './judge.js';
 import {
   type SessionDecision,
   type SessionRecord,
@@ -44,6 +45,8 @@ export interface RunOptions {
   contextWindow: number;
   /** 提示词缓存有效期（分钟）；不填时 Claude 按用量里的缓存类型判断，Codex 按 5 */
   cacheTtlMinutes?: number;
+  /** 规则打分落在灰区时交给小模型判断：off 不用，gray 只在灰区（默认），always 有候选会话就判断 */
+  judge: { mode: JudgeMode; model?: string; timeoutSeconds: number };
   /** 只打印将要执行的命令，不真正唤起 */
   dryRun: boolean;
 }
@@ -320,6 +323,15 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
     if (opts.harness !== 'custom') {
       const info = await wakeInfo(tasks, reasons);
       decision = decideSession(sessions(), opts.harness, info, opts.session);
+      if (shouldJudge(decision, { ...opts.judge, harness: opts.harness })) {
+        const items = note.split('；');
+        if (opts.dryRun) log(`（试运行）规则得分 ${decision.score} 在灰区，正式运行时会交给小模型判断`);
+        else {
+          log(`规则得分 ${decision.score}${decision.gray ? ' 在灰区' : ''}，交给小模型判断`);
+          const verdict = await runJudge(judgePrompt(decision, items, opts.session.threshold), { ...opts.judge, harness: opts.harness }, harnessEnv(''));
+          decision = applyVerdict(decision, verdict);
+        }
+      }
       log(`会话：${decision.action === 'reuse' ? '续用' : '新开'}，${decision.reason}${info.offline ? '（读不到 Hub 上的任务关系，只按同一任务匹配）' : ''}`);
     }
     const resumeId = decision?.action === 'reuse' ? decision.session!.id : undefined;
