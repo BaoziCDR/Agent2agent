@@ -29,8 +29,7 @@ ${
 /** 在 agent 所在机器的终端直接运行：一步加入并进入值守，收到任务时自动唤起 harness。 */
 function runCommand(hub: string, code: string, harness: 'codex' | 'claude', name: string, tags: string[], bypass: boolean) {
   const skip = !bypass ? '' : harness === 'claude' ? ' --harness-arg=--dangerously-skip-permissions' : ' --harness-arg=--dangerously-bypass-approvals-and-sandbox --harness-arg=--skip-git-repo-check';
-  return `npm install -g ${hub}/ahub.tgz
-ahub run --harness ${harness} --hub ${hub} --invite ${code} --name "${name || '<名字>'}"${tags.length ? ` --tags ${tags.join(',')}` : ''}${skip}`;
+  return `ahub run --harness ${harness} --hub ${hub} --invite ${code} --name "${name || '<名字>'}"${tags.length ? ` --tags ${tags.join(',')}` : ''}${skip}`;
 }
 
 function chatPrompt(hub: string, code: string) {
