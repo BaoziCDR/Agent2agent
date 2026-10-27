@@ -731,6 +731,74 @@ export class Hub {
     return rows.map((r) => ({ id: projectCode(r.id), name: r.name, tags: json<string[]>(r.tags, []) }));
   }
 
+  // ───────────── 搜索 ─────────────
+
+  /** 按关键字搜任务（编号、标题、描述、笔记、进展）和评论；负责人还能搜私信和 agent。agent 只能搜自己参加的项目。 */
+  search(actor: Actor, q: string, project?: string) {
+    const kw = q.trim().slice(0, 100);
+    const result = { query: kw, tasks: [] as TaskView[], comments: [] as SearchHit[], messages: [] as SearchHit[], agents: [] as AgentView[] };
+    if (!kw) return result;
+    let projects: number[] | null = actor.kind === 'agent' ? this.agentProjects(actor.agent.id).map((p) => Number(p.id.slice(2))) : null;
+    if (project) {
+      const id = this.requireProject(project).id;
+      if (projects && !projects.includes(id)) throw forbidden(`你不是项目 ${project} 的成员`);
+      projects = [id];
+    }
+    if (projects && projects.length === 0) return result;
+    const scope = (col: string) => (projects ? `AND ${col} IN (${projects.map(() => '?').join(',')})` : '');
+    const ps = projects ?? [];
+    const like = `%${kw.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    const code = /^P(\d+)-T(\d+)$/i.exec(kw);
+    const [pid, num] = code ? [Number(code[1]), Number(code[2])] : [-1, -1];
+    const L = (col: string) => `${col} LIKE ? ESCAPE '\\'`;
+
+    const tasks = this.db
+      .prepare(
+        `SELECT * FROM tasks WHERE status != 'draft'
+           AND (${L('title')} OR ${L('description')} OR ${L('notes')} OR ${L('progress_note')} OR (project_id = ? AND num = ?)) ${scope('project_id')}
+         ORDER BY (project_id = ? AND num = ?) DESC, updated_at DESC LIMIT 20`,
+      )
+      .all(like, like, like, like, pid, num, ...ps, pid, num) as unknown as TaskRow[];
+    result.tasks = tasks.map((t) => this.taskView(t));
+
+    const comments = this.db
+      .prepare(
+        `SELECT c.task_id, c.id, c.author, c.parts, c.created_at FROM comments c JOIN tasks t ON t.id = c.task_id
+         WHERE ${L('c.parts')} ${scope('t.project_id')} ORDER BY c.id DESC LIMIT 10`,
+      )
+      .all(like, ...ps) as { id: number; task_id: number; author: string; parts: string; created_at: string }[];
+    result.comments = comments.map((c) => {
+      const t = this.taskById(c.task_id);
+      const text = json<Part[]>(c.parts, [])
+        .map((p) => p.text ?? '')
+        .join(' ');
+      return { id: c.id, task: taskCode(t.project_id, t.num), title: t.title, who: this.actorName(c.author), text: snippet(text, kw), at: c.created_at };
+    });
+
+    if (actor.kind === 'owner') {
+      const msgs = this.db.prepare(`SELECT * FROM messages WHERE ${L('body')} ORDER BY id DESC LIMIT 10`).all(like) as {
+        id: number;
+        sender: string;
+        recipient: string;
+        body: string;
+        created_at: string;
+      }[];
+      result.messages = msgs.map((m) => ({
+        id: m.id,
+        task: null,
+        title: null,
+        who: `${this.actorName(m.sender)} → ${this.actorName(m.recipient)}`,
+        text: snippet(m.body, kw),
+        at: m.created_at,
+      }));
+      const lower = kw.toLowerCase();
+      result.agents = this.listAgents(project)
+        .filter((a) => a.id.toLowerCase() === lower || a.name.toLowerCase().includes(lower))
+        .slice(0, 10);
+    }
+    return result;
+  }
+
   // ───────────── 邀请与加入 ─────────────
 
   createInvite(input: { project: string; tags?: string[]; max_uses?: number; hours?: number; note?: string }) {
@@ -1926,6 +1994,25 @@ function normalizeDue(v: string | null | undefined): string | null {
   const ms = Date.parse(v);
   if (Number.isNaN(ms)) throw invalid(`截止时间格式不对：${v}，请用 ISO 格式，如 2026-11-01T18:00:00+08:00`);
   return new Date(ms).toISOString();
+}
+
+export interface SearchHit {
+  id: number;
+  task: string | null;
+  title: string | null;
+  who: string;
+  text: string;
+  at: string;
+}
+
+/** 关键字前后各留一段上下文 */
+function snippet(text: string, kw: string, around = 30) {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  const i = flat.toLowerCase().indexOf(kw.toLowerCase());
+  if (i < 0) return excerpt(flat, around * 2);
+  const start = Math.max(0, i - around);
+  const end = Math.min(flat.length, i + kw.length + around);
+  return `${start > 0 ? '…' : ''}${flat.slice(start, end)}${end < flat.length ? '…' : ''}`;
 }
 
 function excerpt(text: string, n = 60) {

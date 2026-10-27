@@ -224,3 +224,16 @@ export function renderJoin(r: { agent: AgentView; token: string | null; project:
 }
 
 export { STATUS_LABELS };
+
+export function renderSearch(r: { query: string; tasks: TaskView[]; comments: { task: string | null; title: string | null; who: string; text: string; at: string }[] }) {
+  if (!r.query) return '请给出搜索关键字。\n';
+  const lines = [`# 搜索「${r.query}」`, ''];
+  lines.push(r.tasks.length ? renderTaskList(r.tasks, `任务（${r.tasks.length}）`) : '## 任务\n\n（没有匹配的任务）\n');
+  if (r.comments.length) {
+    lines.push(`## 评论（${r.comments.length}）`, '');
+    for (const c of r.comments) lines.push(`- **${c.task}**「${c.title}」· ${c.who}：${c.text}`);
+    lines.push('');
+  }
+  lines.push('> 用 `ahub task <任务编号>` 查看详情。');
+  return lines.join('\n') + '\n';
+}

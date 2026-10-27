@@ -5,7 +5,7 @@ import { networkInterfaces } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { type Actor, type AgentRow, Hub, HubError, agentCode } from './hub.js';
-import { renderInbox, renderJoin, renderMe, renderTask, renderTaskList } from './format.js';
+import { renderInbox, renderJoin, renderMe, renderSearch, renderTask, renderTaskList } from './format.js';
 import { handleMcpRequest } from './mcp-http.js';
 import type { HubEvent, Part } from '../shared/model.js';
 
@@ -219,6 +219,12 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
       return send(req, reply, tasks, () => renderTaskList(tasks));
     });
 
+    agentApi.get('/api/v1/search', async (req, reply) => {
+      const q = req.query as Q;
+      const r = hub.search(actorOf(req), q.q ?? '', q.project);
+      return send(req, reply, r, () => renderSearch(r));
+    });
+
     agentApi.get('/api/v1/tasks/:id', async (req, reply) => {
       const t = hub.getTaskFor(actorOf(req), (req.params as { id: string }).id);
       return send(req, reply, t, () => renderTask(t, publicUrl(req)));
@@ -354,6 +360,10 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
     const A = '/api/v1/admin';
 
     admin.get(`${A}/overview`, async (req) => hub.overview((req.query as Q).project));
+    admin.get(`${A}/search`, async (req) => {
+      const q = req.query as Q;
+      return hub.search({ kind: 'owner' }, q.q ?? '', q.project);
+    });
     admin.get(`${A}/stats`, async (req) => {
       const q = req.query as Q;
       return hub.stats(q.project, Math.min(Math.max(Number(q.days) || 14, 1), 90));

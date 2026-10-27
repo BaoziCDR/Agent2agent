@@ -98,6 +98,35 @@ test('空闲等待：连续落空后直接返回提示，续等和值守进程�
   assert.match(r.wait.hint, /值守进程/);
 });
 
+test('搜索：任务、评论、私信；agent 只能搜自己的项目', async () => {
+  const { req, join, project } = await setup();
+  const a = await join('甲');
+  const t = (await req('POST', '/api/v1/admin/tasks', { project: project.id, title: '实现登录接口', description: '用 JWT_令牌' })).json();
+  await req('POST', `/api/v1/admin/tasks/${t.id}/comments`, { text: '刷新令牌放在 Redis 里' });
+  await req('POST', '/api/v1/admin/messages', { to: 'A-1', text: 'Redis 地址发你了' });
+  const other = (await req('POST', '/api/v1/admin/projects', { name: '另一个' })).json();
+  await req('POST', '/api/v1/admin/tasks', { project: other.id, title: '登录页设计' });
+
+  let r = (await req('GET', `/api/v1/admin/search?q=${encodeURIComponent('登录')}`)).json();
+  assert.equal(r.tasks.length, 2);
+  r = (await req('GET', '/api/v1/admin/search?q=Redis')).json();
+  assert.equal(r.comments.length, 1);
+  assert.match(r.comments[0].text, /Redis/);
+  assert.equal(r.messages.length, 1);
+  // LIKE 通配符按字面匹配
+  assert.equal((await req('GET', '/api/v1/admin/search?q=JWT_')).json().tasks.length, 1);
+  assert.equal((await req('GET', '/api/v1/admin/search?q=%25')).json().tasks.length, 0);
+  // 编号直接命中
+  assert.equal((await req('GET', `/api/v1/admin/search?q=${t.id.toLowerCase()}`)).json().tasks[0].id, t.id);
+
+  r = (await req('GET', `/api/v1/search?q=${encodeURIComponent('登录')}`, undefined, a.headers)).json();
+  assert.deepEqual(r.tasks.map((x) => x.id), [t.id]);
+  assert.equal(r.messages.length, 0);
+  assert.equal((await req('GET', `/api/v1/search?q=x&project=${other.id}`, undefined, a.headers)).status, 403);
+  const md = await req('GET', `/api/v1/search?q=Redis&format=md`, undefined, a.headers);
+  assert.match(md.text, /## 评论（1）/);
+});
+
 test('幂等键：同一个键重复提交只执行一次', async () => {
   const { req, join, project } = await setup();
   const a = await join('甲');
