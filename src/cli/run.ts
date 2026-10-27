@@ -40,8 +40,13 @@ interface Inbox {
   last_seq: number;
   events: HubEvent[];
   needs_action: HubEvent[];
+  my_tasks: { id: string; title: string; status: string }[];
+  pending_assignments: { id: string; title: string }[];
   claimable: { id: string; title: string }[];
 }
+
+/** 唤起时要列给 harness 的任务；kind 说明它为什么在这里，默认是任务池里可领取的。 */
+type OpenTask = { id: string; title: string; kind?: string };
 
 interface RunState {
   claude_session?: string;
@@ -76,12 +81,12 @@ function harnessEnv(prompt: string): NodeJS.ProcessEnv {
   return env;
 }
 
-export function buildPrompt(cfg: CliConfig, reasons: HubEvent[], open: { id: string; title: string }[]): string {
+export function buildPrompt(cfg: CliConfig, reasons: HubEvent[], open: OpenTask[]): string {
   const lines = [
     `你是协作中枢（ahub）里的 agent ${cfg.name ?? ''}（${cfg.agent ?? ''}），值守进程刚刚因为下面的事项唤醒了你：`,
     '',
     ...reasons.map((e) => `- ${e.summary}`),
-    ...open.map((t) => `- 任务池里有可领取的任务：${t.id}「${t.title}」`),
+    ...open.map((t) => `- ${t.kind ?? '任务池里有可领取的任务'}：${t.id}「${t.title}」`),
     '',
     '请按协作中枢的工作循环处理：',
     '1. 先运行 `ahub inbox` 同步，看清「需要你处理」的事项和你手上的任务。',
@@ -114,6 +119,7 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
   const runs: number[] = [];
   let stopping = false;
   let paused = false; // 负责人在控制台暂停了值守
+  let pickup = true; // 启动和恢复后的第一次检查：接手指派给自己的、进行中的和可领取的任务
   let stopChild: () => void = () => {}; // 退出值守时顺带结束正在运行的 harness
   let touch: () => void = () => {}; // 运行中的 harness 有动静时调用，推迟空闲超时
 
@@ -144,7 +150,18 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
     }
     const reasons = inbox.needs_action.filter((e) => e.seq > handled);
     const fresh = new Set(inbox.events.filter((e) => e.seq > handled && e.task).map((e) => e.task));
-    const open = opts.wakeOnOpen ? inbox.claimable.filter((t) => fresh.has(t.id)) : [];
+    const open: OpenTask[] = opts.wakeOnOpen ? inbox.claimable.filter((t) => fresh.has(t.id)) : [];
+    const pickingUp = pickup;
+    pickup = false;
+    if (pickingUp) {
+      const seen = new Set(open.map((t) => t.id));
+      const add = (list: { id: string; title: string }[], kind: string) => {
+        for (const t of list) if (!seen.has(t.id)) (seen.add(t.id), open.push({ ...t, kind }));
+      };
+      add(inbox.pending_assignments ?? [], '指派给你、还没接受的任务');
+      add((inbox.my_tasks ?? []).filter((t) => t.status === 'working'), '你进行中、还没完成的任务');
+      add(inbox.claimable, '任务池里有可领取的任务');
+    }
     const top = Math.max(handled, ...inbox.events.map((e) => e.seq));
     if (force && !reasons.length && !open.length) {
       reasons.push({ seq: top, type: 'agent.control', task: null, summary: '负责人让你检查一遍收件箱和手上的任务' });
@@ -157,6 +174,7 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
     while (runs.length && now - runs[0] > 3600_000) runs.shift();
     if (runs.length >= opts.maxRunsPerHour) {
       log(`一小时内已唤起 ${runs.length} 次，达到上限，稍后再处理`);
+      if (pickingUp) pickup = true;
       setTimeout(() => void check(), 5 * 60_000).unref();
       return;
     }
@@ -174,10 +192,10 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
     }
   };
 
-  const wake = async (reasons: HubEvent[], open: { id: string; title: string }[]) => {
+  const wake = async (reasons: HubEvent[], open: OpenTask[]) => {
     const prompt = buildPrompt(cfg, reasons, open);
     const { cmd, args } = harnessCommand(opts, state);
-    const note = [...reasons.map((e) => e.summary), ...open.map((t) => `可领取 ${t.id}`)].join('；').slice(0, 280);
+    const note = [...reasons.map((e) => e.summary), ...open.map((t) => `${t.kind ? t.kind.replace(/的任务$/, '') : '可领取'} ${t.id}`)].join('；').slice(0, 280);
     log(`唤起 ${opts.harness}：${note}`);
     if (opts.dryRun) {
       log(`（试运行）${cmd} ${args.join(' ')}\n${prompt}`);
@@ -291,6 +309,7 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
       log('负责人暂停了值守：收到的事项先积压，恢复后再处理');
     } else if (action === 'resume' && paused) {
       paused = false;
+      pickup = true;
       log('负责人恢复了值守');
       void check();
     } else if (action === 'wake') {
@@ -363,7 +382,7 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
   } catch {
     // 读不到就按未暂停处理
   }
-  // 启动时先处理积压的事项，再定期兜底检查
+  // 启动时先处理积压的事项、接手手上的任务，再定期兜底检查
   await check();
   setInterval(() => void check(), 5 * 60_000).unref();
   await connect();
