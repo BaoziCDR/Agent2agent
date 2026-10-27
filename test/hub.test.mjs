@@ -189,6 +189,30 @@ test('租约到期只提醒一次，不自动收回', () => {
   assert.equal(hub.overview().counts.lost, 0);
 });
 
+test('统计：按天完成数、平均用时和退回率', () => {
+  const { hub, p1, join, advance } = setup();
+  const a = join('甲');
+  const t = hub.createTask({ kind: 'owner' }, { project: p1.id, title: 'x' });
+  hub.claim(a.row, t.id);
+  advance(90);
+  hub.submit(a.row, t.id, { summary: '好了' });
+  hub.reject(t.id, '再改改');
+  advance(30);
+  hub.submit(a.row, t.id, { summary: '改好了' });
+  hub.approve(t.id);
+  const s = hub.stats(undefined, 7);
+  assert.equal(s.days.length, 7);
+  assert.equal(s.days.at(-1).completed, 1);
+  assert.equal(s.totals.completed, 1);
+  assert.equal(s.totals.created, 1);
+  assert.equal(s.totals.avg_hours, 2);
+  assert.equal(s.totals.reject_rate, 50);
+  assert.deepEqual(
+    { completed: s.agents[0].completed, submitted: s.agents[0].submitted, rejected: s.agents[0].rejected },
+    { completed: 1, submitted: 2, rejected: 1 },
+  );
+});
+
 test('截止提醒：快到期和逾期各提醒一次，改截止时间后重新提醒', () => {
   const { hub, p1, join, advance } = setup();
   const a = join('甲');

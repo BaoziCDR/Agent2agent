@@ -354,6 +354,10 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
     const A = '/api/v1/admin';
 
     admin.get(`${A}/overview`, async (req) => hub.overview((req.query as Q).project));
+    admin.get(`${A}/stats`, async (req) => {
+      const q = req.query as Q;
+      return hub.stats(q.project, Math.min(Math.max(Number(q.days) || 14, 1), 90));
+    });
     admin.get(`${A}/info`, async (req) => {
       if (opts.publicUrl) return { urls: [opts.publicUrl] };
       const port = /:(\d+)$/.exec(req.headers.host ?? '')?.[1] ?? '80';

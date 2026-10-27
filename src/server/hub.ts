@@ -1785,6 +1785,94 @@ export class Hub {
     return result;
   }
 
+  // ───────────── 统计 ─────────────
+
+  /** 最近 days 天的产出统计：每天新建/完成数，以及每个 agent 的完成数、平均用时、退回率。 */
+  stats(project?: string, days = 14) {
+    const projectId = project ? this.requireProject(project).id : null;
+    const scope = projectId === null ? '' : 'AND project_id = ?';
+    const params = projectId === null ? [] : [projectId];
+    const now = this.now();
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (days - 1));
+    const startIso = start.toISOString();
+    const dayKey = (iso: string) => {
+      const d = new Date(iso);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    };
+    const daily = new Map<string, { date: string; created: number; completed: number }>();
+    for (let i = 0; i < days; i++) {
+      const k = dayKey(new Date(start.getFullYear(), start.getMonth(), start.getDate() + i).toISOString());
+      daily.set(k, { date: k, created: 0, completed: 0 });
+    }
+    const created = this.db.prepare(`SELECT created_at FROM tasks WHERE status != 'draft' AND created_at >= ? ${scope}`).all(startIso, ...params) as {
+      created_at: string;
+    }[];
+    for (const r of created) {
+      const d = daily.get(dayKey(r.created_at));
+      if (d) d.created++;
+    }
+
+    type Per = { completed: number; submitted: number; rejected: number; hours: number[] };
+    const per = new Map<string, Per>();
+    const of = (code: string) => {
+      let p = per.get(code);
+      if (!p) per.set(code, (p = { completed: 0, submitted: 0, rejected: 0, hours: [] }));
+      return p;
+    };
+    const firstWorking = new Map<number, number>();
+    const changes = this.db
+      .prepare(`SELECT at, task_id, data FROM events WHERE type = 'task.status_changed' ${scope} ORDER BY seq`)
+      .all(...params) as { at: string; task_id: number; data: string }[];
+    for (const e of changes) {
+      const d = json<{ from?: string; to?: string; assignee?: string | null }>(e.data, {});
+      if (d.to === 'working' && !firstWorking.has(e.task_id)) firstWorking.set(e.task_id, Date.parse(e.at));
+      if (e.at < startIso || !d.assignee) continue;
+      const p = of(d.assignee);
+      if (d.to === 'review') p.submitted++;
+      if (d.from === 'review' && d.to === 'working') p.rejected++;
+      if (d.to === 'completed') {
+        p.completed++;
+        const day = daily.get(dayKey(e.at));
+        if (day) day.completed++;
+        const began = firstWorking.get(e.task_id);
+        if (began !== undefined) p.hours.push((Date.parse(e.at) - began) / 3600_000);
+      }
+    }
+
+    const nowIso = now.toISOString();
+    const live = this.db
+      .prepare(`SELECT assignee_id, status, due_at FROM tasks WHERE assignee_id IS NOT NULL AND status IN ('working','input_required','assigned') ${scope}`)
+      .all(...params) as { assignee_id: number; status: string; due_at: string | null }[];
+    const avg = (xs: number[]) => (xs.length ? Math.round((xs.reduce((a, b) => a + b, 0) / xs.length) * 10) / 10 : null);
+    const agents = this.listAgents(project).map((a) => {
+      const p = per.get(a.id) ?? { completed: 0, submitted: 0, rejected: 0, hours: [] };
+      const mine = live.filter((t) => agentCode(t.assignee_id) === a.id);
+      return {
+        id: a.id,
+        name: a.name,
+        completed: p.completed,
+        submitted: p.submitted,
+        rejected: p.rejected,
+        reject_rate: p.submitted ? Math.round((p.rejected / p.submitted) * 100) : null,
+        avg_hours: avg(p.hours),
+        working: mine.filter((t) => t.status !== 'assigned').length,
+        overdue: mine.filter((t) => t.due_at !== null && t.due_at < nowIso).length,
+      };
+    });
+    const all = [...per.values()];
+    const sum = (f: (p: Per) => number) => all.reduce((n, p) => n + f(p), 0);
+    return {
+      days: [...daily.values()],
+      totals: {
+        created: created.length,
+        completed: sum((p) => p.completed),
+        avg_hours: avg(all.flatMap((p) => p.hours)),
+        reject_rate: sum((p) => p.submitted) ? Math.round((sum((p) => p.rejected) / sum((p) => p.submitted)) * 100) : null,
+      },
+      agents: agents.sort((a, b) => b.completed - a.completed || a.id.localeCompare(b.id)),
+    };
+  }
+
   // ───────────── 总览 ─────────────
 
   overview(project?: string) {
