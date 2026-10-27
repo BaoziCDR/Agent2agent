@@ -120,6 +120,15 @@ CREATE TABLE IF NOT EXISTS messages (
   created_at TEXT NOT NULL
 );
 
+-- agent 看过任务后觉得不适合自己，让给别人领取；负责人修改任务内容后清空
+CREATE TABLE IF NOT EXISTS task_passes (
+  task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  agent_id INTEGER NOT NULL REFERENCES agents(id),
+  reason TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (task_id, agent_id)
+);
+
 CREATE TABLE IF NOT EXISTS runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   agent_id INTEGER NOT NULL REFERENCES agents(id),
@@ -219,6 +228,8 @@ function migrate(db: Db) {
   if (!has('invites', 'created_by')) db.exec("ALTER TABLE invites ADD COLUMN created_by TEXT NOT NULL DEFAULT 'owner'");
   if (!has('tasks', 'due_warned')) db.exec('ALTER TABLE tasks ADD COLUMN due_warned INTEGER NOT NULL DEFAULT 0');
   // 邀请码可以预设 agent 名称，加入时不写 --name 就用它
+  // 任务最近一次变成可领取的时间，值守进程按它错峰唤起
+  if (!has('tasks', 'opened_at')) db.exec('ALTER TABLE tasks ADD COLUMN opened_at TEXT');
   if (!has('runs', 'session')) db.exec("ALTER TABLE runs ADD COLUMN session TEXT NOT NULL DEFAULT ''");
   if (!has('invites', 'agent_name')) db.exec("ALTER TABLE invites ADD COLUMN agent_name TEXT NOT NULL DEFAULT ''");
   // 任务可以引用同项目的其他任务（任意状态），作为参考资料

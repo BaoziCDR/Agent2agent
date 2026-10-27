@@ -650,3 +650,68 @@ test('授权 ID：长时间没有活动自动下线，之后用身份码重新�
   assert.match(again.session, /^as_/);
   assert.equal(again.agent.presence, 'active');
 });
+
+test('智能领取：只在能自动响应的 agent 里排名，让出后名次前移，都让出就提醒负责人', () => {
+  const { hub, p1, join, advance } = setup();
+  const a = join('甲');
+  const b = join('乙');
+  const c = join('丙'); // 没开值守，不参加排名
+  hub.markDaemon(a.row.id, 1);
+  hub.markDaemon(b.row.id, 1);
+  // 乙手上有一个任务，分数比甲低
+  hub.createTask({ kind: 'owner' }, { project: p1.id, title: '杂事', assignee: b.agent.id });
+  const t = hub.createTask({ kind: 'owner' }, { project: p1.id, title: '写文档' });
+  const fitOf = (who) => hub.inbox(who.row).claimable.find((x) => x.id === t.id).fit;
+  assert.deepEqual([fitOf(a).rank, fitOf(a).of], [1, 2]);
+  assert.deepEqual([fitOf(b).rank, fitOf(b).of], [2, 2]);
+  // 没开值守的丙也能看到自己排第几，但不占别人的名次
+  assert.deepEqual([fitOf(c).rank, fitOf(c).of], [3, 3]);
+  assert.equal(fitOf(a).open_since, t.created_at);
+
+  // 甲让出：乙变成第 1 名，详情里有让出记录
+  advance(1);
+  assert.throws(() => hub.pass(a.row, t.id, ' '), /说明/);
+  const r = hub.pass(a.row, t.id, '需要 iOS 证书，我这台没有');
+  assert.equal(r.remaining, 1);
+  assert.equal(fitOf(b).rank, 1);
+  assert.equal(fitOf(a).passed, true);
+  assert.equal(hub.getTask(t.id).passes[0].reason, '需要 iOS 证书，我这台没有');
+  assert.equal(hub.eventsForAgent(b.row, 0, 100).events.at(-1).type, 'task.passed');
+
+  // 乙也让出：没有候选了，提醒负责人
+  hub.pass(b.row, t.id, '不熟悉');
+  const last = hub.eventsForOwner({ limit: 1 })[0];
+  assert.equal(last.type, 'task.unclaimed');
+  assert.deepEqual(last.audience, []);
+
+  // 负责人修改了描述：让出记录清空，重新开始计时
+  advance(5);
+  hub.updateTask(t.id, { description: '证书已放到共享盘' });
+  assert.equal(hub.getTask(t.id).passes.length, 0);
+  assert.equal(fitOf(a).rank, 1);
+  assert.notEqual(fitOf(a).open_since, t.created_at);
+
+  // 已领取的任务不能让出
+  hub.claim(a.row, t.id);
+  assert.throws(() => hub.pass(b.row, t.id, '晚了'), /只有待领取的任务/);
+});
+
+test('智能领取：做过相关任务的加分，正在忙的减分', () => {
+  const { hub, p1, join } = setup();
+  const a = join('甲');
+  const b = join('乙');
+  hub.markDaemon(a.row.id, 1);
+  hub.markDaemon(b.row.id, 1);
+  const parent = hub.createTask({ kind: 'owner' }, { project: p1.id, title: '登录功能', assignee: b.agent.id });
+  hub.accept(b.row, parent.id);
+  // 乙手上有父任务（−8），但做过父任务（+15），仍然排第一
+  const child = hub.createTask({ kind: 'owner' }, { project: p1.id, title: '登录页样式', parent: parent.id });
+  const fitB = hub.inbox(b.row).claimable.find((x) => x.id === child.id).fit;
+  assert.equal(fitB.rank, 1);
+  assert.ok(fitB.reasons.some((x) => x.includes(parent.id)), fitB.reasons.join());
+  // 乙正在处理别的事：−15，掉到第二
+  hub.reportActivity(b.row, { state: 'working', note: '忙' });
+  const busy = hub.inbox(b.row).claimable.find((x) => x.id === child.id).fit;
+  assert.equal(busy.rank, 2);
+  assert.ok(busy.warnings.includes('正在处理别的事'));
+});

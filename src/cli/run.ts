@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { type ClaimFit, type ClaimSettings, claimKey, planClaims } from './claim.js';
 import type { CliConfig } from './config.js';
 import { AuthError, identityCode, isDeadIdentity, isFinal, openSession, releaseSession } from './auth.js';
 import { type JudgeMode, applyVerdict, judgePrompt, runJudge, shouldJudge } from './judge.js';
@@ -38,8 +39,8 @@ export interface RunOptions {
   idleMinutes: number;
   /** 有新事件后等几秒再检查，把短时间内的多条事件合并成一次唤起 */
   debounceSeconds: number;
-  /** 任务池里出现可领取的新任务时也唤起 */
-  wakeOnOpen: boolean;
+  /** 任务池的领取策略：按 Hub 给的匹配度和名次错峰唤起，见 claim.ts */
+  claim: ClaimSettings;
   /** 续用还是新开会话的策略和阈值，见 session.ts */
   session: SessionSettings;
   /** 读不到上下文窗口时按多大算（token） */
@@ -66,7 +67,7 @@ interface Inbox {
   needs_action: HubEvent[];
   my_tasks: { id: string; title: string; status: string }[];
   pending_assignments: { id: string; title: string }[];
-  claimable: { id: string; title: string }[];
+  claimable: { id: string; title: string; fit?: ClaimFit }[];
 }
 
 /** 唤起时要列给 harness 的任务；kind 说明它为什么在这里，默认是任务池里可领取的。 */
@@ -143,8 +144,15 @@ function harnessEnv(prompt: string): NodeJS.ProcessEnv {
   return env;
 }
 
-export function buildPrompt(cfg: CliConfig, reasons: HubEvent[], open: OpenTask[], resumed = false): string {
+export function buildPrompt(cfg: CliConfig, reasons: HubEvent[], open: OpenTask[], resumed = false, capacity?: number): string {
   const items = [...reasons.map((e) => `- ${e.summary}`), ...open.map((t) => `- ${t.kind ?? '任务池里有可领取的任务'}：${t.id}「${t.title}」`)];
+  if (open.some((t) => !t.mine)) {
+    // 领不领由会话自己判断；不适合就让出，下一位合适的 agent 会马上被唤起
+    items.push(
+      '',
+      `任务池里的任务先用 \`ahub task <任务>\` 读完描述、验收标准和所需能力，判断适不适合你（能力、环境、手上的工作量）：适合就 \`ahub claim <任务>\`${capacity ? `，这次最多领 ${capacity} 个` : ''}；不适合就 \`ahub pass <任务> "理由"\` 让给别人，不要不领也不让。`,
+    );
+  }
   if (resumed) {
     // 续用会话时工作循环已经在上下文里，只给新事项，省 token 也更容易命中缓存
     return [
@@ -239,6 +247,10 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
   const runs: number[] = [];
   let stopping = false;
   let paused = false; // 负责人在控制台暂停了值守
+  const claimed = new Set<string>(); // 已经为之唤起过的可领取任务（任务号@变成可领取的时间）
+  const claimLog = new Map<string, string>(); // 每个任务上次记下的领取判断，变了才写日志
+  let claimTimer: NodeJS.Timeout | null = null;
+  let capacity = 0; // 这次唤起最多还能领几个
   let pickup = true; // 启动和恢复后的第一次检查：接手指派给自己的、进行中的和可领取的任务
   let stopChild: () => void = () => {}; // 退出值守时顺带结束正在运行的 harness
   let touch: () => void = () => {}; // 运行中的 harness 有动静时调用，推迟空闲超时
@@ -276,18 +288,29 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
       return;
     }
     const reasons = inbox.needs_action.filter((e) => e.seq > handled);
-    const fresh = new Set(inbox.events.filter((e) => e.seq > handled && e.task).map((e) => e.task));
-    const open: OpenTask[] = opts.wakeOnOpen ? inbox.claimable.filter((t) => fresh.has(t.id)) : [];
+    const open: OpenTask[] = [];
     const pickingUp = pickup;
     pickup = false;
     if (pickingUp) {
-      const seen = new Set(open.map((t) => t.id));
-      const add = (list: { id: string; title: string }[], kind: string, mine = false) => {
-        for (const t of list) if (!seen.has(t.id)) (seen.add(t.id), open.push({ id: t.id, title: t.title, kind, mine }));
-      };
-      add(inbox.pending_assignments ?? [], '指派给你、还没接受的任务', true);
-      add((inbox.my_tasks ?? []).filter((t) => t.status === 'working'), '你进行中、还没完成的任务', true);
-      add(inbox.claimable, '任务池里有可领取的任务');
+      for (const t of inbox.pending_assignments ?? []) open.push({ id: t.id, title: t.title, kind: '指派给你、还没接受的任务', mine: true });
+      for (const t of (inbox.my_tasks ?? []).filter((x) => x.status === 'working')) open.push({ id: t.id, title: t.title, kind: '你进行中、还没完成的任务', mine: true });
+    }
+    // 任务池：每次检查都按 Hub 给的名次重新判断，同一个任务每次变成可领取后只为它唤起一次
+    const active = (inbox.my_tasks ?? []).filter((t) => t.status === 'working').length;
+    const pool = inbox.claimable.filter((t) => !claimed.has(claimKey(t)) && !open.some((o) => o.id === t.id));
+    const plan = planClaims(pool, active, opts.claim);
+    for (const x of [...plan.later.map((l) => ({ id: l.id, why: l.why })), ...plan.skipped]) {
+      if (claimLog.get(x.id) !== x.why) log(`任务池 ${x.id}：${x.why}`);
+      claimLog.set(x.id, x.why);
+    }
+    for (const w of plan.wake) open.push({ id: w.id, title: w.title, kind: w.why });
+    if (claimTimer) clearTimeout(claimTimer);
+    claimTimer = null;
+    if (plan.later.length) {
+      // 到点还没人领就再检查一次；名次变了（有人领了、让出了）也会在下次检查时重新算
+      const at = Math.min(...plan.later.map((l) => l.at));
+      claimTimer = setTimeout(() => void check(), Math.max(1000, at - Date.now() + 1000));
+      claimTimer.unref();
     }
     const top = Math.max(handled, ...inbox.events.map((e) => e.seq));
     if (force && !reasons.length && !open.length) {
@@ -306,6 +329,8 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
       return;
     }
     handled = top;
+    for (const t of inbox.claimable) if (plan.wake.some((w) => w.id === t.id)) claimed.add(claimKey(t));
+    capacity = plan.capacity;
     runs.push(now);
     running = true;
     try {
@@ -392,7 +417,7 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
   };
 
   const attempt = async (reasons: HubEvent[], open: OpenTask[], note: string, tasks: string[], resumeId: string | undefined, why: string) => {
-    const prompt = buildPrompt(cfg, reasons, open, !!resumeId);
+    const prompt = buildPrompt(cfg, reasons, open, !!resumeId, capacity);
     const { cmd, args } = harnessCommand(opts, resumeId);
     if (opts.dryRun) {
       log(`（试运行）${cmd} ${args.join(' ')}\n${prompt}`);
