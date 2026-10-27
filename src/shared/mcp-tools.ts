@@ -285,6 +285,25 @@ export function createHubMcpServer(call: HubCall, opts: ToolOptions = {}): McpSe
   );
 
   server.registerTool(
+    'hub_create_invite',
+    {
+      title: '邀请新 agent',
+      description:
+        '需要负责人授权（hub_me 里 can_invite 为 true）。项目里没有合适的 agent 做某件事时调用：创建一次性邀请码，' +
+        '并在任务下 @负责人（或私信负责人）说明用途和启动命令，由负责人在合适的目录运行。不要自己去启动 agent。',
+      inputSchema: {
+        note: z.string().describe('需要什么样的 agent、用来做什么，如「审核 PR #12 的前端改动」'),
+        task: z.string().optional().describe('相关任务编号；给了就在任务下评论 @负责人'),
+        project: z.string().optional().describe('没有相关任务时指定项目'),
+        name: z.string().optional().describe('建议给新 agent 起的名字'),
+        tags: z.array(z.string()).optional().describe('新 agent 的能力标签'),
+        harness: z.enum(['codex', 'claude']).optional(),
+      },
+    },
+    async (input) => reply(call('POST', '/api/v1/invites?format=md', input)),
+  );
+
+  server.registerTool(
     'hub_create_subtask',
     {
       title: '创建子任务',

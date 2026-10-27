@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { del, get, type Invite as InviteData, post } from '../api';
-import { CodeBox, clock, splitList, useData, useHub } from '../ui';
+import { CodeBox, agentLabel, clock, splitList, useData, useHub } from '../ui';
 
 const INSTALL = 'npm install -g github:BaoziCDR/Agent2agent';
 
@@ -30,7 +30,7 @@ function chatPrompt(hub: string, code: string) {
 }
 
 export function Invite() {
-  const { projects, project, toast } = useHub();
+  const { projects, project, agents, toast } = useHub();
   const active = projects.filter((p) => p.status === 'active');
   const [targetChoice, setTarget] = useState('');
   const target = targetChoice || (project ?? active[0]?.id ?? '');
@@ -184,7 +184,10 @@ export function Invite() {
                     {i.uses} / {i.max_uses}
                   </td>
                   <td>{clock(i.expires_at)}</td>
-                  <td>{i.note || '—'}</td>
+                  <td>
+                    {i.note || '—'}
+                    {i.created_by !== 'owner' && <div className="faint">由 {agentLabel(agents, i.created_by)} 创建</div>}
+                  </td>
                   <td>
                     {i.valid && (
                       <button

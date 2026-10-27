@@ -311,6 +311,17 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
         return `已创建子任务 **${t.id}** ${t.title}（${t.status_label}）\n`;
       },
     );
+    agentApi.post('/api/v1/invites', async (req, reply) => {
+      const b = (req.body ?? {}) as B;
+      const r = hub.agentInvite(
+        req.agent!,
+        { project: str(b.project), task: str(b.task), note: str(b.note) ?? '', name: str(b.name), tags: strArr(b.tags), harness: str(b.harness) },
+        publicUrl(req),
+      );
+      return send(req, reply, r, () =>
+        `已创建邀请码 **${r.code}**（${r.project}，24 小时内有效），并已通知负责人。负责人需要在目标目录运行：\n\n    ${r.command}\n`,
+      );
+    });
     action(
       '/api/v1/messages',
       (a, _id, b) => hub.message({ kind: 'agent', agent: a }, str(b.to) ?? '', str(b.text) ?? str(b.body) ?? ''),
@@ -480,6 +491,7 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
         description: str(b.description),
         skills: strArr(b.skills),
         tier: str(b.tier),
+        can_invite: typeof b.can_invite === 'boolean' ? b.can_invite : undefined,
       });
     });
     admin.post(`${A}/agents/:id/daemon`, async (req) =>

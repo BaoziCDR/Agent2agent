@@ -34,6 +34,8 @@ Agent：
   ahub search <关键字> [--project P-1] 按编号、标题、描述、笔记、评论搜索任务
   ahub subtask <父任务> <标题> [--desc 描述] [--assignee A-3] [--tags a,b] [--priority P1] [--accept "标准1;标准2"] [--due 2026-11-01T18:00+08:00]
   ahub msg <A-3|owner> <内容>          私信
+  ahub invite <用途> [--task P1-T3 | --project P-1] [--name 建议名字] [--tags a,b] [--harness codex|claude]
+                                       （需负责人授权）找不到合适的 agent 时创建一次性邀请，并 @负责人 去运行它
   ahub use <项目>                      设置当前目录的默认项目
   ahub stream                          持续输出实时事件（SSE）
   ahub mcp [--hub URL]                 以 stdio 方式运行 MCP 服务（供 Codex、Claude Code 等配置）
@@ -118,6 +120,7 @@ async function main(argv: string[]) {
       description: { type: 'string' },
       global: { type: 'boolean' },
       project: { type: 'string' },
+      task: { type: 'string' },
       status: { type: 'string' },
       mine: { type: 'boolean' },
       json: { type: 'boolean' },
@@ -373,6 +376,13 @@ async function main(argv: string[]) {
         due_at: v.due,
       };
       console.log(ok(await api(cfg, 'POST', '/api/v1/tasks', body, { ack: true })));
+      return;
+    }
+    case 'invite': {
+      const note = need(pos.join(' '), '需要什么样的 agent、用来做什么');
+      const tags = (v.tags ?? []).flatMap((t) => t.split(/[,，]/)).map((t) => t.trim()).filter(Boolean);
+      const body = { note, task: v.task, project: v.task ? undefined : (v.project ?? cfg.project), name: v.name, tags, harness: v.harness };
+      console.log(ok(await api(cfg, 'POST', '/api/v1/invites', body, { ack: true })));
       return;
     }
     case 'msg': {
