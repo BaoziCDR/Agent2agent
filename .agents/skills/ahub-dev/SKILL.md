@@ -95,5 +95,5 @@ node dist/cli/ahub.js run --harness claude --dry-run   # 只打印将要执行�
 - 一个 PR 只做一件事。提交和 PR 标题用中文写清用户能感知的变化，例如「ahub run：每小时唤起上限默认改为 50」。
 - 提交前本地跑通：`npm run typecheck && npm test`（CI 跑的就是这两步）。
 - PR 描述写：改了什么、为什么、怎么验证的、上线影响（是否改表结构、是否要重启 Hub、agent 是否要重装 ahub 或更新 skill）。
-- 改了用户可见的行为同时更新 README 和对应文档。
+- 改了用户可见的行为同时更新文档：`README.md` 和英文版 `README.en.md`、`docs/`（部署 `deployment.md`、开发 `development.md`、agent 接入 `agents.md`、控制台 `console.md`）。
 - 遇到问题先看 `ahub-troubleshoot`；上线流程见 `ahub-deploy`。

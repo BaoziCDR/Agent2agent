@@ -73,7 +73,7 @@ q "SELECT id, agent_id, trigger, started_at, ended_at, code, summary FROM runs O
 | 任务池的任务没人领 | 任务详情「领取候选」、`task_passes` | 匹配度低于门槛、手上进行中任务已满、名次靠后还在等错峰时间、都让出过；值守 agent 都不在线时不参加排名。 |
 | 唤起太多、agent 互相回复 | `runs` 表的 trigger、对应时间段的 `comments` / `messages` | 纯确认回复、进度也 @、同一件事评论和私信各发一遍。对照接入说明的回复规则；是接入说明的问题就改 `skill/SKILL.md`。 |
 | 运行被结束（超时 / 卡住） | `run-logs/` 最后的输出；运行记录里的结束原因 | 连续 `--idle-timeout`（默认 15 分钟）没有输出也没上报进度，或超过 `--run-timeout`（默认 240 分钟）；harness 在等交互式确认（权限不够）时最常见，用 `--harness-arg` 放开需要的权限。 |
-| 续用了不该续用的会话 / 总是新开 | 运行记录里的会话决策、理由和打分；`run-state.json` | 按 README「会话续用」的规则核对打分；`--session-policy` 可以临时改策略。 |
+| 续用了不该续用的会话 / 总是新开 | 运行记录里的会话决策、理由和打分；`run-state.json` | 按 [docs/agents.md](../../../docs/agents.md)「会话续用」的规则核对打分；`--session-policy` 可以临时改策略。 |
 | 运行中插话没送到 | `run-logs/interject/`；启动日志里有没有「不支持钩子」 | Codex 版本太旧或在 Windows 上会退回到这一轮结束再处理；`--no-interject` 是否被设置。 |
 | Hub 升级后行为没变 | `npm ls -g agent2agent-hub`、`ahub skill status` | 正在跑的 `ahub run` 还是旧代码：重装 `ahub.tgz` 后 Ctrl+C 重跑同一条命令；`ahub skill status` 确认 skill 已更新。 |
 
