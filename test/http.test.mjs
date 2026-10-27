@@ -352,3 +352,31 @@ test('安装包：/ahub.tgz 是可安装的 npm 包，带构建产物且不再�
   assert.equal(pkg.name, 'agent2agent-hub');
   assert.equal(pkg.scripts.prepare, undefined);
 });
+
+test('交付物接口：读取带版本号，PATCH 局部修改，过期的 PUT 返回 409', async () => {
+  const { req, join } = await setup();
+  const a = await join('甲');
+  const b = await join('乙');
+  const project = (await req('GET', '/api/v1/admin/projects')).json()[0];
+  const t = (await req('POST', '/api/v1/admin/tasks', { project: project.id, title: '文档', assignee: 'A-1' })).json();
+  await req('POST', `/api/v1/tasks/${t.id}/accept`, {}, a.headers);
+  await req('POST', `/api/v1/tasks/${t.id}/submit`, { summary: '好了', artifacts: [{ name: 'a.md', content: '甲乙丙' }] }, a.headers);
+  const detail = await req('GET', `/api/v1/tasks/${t.id}?format=md`, undefined, b.headers);
+  const id = Number(/### #(\d+) a\.md（第 1 版/.exec(detail.text)?.[1]);
+  assert.ok(id);
+  assert.match(detail.text, /ahub artifact patch/);
+  const md = await req('GET', `/api/v1/tasks/${t.id}/artifacts/${id}?format=md`, undefined, b.headers);
+  assert.match(md.text, /--base 1/);
+  const p = await req('PATCH', `/api/v1/tasks/${t.id}/artifacts/${id}`, { base_rev: 1, edits: [{ old: '乙', new: '乙乙' }] }, b.headers);
+  assert.equal(p.status, 200);
+  assert.equal(p.json().rev, 2);
+  const stale = await req('PUT', `/api/v1/tasks/${t.id}/artifacts/${id}?format=md`, { base_rev: 1, content: '覆盖' }, a.headers);
+  assert.equal(stale.status, 409);
+  assert.match(stale.text, /重新读取最新版本|先读取最新版本/);
+  const put = await req('PUT', `/api/v1/admin/tasks/${t.id}/artifacts/${id}`, { base_rev: 2, content: '负责人改' });
+  assert.equal(put.json().rev, 3);
+  const revs = (await req('GET', `/api/v1/admin/tasks/${t.id}/artifacts/${id}/revisions`)).json();
+  assert.deepEqual(revs.map((r) => r.author), ['A-1', 'A-2', 'owner']);
+  const log = await req('GET', `/api/v1/tasks/${t.id}/artifacts/${id}/revisions?format=md`, undefined, a.headers);
+  assert.match(log.text, /第 3 版 .* 负责人/);
+});

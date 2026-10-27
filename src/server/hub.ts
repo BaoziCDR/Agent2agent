@@ -179,9 +179,57 @@ export interface TaskView {
 export interface TaskDetail extends TaskView {
   subtasks: TaskView[];
   comments: { id: number; author: string; author_name: string; parts: Part[]; created_at: string }[];
-  artifacts: { id: number; author: string; name: string; parts: Part[]; created_at: string }[];
+  artifacts: ArtifactView[];
   progress_log: { author: string; percent: number; note: string; created_at: string }[];
 }
+
+export interface ArtifactView {
+  id: number;
+  author: string;
+  name: string;
+  parts: Part[];
+  created_at: string;
+  /** 当前版本号，每次修改加一 */
+  rev: number;
+  /** 第几次提交（退回后重新提交会加一） */
+  round: number;
+  updated_at: string | null;
+  updated_by: string | null;
+}
+
+export interface ArtifactRevision {
+  rev: number;
+  author: string;
+  author_name: string;
+  parts: Part[];
+  note: string;
+  created_at: string;
+}
+
+interface ArtifactRow {
+  id: number;
+  task_id: number;
+  author: string;
+  name: string;
+  parts: string;
+  created_at: string;
+  rev: number;
+  round: number;
+  updated_at: string | null;
+  updated_by: string | null;
+}
+
+/** 交付物里可以按文本修改的部分：只有一段文本时才能整份替换文本或打补丁。 */
+const editableText = (parts: Part[]) => {
+  const texts = parts.filter((p) => p.kind === 'text' && typeof p.text === 'string');
+  return texts.length === 1 && parts.length === 1 ? texts[0].text! : null;
+};
+
+const countOf = (text: string, part: string) => {
+  let n = 0;
+  for (let i = text.indexOf(part); i >= 0; i = text.indexOf(part, i + 1)) n++;
+  return n;
+};
 
 export interface InboxResult {
   agent: string;
@@ -1266,13 +1314,7 @@ export class Hub {
       parts: string;
       created_at: string;
     }[];
-    const artifacts = this.db.prepare('SELECT * FROM artifacts WHERE task_id = ? ORDER BY id').all(t.id) as {
-      id: number;
-      author: string;
-      name: string;
-      parts: string;
-      created_at: string;
-    }[];
+    const artifacts = this.db.prepare('SELECT * FROM artifacts WHERE task_id = ? ORDER BY id').all(t.id) as unknown as ArtifactRow[];
     const log = this.db
       .prepare('SELECT author, percent, note, created_at FROM progress_log WHERE task_id = ? ORDER BY id')
       .all(t.id) as { author: string; percent: number; note: string; created_at: string }[];
@@ -1286,7 +1328,7 @@ export class Hub {
         parts: json<Part[]>(c.parts, []),
         created_at: c.created_at,
       })),
-      artifacts: artifacts.map((a) => ({ ...a, parts: json<Part[]>(a.parts, []) })),
+      artifacts: artifacts.map((a) => this.artifactView(a)),
       progress_log: log,
     };
   }
@@ -1811,14 +1853,18 @@ export class Hub {
     const me = agentCode(agent.id);
     return this.write(() => {
       const now = this.iso();
-      this.db
-        .prepare('INSERT INTO artifacts (task_id, author, name, parts, created_at) VALUES (?, ?, ?, ?, ?)')
-        .run(t.id, me, '交付说明', JSON.stringify([{ kind: 'text', text: summary }]), now);
-      for (const a of input.artifacts ?? []) {
+      const round =
+        ((this.db.prepare('SELECT MAX(round) AS r FROM artifacts WHERE task_id = ?').get(t.id) as { r: number | null }).r ?? 0) + 1;
+      const add = (name: string, parts: Part[]) => {
+        const r = this.db
+          .prepare('INSERT INTO artifacts (task_id, author, name, parts, created_at, rev, round) VALUES (?, ?, ?, ?, ?, 1, ?)')
+          .run(t.id, me, name, JSON.stringify(parts), now, round);
         this.db
-          .prepare('INSERT INTO artifacts (task_id, author, name, parts, created_at) VALUES (?, ?, ?, ?, ?)')
-          .run(t.id, me, a.name ?? '交付物', JSON.stringify(a.parts ?? []), now);
-      }
+          .prepare('INSERT INTO artifact_revisions (artifact_id, rev, author, parts, created_at) VALUES (?, 1, ?, ?, ?)')
+          .run(Number(r.lastInsertRowid), me, JSON.stringify(parts), now);
+      };
+      add('交付说明', [{ kind: 'text', text: summary }]);
+      for (const a of input.artifacts ?? []) add(a.name ?? '交付物', a.parts ?? []);
       const fresh = this.taskById(t.id);
       const updated = this.setStatus(fresh, me, 'review', {
         lease: null,
@@ -1963,6 +2009,127 @@ export class Hub {
         summary: `${who}在 ${code} 里 @了${target === 'owner' ? '负责人' : '你'}：${excerpt(text)}`,
       });
     }
+  }
+
+  // ───────────── 交付物版本 ─────────────
+
+  private artifactView(a: ArtifactRow): ArtifactView {
+    return {
+      id: a.id,
+      author: a.author,
+      name: a.name,
+      parts: json<Part[]>(a.parts, []),
+      created_at: a.created_at,
+      rev: a.rev,
+      round: a.round,
+      updated_at: a.updated_at,
+      updated_by: a.updated_by,
+    };
+  }
+
+  private requireArtifact(t: TaskRow, id: number | string): ArtifactRow {
+    const a = this.db.prepare('SELECT * FROM artifacts WHERE id = ? AND task_id = ?').get(Number(id), t.id) as unknown as
+      | ArtifactRow
+      | undefined;
+    if (!a) throw notFound(`${taskCode(t.project_id, t.num)} 下没有编号为 ${id} 的交付物`);
+    return a;
+  }
+
+  /** 读取一份交付物；给了 rev 就读那个历史版本。 */
+  getArtifact(actor: Actor, code: string, id: number | string, rev?: number): ArtifactView {
+    const t = this.requireTask(code);
+    this.assertVisible(actor, t);
+    const a = this.artifactView(this.requireArtifact(t, id));
+    if (rev === undefined || rev === a.rev) return a;
+    const r = this.artifactRevisions(actor, code, id).find((x) => x.rev === rev);
+    if (!r) throw notFound(`交付物 ${id} 没有第 ${rev} 版`);
+    return { ...a, parts: r.parts, rev: r.rev, updated_at: r.created_at, updated_by: r.author };
+  }
+
+  artifactRevisions(actor: Actor, code: string, id: number | string): ArtifactRevision[] {
+    const t = this.requireTask(code);
+    this.assertVisible(actor, t);
+    const a = this.requireArtifact(t, id);
+    const rows = this.db.prepare('SELECT * FROM artifact_revisions WHERE artifact_id = ? ORDER BY rev').all(a.id) as {
+      rev: number;
+      author: string;
+      parts: string;
+      note: string;
+      created_at: string;
+    }[];
+    return rows.map((r) => ({
+      rev: r.rev,
+      author: r.author,
+      author_name: this.actorName(r.author),
+      parts: json<Part[]>(r.parts, []),
+      note: r.note,
+      created_at: r.created_at,
+    }));
+  }
+
+  /**
+   * 修改交付物，不需要退回任务。项目成员（交付者、被 @ 来帮忙的 agent）都可以改。
+   * - 整份替换（content 或 parts）：base_rev 必须等于当前版本，否则说明有人先改了，需要拉取最新再改。
+   * - 补丁（edits）：每段 old 必须在当前内容里恰好出现一次；版本落后时，只要要改的那段没被别人动过就照样生效，
+   *   被动过（找不到或不唯一）就失败。
+   */
+  updateArtifact(
+    actor: Actor,
+    code: string,
+    id: number | string,
+    input: { base_rev?: number; content?: string; parts?: Part[]; edits?: { old: string; new: string }[]; note?: string },
+  ): ArtifactView {
+    const t = this.requireTask(code);
+    this.assertVisible(actor, t);
+    if (t.status === 'canceled') throw conflict(`${code} 已取消，不能再改交付物`);
+    const a = this.requireArtifact(t, id);
+    const baseRev = Number(input.base_rev);
+    if (!Number.isInteger(baseRev) || baseRev < 1) throw invalid('请带上 base_rev：你是在第几版的基础上修改的（先读取交付物拿到当前版本号）');
+    if (baseRev > a.rev) throw invalid(`交付物 ${a.id} 目前只到第 ${a.rev} 版`);
+    const who = actor.kind === 'owner' ? 'owner' : agentCode(actor.agent.id);
+    const stale = () =>
+      `交付物 ${a.id}「${a.name}」已经被${this.actorName(a.updated_by ?? a.author)}改到第 ${a.rev} 版（你基于第 ${baseRev} 版）`;
+    let parts: Part[];
+    const current = json<Part[]>(a.parts, []);
+    if (input.edits?.length) {
+      if (input.content !== undefined || input.parts) throw invalid('edits 和 content 只能二选一');
+      let text = editableText(current);
+      if (text === null) throw invalid(`交付物 ${a.id} 不是单段文本，只能整份替换`);
+      for (const [i, e] of input.edits.entries()) {
+        if (typeof e?.old !== 'string' || !e.old || typeof e.new !== 'string') throw invalid(`第 ${i + 1} 处修改需要 old（原文片段）和 new（替换后的内容）`);
+        const n = countOf(text, e.old);
+        if (n !== 1) {
+          if (baseRev < a.rev) throw conflict(`${stale()}，而且你要改的第 ${i + 1} 处已经被改动。请重新读取最新版本后再改。`);
+          throw invalid(`第 ${i + 1} 处的原文片段${n === 0 ? '在交付物里找不到' : `出现了 ${n} 次，请多带一些上下文让它唯一`}`);
+        }
+        text = text.replace(e.old, () => e.new);
+      }
+      parts = [{ kind: 'text', text }];
+    } else if (input.content !== undefined || input.parts) {
+      if (baseRev !== a.rev) throw conflict(`${stale()}，整份替换会覆盖别人的修改。请先读取最新版本，在它的基础上修改后再提交。`);
+      parts = input.parts ?? [{ kind: 'text', text: String(input.content) }];
+      if (!parts.length) throw invalid('交付物内容不能为空');
+    } else throw invalid('请给出 content（整份替换）或 edits（局部修改）');
+    const before = editableText(current);
+    if (before !== null && before === editableText(parts)) throw invalid('内容没有变化');
+    const note = input.note?.trim() ?? '';
+    return this.write(() => {
+      const now = this.iso();
+      const rev = a.rev + 1;
+      this.db
+        .prepare('UPDATE artifacts SET parts = ?, rev = ?, updated_at = ?, updated_by = ? WHERE id = ?')
+        .run(JSON.stringify(parts), rev, now, who, a.id);
+      this.db
+        .prepare('INSERT INTO artifact_revisions (artifact_id, rev, author, parts, note, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(a.id, rev, who, JSON.stringify(parts), note, now);
+      const assignee = t.assignee_id ? agentCode(t.assignee_id) : null;
+      this.emit('artifact.updated', who, {
+        task: t,
+        data: { artifact: a.id, name: a.name, rev, assignee, note, mode: input.edits?.length ? 'patch' : 'replace' },
+        summary: `${this.actorName(who)}把 ${code} 的交付物「${a.name}」改到了第 ${rev} 版${note ? `：${excerpt(note)}` : ''}`,
+      });
+      return this.artifactView(this.requireArtifact(t, a.id));
+    });
   }
 
   /** 评论可以带附件：fileIds 是先通过 /api/v1/files 上传得到的文件编号。 */

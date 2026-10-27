@@ -76,6 +76,7 @@ export type EventType =
   | 'task.unlocked'
   | 'task.stalled'
   | 'task.deliverable'
+  | 'artifact.updated'
   | 'comment.created'
   | 'message.direct'
   | 'mention'

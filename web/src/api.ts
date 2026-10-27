@@ -67,8 +67,31 @@ export interface Task {
 export interface TaskDetail extends Task {
   subtasks: Task[];
   comments: { id: number; author: string; author_name: string; parts: Part[]; created_at: string }[];
-  artifacts: { id: number; author: string; name: string; parts: Part[]; created_at: string }[];
+  artifacts: Artifact[];
   progress_log: { author: string; percent: number; note: string; created_at: string }[];
+}
+
+export interface Artifact {
+  id: number;
+  author: string;
+  name: string;
+  parts: Part[];
+  created_at: string;
+  /** 当前版本号 */
+  rev: number;
+  /** 第几次提交 */
+  round: number;
+  updated_at: string | null;
+  updated_by: string | null;
+}
+
+export interface ArtifactRevision {
+  rev: number;
+  author: string;
+  author_name: string;
+  parts: Part[];
+  note: string;
+  created_at: string;
 }
 
 export interface Invite {

@@ -2,7 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
 /** 调用 Hub 接口并返回 Markdown 文本。服务端用进程内调用实现，stdio 桥用 HTTP 实现。 */
-export type HubCall = (method: 'GET' | 'POST', path: string, body?: unknown) => Promise<{ ok: boolean; text: string }>;
+export type HubCall = (method: 'GET' | 'POST' | 'PUT' | 'PATCH', path: string, body?: unknown) => Promise<{ ok: boolean; text: string }>;
 
 export interface ToolOptions {
   /** stdio 桥才提供：用邀请码加入并在本地保存令牌 */
@@ -281,6 +281,58 @@ export function createHubMcpServer(call: HubCall, opts: ToolOptions = {}): McpSe
         return { content: [{ type: 'text' as const, text: (err as Error).message }], isError: true };
       }
       return reply(call('POST', `/api/v1/tasks/${enc(task)}/comments?format=md`, { text, files: ids }));
+    },
+  );
+
+  server.registerTool(
+    'hub_artifact_get',
+    {
+      title: '读取交付物',
+      description: '读取任务下某份交付物的当前内容和版本号（编号见任务详情里的 ### #编号）。修改前先读，拿到 rev 作为 base_rev。给 rev 可以读历史版本，history=true 看修改记录。',
+      inputSchema: {
+        task: z.string(),
+        artifact: z.number().int().describe('交付物编号'),
+        rev: z.number().int().optional().describe('读哪一版，默认最新'),
+        history: z.boolean().optional().describe('改为返回修改记录'),
+      },
+    },
+    async ({ task, artifact, rev, history }: { task: string; artifact: number; rev?: number; history?: boolean }) => {
+      const path = `/api/v1/tasks/${enc(task)}/artifacts/${artifact}`;
+      return reply(call('GET', history ? `${path}/revisions?format=md` : `${path}?format=md${rev ? `&rev=${rev}` : ''}`));
+    },
+  );
+
+  server.registerTool(
+    'hub_artifact_update',
+    {
+      title: '修改交付物',
+      description:
+        '修改已提交的交付物，不需要退回任务：负责人评论要求修改，或 @你 来帮忙改时使用。base_rev 是你读取时的版本号。' +
+        'edits 做局部修改（每处 old 必须在当前内容里恰好出现一次）；content 整份替换。' +
+        '有人在你之后改过：整份替换一定失败，局部修改在你要改的那段被动过时失败；失败后用 hub_artifact_get 重新读取最新版本再改。',
+      inputSchema: {
+        task: z.string(),
+        artifact: z.number().int().describe('交付物编号'),
+        base_rev: z.number().int().describe('你是在第几版的基础上修改的'),
+        edits: z.array(z.object({ old: z.string(), new: z.string() })).optional().describe('局部修改：把 old 原文片段替换成 new'),
+        content: z.string().optional().describe('整份替换：新的完整内容'),
+        ...(opts.fileArtifact ? { file: z.string().optional().describe('整份替换：用这个本机文件的内容') } : {}),
+        note: z.string().optional().describe('改了什么，一句话'),
+      },
+    },
+    async ({ task, artifact, file, ...body }: { task: string; artifact: number; base_rev: number; edits?: object[]; content?: string; file?: string; note?: string }) => {
+      const path = `/api/v1/tasks/${enc(task)}/artifacts/${artifact}?format=md`;
+      if (body.edits?.length) return reply(call('PATCH', path, { base_rev: body.base_rev, edits: body.edits, note: body.note }));
+      let payload: object = { base_rev: body.base_rev, content: body.content, note: body.note };
+      if (file) {
+        try {
+          const a = await opts.fileArtifact!(file);
+          payload = { base_rev: body.base_rev, note: body.note, ...(a.content !== undefined ? { content: a.content } : { file_id: a.file_id }) };
+        } catch (err) {
+          return { content: [{ type: 'text' as const, text: (err as Error).message }], isError: true };
+        }
+      }
+      return reply(call('PUT', path, payload));
     },
   );
 

@@ -5,7 +5,7 @@ import { networkInterfaces } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { type Actor, type AgentRow, Hub, HubError, agentCode } from './hub.js';
-import { renderInbox, renderJoin, renderMe, renderSearch, renderTask, renderTaskList } from './format.js';
+import { renderArtifact, renderArtifactLog, renderInbox, renderJoin, renderMe, renderSearch, renderTask, renderTaskList } from './format.js';
 import { handleMcpRequest } from './mcp-http.js';
 import { renderReport, tasksCsv } from './report.js';
 import { buildInstallPackage } from './pack.js';
@@ -320,6 +320,25 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
         return `已创建子任务 **${t.id}** ${t.title}（${t.status_label}）\n`;
       },
     );
+    // 交付物：读取、修改记录、整份替换（PUT）和局部修改（PATCH），都按版本号做冲突检测
+    agentApi.get('/api/v1/tasks/:id/artifacts/:aid', async (req, reply) => {
+      const { id, aid } = req.params as { id: string; aid: string };
+      const rev = (req.query as Q).rev;
+      const a = hub.getArtifact(actorOf(req), id, aid, rev ? Number(rev) : undefined);
+      return send(req, reply, a, () => renderArtifact(id.toUpperCase(), a, publicUrl(req)));
+    });
+    agentApi.get('/api/v1/tasks/:id/artifacts/:aid/revisions', async (req, reply) => {
+      const { id, aid } = req.params as { id: string; aid: string };
+      const revs = hub.artifactRevisions(actorOf(req), id, aid);
+      return send(req, reply, revs, () => renderArtifactLog(id.toUpperCase(), aid, revs));
+    });
+    for (const method of ['put', 'patch'] as const)
+      agentApi[method]('/api/v1/tasks/:id/artifacts/:aid', async (req, reply) => {
+        const { id, aid } = req.params as { id: string; aid: string };
+        const key = req.headers['idempotency-key'] as string | undefined;
+        const a = hub.idempotent(req.agent!, key, () => hub.updateArtifact(actorOf(req), id, aid, artifactUpdate(hub, method, (req.body ?? {}) as B)));
+        return send(req, reply, a, () => `已把交付物 #${a.id}「${a.name}」改到第 ${a.rev} 版。\n`);
+      });
     agentApi.post('/api/v1/invites', async (req, reply) => {
       const b = (req.body ?? {}) as B;
       const r = hub.agentInvite(
@@ -574,6 +593,15 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
     ownerAction('answer', (id, b) => hub.answer(id, str(b.answer) ?? ''));
     ownerAction('unblock', (id, b) => hub.unblock({ kind: 'owner' }, id, str(b.note)));
     ownerAction('comments', (id, b) => hub.comment({ kind: 'owner' }, id, str(b.text) ?? '', strArr(b.files)));
+    admin.get(`${A}/tasks/:id/artifacts/:aid/revisions`, async (req) => {
+      const { id, aid } = req.params as { id: string; aid: string };
+      return hub.artifactRevisions({ kind: 'owner' }, id, aid);
+    });
+    for (const method of ['put', 'patch'] as const)
+      admin[method](`${A}/tasks/:id/artifacts/:aid`, async (req) => {
+        const { id, aid } = req.params as { id: string; aid: string };
+        return hub.updateArtifact({ kind: 'owner' }, id, aid, artifactUpdate(hub, method, (req.body ?? {}) as B));
+      });
 
     admin.get(`${A}/messages`, async (req) => hub.listMessages({ agent: (req.query as Q).agent }));
     admin.post(`${A}/messages`, async (req) => {
@@ -617,6 +645,18 @@ const MIME: Record<string, string> = {
   mp4: 'video/mp4', mp3: 'audio/mpeg',
 };
 const guessMime = (name: string) => MIME[name.split('.').pop()?.toLowerCase() ?? ''] ?? 'application/octet-stream';
+
+/** PUT 整份替换（content 或 file_id），PATCH 局部修改（edits）。 */
+function artifactUpdate(hub: Hub, method: 'put' | 'patch', b: B) {
+  const base = { base_rev: b.base_rev === undefined ? undefined : Number(b.base_rev), note: str(b.note) };
+  if (method === 'patch') {
+    if (!Array.isArray(b.edits)) throw new HubError(400, 'invalid', 'PATCH 需要 edits：[{"old":"原文片段","new":"替换后的内容"}]');
+    return { ...base, edits: (b.edits as { old?: unknown; new?: unknown }[]).map((e) => ({ old: str(e?.old) ?? '', new: str(e?.new) ?? '' })) };
+  }
+  if (b.file_id) return { ...base, parts: [hub.filePart(String(b.file_id))] };
+  if (typeof b.content !== 'string') throw new HubError(400, 'invalid', 'PUT 需要 content（新的完整内容）或 file_id');
+  return { ...base, content: b.content };
+}
 
 function parseArtifacts(hub: Hub, v: unknown): { name?: string; parts: Part[] }[] | undefined {
   if (!Array.isArray(v)) return undefined;

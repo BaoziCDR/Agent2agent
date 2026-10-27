@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { type CliConfig, defaultConfigPath, loadConfig, saveConfig } from './config.js';
 import { fileArtifact, uploadFile } from './files.js';
@@ -30,6 +30,13 @@ Agent：
   ahub release <任务> <理由>
   ahub upload <文件>                   上传文件（最大 25 MB），返回下载地址；submit --file 遇到大文件或二进制文件会自动上传
   ahub comment <任务> <内容> [--file 路径 ...]  可用 @A-3、@成员名字 或 @负责人；--file 把文件作为附件上传
+  ahub artifact show <任务> <编号> [--rev N] [--out 文件]
+                                       查看交付物当前内容和版本号；--out 把文本内容存成文件，方便改完再 put
+  ahub artifact patch <任务> <编号> --base N --old 原文 --new 新内容 [--old .. --new ..] [--note 说明]
+                                       局部修改；--edits edits.json 可一次给出多处 [{"old":"..","new":".."}]
+  ahub artifact put <任务> <编号> --base N --file 路径 [--note 说明]
+                                       整份替换；--base 落后于当前版本会被拒绝，重新 show 后再改
+  ahub artifact log <任务> <编号>      查看修改记录
   ahub members [--project P-1]         查看项目成员和编号（用于 @）
   ahub search <关键字> [--project P-1] 按编号、标题、描述、笔记、评论搜索任务
   ahub subtask <父任务> <标题> [--desc 描述] [--assignee A-3] [--tags a,b] [--priority P1] [--accept "标准1;标准2"] [--due 2026-11-01T18:00+08:00]
@@ -76,16 +83,26 @@ async function api(
 }
 
 function ok(r: { status: number; text: string }): string {
-  if (r.status >= 400) {
-    let msg = r.text;
-    try {
-      msg = JSON.parse(r.text).error?.message ?? r.text;
-    } catch {
-      msg = r.text.replace(/^\*\*错误\*\*：/, '').trim();
-    }
-    die(msg);
-  }
+  if (r.status >= 400) die(errorText(r));
   return r.text;
+}
+
+/** 补丁原文常以「- 」开头（Markdown 列表），parseArgs 会把它当成选项；这几个参数的下一个词一律当作值。 */
+function glueValues(args: string[]) {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (['--old', '--new', '--note'].includes(args[i]) && i + 1 < args.length) out.push(`${args[i]}=${args[++i]}`);
+    else out.push(args[i]);
+  }
+  return out;
+}
+
+function errorText(r: { status: number; text: string }) {
+  try {
+    return JSON.parse(r.text).error?.message ?? r.text;
+  } catch {
+    return r.text.replace(/^\*\*错误\*\*：/, '').trim();
+  }
 }
 
 function need(v: string | undefined, what: string): string {
@@ -108,7 +125,7 @@ async function main(argv: string[]) {
     return;
   }
   const { values: v, positionals: pos } = parseArgs({
-    args: argv.slice(1),
+    args: glueValues(argv.slice(1)),
     allowPositionals: true,
     options: {
       hub: { type: 'string' },
@@ -154,6 +171,13 @@ async function main(argv: string[]) {
       'wake-on-open': { type: 'boolean' },
       'new-session': { type: 'boolean' },
       'dry-run': { type: 'boolean' },
+      rev: { type: 'string' },
+      out: { type: 'string' },
+      base: { type: 'string' },
+      old: { type: 'string', multiple: true },
+      new: { type: 'string', multiple: true },
+      edits: { type: 'string' },
+      note: { type: 'string' },
     },
   });
 
@@ -363,6 +387,52 @@ async function main(argv: string[]) {
       const files = await Promise.all((v.file ?? []).map((f) => uploadFile(cfg, f).then((r) => r.id, (err: Error) => die(err.message))));
       console.log(ok(await api(cfg, 'POST', `/api/v1/tasks/${enc(id)}/comments`, { text, files }, { ack: true })));
       return;
+    }
+    case 'artifact': {
+      const sub = pos[0];
+      const id = need(pos[1], '任务编号');
+      const aid = need(pos[2], '交付物编号（任务详情里 ### #编号）');
+      const path = `/api/v1/tasks/${enc(id)}/artifacts/${enc(aid)}`;
+      const conflictHint = (r: { status: number; text: string }) => {
+        if (r.status === 409) die(`${errorText(r)}\n查看最新版本：ahub artifact show ${id} ${aid}`);
+        return ok(r);
+      };
+      if (sub === 'show') {
+        const q = v.rev ? `?rev=${enc(v.rev)}` : '';
+        if (!v.out) return void console.log(ok(await api(cfg, 'GET', path + q)));
+        const a = JSON.parse(ok(await api(cfg, 'GET', path + q, undefined, { md: false }))) as { rev: number; name: string; parts: { kind: string; text?: string }[] };
+        if (a.parts.length !== 1 || a.parts[0].kind !== 'text') die('这份交付物不是单段文本，不能导出为文件');
+        writeFileSync(v.out, a.parts[0].text ?? '');
+        console.log(`已把「${a.name}」第 ${a.rev} 版存到 ${v.out}。改完后运行：ahub artifact put ${id} ${aid} --base ${a.rev} --file ${v.out}`);
+        return;
+      }
+      if (sub === 'log') return void console.log(ok(await api(cfg, 'GET', `${path}/revisions`)));
+      const base_rev = Number(need(v.base, '--base（你是在第几版的基础上修改的，ahub artifact show 可以看到）'));
+      if (sub === 'patch') {
+        let edits: { old: string; new: string }[];
+        if (v.edits) {
+          try {
+            edits = JSON.parse(readFileSync(v.edits, 'utf8'));
+          } catch (err) {
+            die(`读取 ${v.edits} 失败：${(err as Error).message}`);
+          }
+        } else {
+          const olds = v.old ?? [];
+          const news = v.new ?? [];
+          if (!olds.length || olds.length !== news.length) die('--old 和 --new 要成对出现，每一对是一处修改');
+          edits = olds.map((o, i) => ({ old: o, new: news[i] }));
+        }
+        console.log(conflictHint(await api(cfg, 'PATCH', path, { base_rev, edits, note: v.note }, { ack: true })));
+        return;
+      }
+      if (sub === 'put') {
+        const f = need(v.file?.[0], '--file（新的完整内容）');
+        const a = await fileArtifact(cfg, f).catch((err: Error) => die(err.message));
+        const body = 'content' in a ? { base_rev, content: a.content, note: v.note } : { base_rev, file_id: a.file_id, note: v.note };
+        console.log(conflictHint(await api(cfg, 'PUT', path, body, { ack: true })));
+        return;
+      }
+      die('用法：ahub artifact show|patch|put|log <任务> <编号>，运行 ahub --help 查看详情');
     }
     case 'subtask': {
       const parent = need(pos[0], '父任务编号');

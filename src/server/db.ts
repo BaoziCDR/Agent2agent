@@ -205,6 +205,43 @@ function migrate(db: Db) {
   if (!has('agents', 'can_invite')) db.exec('ALTER TABLE agents ADD COLUMN can_invite INTEGER NOT NULL DEFAULT 0');
   if (!has('invites', 'created_by')) db.exec("ALTER TABLE invites ADD COLUMN created_by TEXT NOT NULL DEFAULT 'owner'");
   if (!has('tasks', 'due_warned')) db.exec('ALTER TABLE tasks ADD COLUMN due_warned INTEGER NOT NULL DEFAULT 0');
+  // 交付物可修改：rev 是当前版本号，round 是第几次提交；每个版本的内容存在 artifact_revisions
+  if (!has('artifacts', 'rev')) {
+    db.exec('ALTER TABLE artifacts ADD COLUMN rev INTEGER NOT NULL DEFAULT 1');
+    db.exec('ALTER TABLE artifacts ADD COLUMN round INTEGER NOT NULL DEFAULT 1');
+    db.exec('ALTER TABLE artifacts ADD COLUMN updated_at TEXT');
+    db.exec('ALTER TABLE artifacts ADD COLUMN updated_by TEXT');
+    // 老数据按「交付说明」出现的次数补上轮次：每次提交都会先写一条交付说明
+    const rows = db.prepare('SELECT id, task_id, name, created_at FROM artifacts ORDER BY task_id, id').all() as {
+      id: number;
+      task_id: number;
+      name: string;
+      created_at: string;
+    }[];
+    let task = -1;
+    let round = 0;
+    let at = '';
+    for (const r of rows) {
+      if (r.task_id !== task) [task, round, at] = [r.task_id, 0, ''];
+      if (r.name === '交付说明' && r.created_at !== at) round++;
+      at = r.created_at;
+      db.prepare('UPDATE artifacts SET round = ? WHERE id = ?').run(Math.max(round, 1), r.id);
+    }
+  }
+  db.exec(`CREATE TABLE IF NOT EXISTS artifact_revisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    artifact_id INTEGER NOT NULL REFERENCES artifacts(id),
+    rev INTEGER NOT NULL,
+    author TEXT NOT NULL,
+    parts TEXT NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    UNIQUE (artifact_id, rev)
+  )`);
+  // 还没有版本记录的交付物（包括老数据）补一条第 1 版
+  db.exec(`INSERT INTO artifact_revisions (artifact_id, rev, author, parts, created_at)
+    SELECT a.id, a.rev, a.author, a.parts, a.created_at FROM artifacts a
+    WHERE NOT EXISTS (SELECT 1 FROM artifact_revisions r WHERE r.artifact_id = a.id)`);
 }
 
 // 在一个事务里执行；出错回滚。node:sqlite 是同步的，所以不会和其他请求交错。

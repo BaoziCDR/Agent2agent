@@ -389,3 +389,78 @@ test('原地打转检测：进度长时间不变但一直在报，提醒负责�
   assert.equal(hub.getTask(t.id).stalled, false);
   assert.equal(hub.overview().counts.stalled, 0);
 });
+
+test('交付物修改：局部补丁、整份替换的版本冲突、补丁只在改动区域冲突、重新提交算新一轮', () => {
+  const { hub, p1, join } = setup();
+  const a = join('甲');
+  const b = join('乙');
+  const t = hub.createTask({ kind: 'owner' }, { project: p1.id, title: '写文档', assignee: a.agent.id });
+  hub.accept(a.row, t.id);
+  hub.submit(a.row, t.id, { summary: '好了', artifacts: [{ name: 'doc.md', parts: [{ kind: 'text', text: '# 标题\n\n第一段\n\n第二段\n' }] }] });
+  const doc = hub.getTask(t.id).artifacts.find((x) => x.name === 'doc.md');
+  assert.equal(doc.rev, 1);
+  assert.equal(doc.round, 1);
+  const A = { kind: 'agent', agent: a.row };
+  const B = { kind: 'agent', agent: b.row };
+
+  // 待验收时直接改，不用退回；负责人和其他成员都能改
+  const v2 = hub.updateArtifact(A, t.id, doc.id, { base_rev: 1, edits: [{ old: '第一段', new: '第一段（已补充）' }], note: '补充第一段' });
+  assert.equal(v2.rev, 2);
+  assert.equal(v2.updated_by, 'A-1');
+  assert.equal(hub.getTask(t.id).status, 'review');
+  assert.ok(hub.inbox(b.row).events.some((e) => e.type === 'artifact.updated' && e.summary.includes('第 2 版')));
+
+  // 乙基于第 1 版整份替换：被拒绝
+  assert.throws(() => hub.updateArtifact(B, t.id, doc.id, { base_rev: 1, content: '全部重写' }), (e) => e.status === 409 && /第 2 版/.test(e.message));
+  // 乙基于第 1 版改第二段（没人动过）：可以
+  const v3 = hub.updateArtifact(B, t.id, doc.id, { base_rev: 1, edits: [{ old: '第二段', new: '第二段（乙改）' }] });
+  assert.equal(v3.rev, 3);
+  assert.equal(v3.parts[0].text, '# 标题\n\n第一段（已补充）\n\n第二段（乙改）\n');
+  // 乙基于第 1 版改第一段（已被甲改过）：冲突
+  assert.throws(() => hub.updateArtifact(B, t.id, doc.id, { base_rev: 1, edits: [{ old: '第一段\n', new: 'x' }] }), (e) => e.status === 409);
+  // 版本是最新的但原文找不到：普通错误
+  assert.throws(() => hub.updateArtifact(B, t.id, doc.id, { base_rev: 3, edits: [{ old: '不存在', new: 'x' }] }), (e) => e.status === 400);
+  assert.throws(() => hub.updateArtifact(B, t.id, doc.id, { content: 'x' }), /base_rev/);
+  // 负责人整份替换最新版
+  const v4 = hub.updateArtifact({ kind: 'owner' }, t.id, doc.id, { base_rev: 3, content: '负责人定稿' });
+  assert.equal(v4.rev, 4);
+  const revs = hub.artifactRevisions({ kind: 'owner' }, t.id, doc.id);
+  assert.deepEqual(revs.map((r) => [r.rev, r.author]), [[1, 'A-1'], [2, 'A-1'], [3, 'A-2'], [4, 'owner']]);
+  assert.equal(revs[1].note, '补充第一段');
+  assert.equal(hub.getArtifact(A, t.id, doc.id, 2).parts[0].text, '# 标题\n\n第一段（已补充）\n\n第二段\n');
+
+  // 非项目成员不能改
+  const p2 = hub.createProject({ name: '项目二' });
+  const c = hub.join({ invite: hub.createInvite({ project: p2.id }).code, name: '丙' }, null);
+  assert.throws(() => hub.updateArtifact({ kind: 'agent', agent: hub.authAgent(c.token) }, t.id, doc.id, { base_rev: 4, content: 'x' }));
+
+  hub.reject(t.id, '再补一节');
+  hub.submit(a.row, t.id, { summary: '第二次', artifacts: [{ name: 'doc.md', parts: [{ kind: 'text', text: '新版' }] }] });
+  const rounds = hub.getTask(t.id).artifacts.map((x) => [x.name, x.round]);
+  assert.deepEqual(rounds, [['交付说明', 1], ['doc.md', 1], ['交付说明', 2], ['doc.md', 2]]);
+});
+
+test('交付物迁移：老数据补上版本号、提交轮次和第 1 版记录', async () => {
+  const { mkdtempSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join: pj } = await import('node:path');
+  const file = pj(mkdtempSync(pj(tmpdir(), 'ahub-mig-')), 'hub.db');
+  let db = openDb(file);
+  const hub = new Hub(db);
+  const p = hub.createProject({ name: '项目' });
+  const r = hub.join({ invite: hub.createInvite({ project: p.id }).code, name: '甲' }, null);
+  const a = hub.authAgent(r.token);
+  const t = hub.createTask({ kind: 'owner' }, { project: p.id, title: '任务', assignee: r.agent.id });
+  hub.accept(a, t.id);
+  hub.submit(a, t.id, { summary: '一', artifacts: [{ name: 'x', parts: [{ kind: 'text', text: '1' }] }] });
+  hub.reject(t.id, '改');
+  hub.submit(a, t.id, { summary: '二' });
+  db.exec('DROP TABLE artifact_revisions');
+  for (const c of ['rev', 'round', 'updated_at', 'updated_by']) db.exec(`ALTER TABLE artifacts DROP COLUMN ${c}`);
+  db.close();
+  db = openDb(file);
+  const arts = new Hub(db).getTask(t.id).artifacts;
+  assert.deepEqual(arts.map((x) => [x.name, x.rev, x.round]), [['交付说明', 1, 1], ['x', 1, 1], ['交付说明', 1, 2]]);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM artifact_revisions').get().n, 3);
+  db.close();
+});
