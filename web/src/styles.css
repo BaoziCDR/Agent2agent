@@ -623,23 +623,218 @@ table.table {
   top: 0;
   right: 0;
   bottom: 0;
-  width: min(640px, 100vw);
+  width: min(1080px, 100vw);
   background: var(--panel);
   border-left: 1px solid var(--border);
+  box-shadow: -8px 0 24px rgba(16, 24, 40, 0.08);
   z-index: 21;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+  transition: width 0.18s ease;
+}
+
+.drawer.wide {
+  width: 100vw;
 }
 
 .drawer-head {
-  padding: 16px 20px 12px;
+  padding: 18px 32px 16px;
   border-bottom: 1px solid var(--border);
 }
 
+.drawer-title {
+  margin: 6px 0 10px;
+  font-size: 22px;
+  line-height: 1.35;
+  font-weight: 650;
+}
+
+.drawer-actions {
+  margin-top: 14px;
+}
+
 .drawer-body {
-  padding: 16px 20px 40px;
+  padding: 24px 32px 56px;
   overflow-y: auto;
+  overflow-x: hidden;
   flex: 1;
+}
+
+/* 详情分两栏：左边是要读的正文和讨论，右边是负责人、进度、子任务这些速查信息 */
+.drawer-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 32px;
+  align-items: start;
+}
+
+.drawer.wide .drawer-grid {
+  max-width: 1320px;
+  margin: 0 auto;
+  grid-template-columns: minmax(0, 1fr) 340px;
+}
+
+.drawer-main {
+  min-width: 0;
+  font-size: 15px;
+  line-height: 1.75;
+}
+
+.drawer-main .md {
+  line-height: 1.75;
+}
+
+.drawer-main .md > * {
+  margin-bottom: 12px;
+}
+
+.drawer-main .md .md-h1 {
+  font-size: 19px;
+  margin-top: 18px;
+}
+
+.drawer-main .md .md-h2 {
+  font-size: 17px;
+  margin-top: 16px;
+}
+
+.drawer-main .md .md-h3 {
+  font-size: 15.5px;
+  margin-top: 12px;
+}
+
+.drawer-main .md > .md-h:first-child {
+  margin-top: 0;
+}
+
+.drawer-main .md li + li {
+  margin-top: 4px;
+}
+
+.drawer-main code,
+.drawer-main pre {
+  font-size: 13px;
+}
+
+.drawer-main .md-table table {
+  font-size: 14px;
+  min-width: 100%;
+}
+
+.drawer-main .md-table th,
+.drawer-main .md-table td {
+  padding: 7px 12px;
+  min-width: 7em;
+}
+
+.drawer-main .section {
+  margin-bottom: 32px;
+}
+
+.drawer-main .section > h4 {
+  font-size: 14px;
+  color: var(--text);
+  padding-bottom: 8px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.drawer-main .comment {
+  padding: 12px 16px;
+  margin-bottom: 12px;
+  border-radius: 10px;
+}
+
+.drawer-main .comment.owner {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.drawer-main .comment > .faint:first-child {
+  font-size: 12.5px;
+  margin-bottom: 4px;
+}
+
+.artifact {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 18px;
+  margin-bottom: 14px;
+}
+
+.artifact-meta {
+  font-size: 12.5px;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed var(--border);
+}
+
+.stall-hint {
+  margin: 0 0 20px;
+}
+
+.drawer-main > :first-child:not(.section) {
+  margin-bottom: 24px;
+}
+
+.drawer-side {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  font-size: 13.5px;
+}
+
+.drawer-side .section {
+  margin: 0;
+}
+
+/* 右栏一般不长，滚动正文时让它停在顶部，随时看得到负责人和进度 */
+@media (min-width: 901px) {
+  .drawer-side {
+    position: sticky;
+    top: 0;
+    max-height: calc(100vh - 220px);
+    overflow-y: auto;
+  }
+}
+
+.side-card {
+  background: var(--panel-2);
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+
+.side-card > div + div {
+  margin-top: 4px;
+}
+
+.drawer-side .progress {
+  margin-top: 6px;
+}
+
+@media (max-width: 900px) {
+  .drawer-grid,
+  .drawer.wide .drawer-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+  }
+
+  .drawer-side {
+    order: -1;
+  }
+
+  .drawer-head {
+    padding: 14px 16px 12px;
+  }
+
+  .drawer-body {
+    padding: 16px 16px 40px;
+  }
+
+  .drawer-title {
+    font-size: 19px;
+  }
 }
 
 .section {
@@ -1181,6 +1376,7 @@ table.table {
 }
 
 .md :not(pre) > code {
+  overflow-wrap: anywhere;
   background: var(--panel-2);
   border: 1px solid var(--border);
   border-radius: 4px;

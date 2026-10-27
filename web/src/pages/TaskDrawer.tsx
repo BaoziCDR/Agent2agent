@@ -42,6 +42,22 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
   const [reason, setReason] = useState('');
   const [files, setFiles] = useState<Uploaded[]>([]);
   const [uploading, setUploading] = useState(0);
+  const [wide, setWide] = useState(() => {
+    try {
+      return localStorage.getItem('ahub.drawer-wide') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const toggleWide = () =>
+    setWide((w) => {
+      try {
+        localStorage.setItem('ahub.drawer-wide', w ? '0' : '1');
+      } catch {
+        // 无痕模式下存不了，只影响这一次
+      }
+      return !w;
+    });
   const fileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -93,7 +109,7 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
   return (
     <>
       <div className="drawer-mask" onClick={onClose} />
-      <aside className="drawer" aria-label={`任务 ${id}`}>
+      <aside className={`drawer${wide ? ' wide' : ''}`} aria-label={`任务 ${id}`}>
         <div className="drawer-head">
           <div className="btn-row" style={{ justifyContent: 'space-between' }}>
             <span className="faint">
@@ -107,14 +123,19 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
                 </>
               )}
             </span>
-            <button className="btn small" onClick={onClose} aria-label="关闭">
-              关闭
-            </button>
+            <span className="btn-row">
+              <button className="btn small ghost" onClick={toggleWide} title={wide ? '恢复侧栏宽度' : '铺满窗口阅读'}>
+                {wide ? '收起' : '展开'}
+              </button>
+              <button className="btn small" onClick={onClose} aria-label="关闭">
+                关闭
+              </button>
+            </span>
           </div>
           {error && <p style={{ color: 'var(--bad)' }}>{error}</p>}
           {t && (
             <>
-              <h2 style={{ margin: '6px 0 8px', fontSize: 18 }}>{t.title}</h2>
+              <h2 className="drawer-title">{t.title}</h2>
               <div className="btn-row">
                 <StatusBadge task={t} />
                 <span className={`badge ${t.priority}`}>{t.priority}</span>
@@ -122,13 +143,7 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
                   创建者 {t.created_by === 'owner' ? '负责人' : t.created_by} · 更新于 {timeAgo(t.updated_at)}
                 </span>
               </div>
-            </>
-          )}
-        </div>
-        {t && (
-          <div className="drawer-body">
-            <div className="section">
-              <div className="btn-row">
+              <div className="btn-row drawer-actions">
                 {t.status === 'draft' && (
                   <button className="btn primary" onClick={() => act('publish', {}, '已发布')}>
                     发布
@@ -182,219 +197,224 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
                   </button>
                 )}
               </div>
-            </div>
-
-            <div className="section">
-              <h4>负责人与进度</h4>
-              <div>
-                {t.assignee ? `${t.assignee_name}（${t.assignee}）` : '未指派'}
-                {t.required_tags.length > 0 && <span className="faint"> · 需要：{t.required_tags.join('、')}</span>}
-              </div>
-              {!t.assignee && t.status === 'open' && (
-                <Suggest list={recs} label="推荐指派" onPick={(a) => void act('assign', { agent: a }, '已指派')} />
-              )}
-              {t.status !== 'open' && t.status !== 'draft' && (
-                <div style={{ marginTop: 8 }}>
-                  <div className="progress">
-                    <div style={{ width: `${t.progress}%` }} />
-                  </div>
-                  <div className="faint" style={{ marginTop: 4 }}>
-                    {t.progress}% {t.progress_note && `· ${t.progress_note}`}
-                  </div>
-                </div>
-              )}
+            </>
+          )}
+        </div>
+        {t && (
+          <div className="drawer-body drawer-grid">
+            <div className="drawer-main">
               {t.status === 'input_required' && <AnswerBox task={t} onDone={reload} />}
               {t.stalled && (
-                <p className="due warn" style={{ margin: '8px 0' }}>
+                <p className="due warn stall-hint">
                   进度停在 {t.progress}% 已经很久，期间一直在上报，可能在原地打转。可以在下面评论问问卡在哪，或者拆成更小的子任务、改派给别人。
                 </p>
               )}
-              {t.lease_until && !closed && <div className="faint">租约到期：{clock(t.lease_until)}</div>}
-              {t.due_at && (
-                <div className="faint">
-                  截止：{dateTime(t.due_at)}
-                  {(() => {
-                    const d = dueInfo(t);
-                    return d?.cls && <span className={`due ${d.cls}`} style={{ marginLeft: 6 }}>{d.text}</span>;
-                  })()}
+              <div className="section">
+                <h4>描述</h4>
+                {t.description ? <Markdown text={t.description} agents={agents} /> : <span className="faint">（无）</span>}
+              </div>
+
+              {t.acceptance.length > 0 && (
+                <div className="section">
+                  <h4>验收标准</h4>
+                  <ul style={{ margin: 0, paddingLeft: 20 }}>
+                    {t.acceptance.map((a, i) => (
+                      <li key={i}>{a}</li>
+                    ))}
+                  </ul>
                 </div>
               )}
-              {t.depends_on.length > 0 && (
-                <div className="faint">
-                  前置任务：
-                  {t.depends_on.map((d) => (
-                    <a key={d} href="#" style={{ marginRight: 6 }} onClick={(e) => (e.preventDefault(), openTask(d))}>
-                      {d}
-                    </a>
-                  ))}
+
+              {t.notes && (
+                <div className="section">
+                  <h4>工作笔记</h4>
+                  <Markdown text={t.notes} agents={agents} />
                 </div>
               )}
-            </div>
 
-            <div className="section">
-              <h4>描述</h4>
-              {t.description ? <Markdown text={t.description} agents={agents} /> : <span className="faint">（无）</span>}
-            </div>
-
-            {t.acceptance.length > 0 && (
-              <div className="section">
-                <h4>验收标准</h4>
-                <ul style={{ margin: 0, paddingLeft: 20 }}>
-                  {t.acceptance.map((a, i) => (
-                    <li key={i}>{a}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {t.notes && (
-              <div className="section">
-                <h4>工作笔记</h4>
-                <Markdown text={t.notes} agents={agents} />
-              </div>
-            )}
-
-            {t.subtasks.length > 0 && (
-              <div className="section">
-                <h4>子任务</h4>
-                <div className="list">
-                  {t.subtasks.map((s) => (
-                    <div key={s.id} className="list-item clickable" onClick={() => openTask(s.id)}>
-                      <StatusBadge task={s} />
-                      <div style={{ flex: 1 }}>
-                        <b>{s.id}</b> {s.title}
-                        <div className="faint">{s.assignee_name ?? '未指派'}</div>
+              {t.artifacts.length > 0 && (
+                <div className="section">
+                  <h4>交付物</h4>
+                  {t.artifacts.map((a) => (
+                    <div key={a.id} className="artifact">
+                      <div className="faint artifact-meta">
+                        {a.name} · {a.author} · {clock(a.created_at)}
                       </div>
+                      {a.parts.map((p, i) =>
+                        p.kind === 'file' ? (
+                          <FilePart key={i} p={p} />
+                        ) : p.kind === 'link' ? (
+                          <div key={i}>
+                            <a href={p.url} target="_blank" rel="noreferrer">
+                              {p.url}
+                            </a>
+                          </div>
+                        ) : (
+                          p.text !== undefined ? (
+                            <Markdown key={i} text={p.text} agents={agents} />
+                          ) : (
+                            <pre key={i}>{JSON.stringify(p.data, null, 2)}</pre>
+                          )
+                        ),
+                      )}
                     </div>
                   ))}
                 </div>
-              </div>
-            )}
+              )}
 
-            {t.artifacts.length > 0 && (
               <div className="section">
-                <h4>交付物</h4>
-                {t.artifacts.map((a) => (
-                  <div key={a.id} style={{ marginBottom: 10 }}>
+                <h4>讨论</h4>
+                {t.comments.length === 0 && <div className="faint">还没有评论</div>}
+                {t.comments.map((c) => (
+                  <div key={c.id} className={`comment ${c.author === 'owner' ? 'owner' : ''}`}>
                     <div className="faint">
-                      {a.name} · {a.author} · {clock(a.created_at)}
+                      {c.author === 'owner' ? '负责人' : `${c.author_name}（${c.author}）`} · {clock(c.created_at)}
                     </div>
-                    {a.parts.map((p, i) =>
-                      p.kind === 'file' ? (
-                        <FilePart key={i} p={p} />
-                      ) : p.kind === 'link' ? (
-                        <div key={i}>
-                          <a href={p.url} target="_blank" rel="noreferrer">
-                            {p.url}
-                          </a>
-                        </div>
-                      ) : (
-                        p.text !== undefined ? (
-                          <Markdown key={i} text={p.text} agents={agents} />
-                        ) : (
-                          <pre key={i}>{JSON.stringify(p.data, null, 2)}</pre>
-                        )
-                      ),
+                    {partText(c.parts) && <Markdown text={partText(c.parts)} agents={agents} />}
+                    {c.parts.some((p) => p.kind === 'file') && (
+                      <div className="attachments">
+                        {c.parts.map((p, i) => p.kind === 'file' && <FilePart key={i} p={p} />)}
+                      </div>
                     )}
                   </div>
                 ))}
-              </div>
-            )}
-
-            <div className="section">
-              <h4>讨论</h4>
-              {t.comments.length === 0 && <div className="faint">还没有评论</div>}
-              {t.comments.map((c) => (
-                <div key={c.id} className={`comment ${c.author === 'owner' ? 'owner' : ''}`}>
-                  <div className="faint">
-                    {c.author === 'owner' ? '负责人' : `${c.author_name}（${c.author}）`} · {clock(c.created_at)}
-                  </div>
-                  {partText(c.parts) && <Markdown text={partText(c.parts)} agents={agents} />}
-                  {c.parts.some((p) => p.kind === 'file') && (
+                <form
+                  className="comment-form"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void sendComment();
+                  }}
+                  onPaste={(e) => {
+                    const list = [...e.clipboardData.files];
+                    if (!list.length) return;
+                    e.preventDefault();
+                    // 截图粘贴进来通常都叫 image.png，加上时间区分
+                    void attach(list.map((f) => (f.name === 'image.png' ? new File([f], `截图-${new Date().toLocaleTimeString('sv').replaceAll(':', '')}.png`, { type: f.type }) : f)));
+                  }}
+                  onDragOver={(e) => e.dataTransfer.types.includes('Files') && e.preventDefault()}
+                  onDrop={(e) => {
+                    if (!e.dataTransfer.files.length) return;
+                    e.preventDefault();
+                    void attach([...e.dataTransfer.files]);
+                  }}
+                >
+                  <MentionTextarea
+                    style={{ minHeight: 96 }}
+                    value={comment}
+                    onChange={setComment}
+                    candidates={agentCandidates(members, t.project)}
+                    onSubmit={() => void sendComment()}
+                    placeholder="写评论，支持 Markdown；输入 @ 提及 agent，可粘贴或拖入截图和文件（Ctrl+Enter 发表）"
+                    aria-label="评论"
+                  />
+                  {(files.length > 0 || uploading > 0) && (
                     <div className="attachments">
-                      {c.parts.map((p, i) => p.kind === 'file' && <FilePart key={i} p={p} />)}
+                      {files.map((f) => (
+                        <span key={f.id} className="file-chip">
+                          {f.name}
+                          <span className="faint">{fileSize(f.size)}</span>
+                          <button type="button" className="chip-x" aria-label={`移除 ${f.name}`} onClick={() => setFiles((cur) => cur.filter((x) => x.id !== f.id))}>
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                      {uploading > 0 && <span className="faint">正在上传 {uploading} 个文件…</span>}
                     </div>
                   )}
-                </div>
-              ))}
-              <form
-                className="comment-form"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void sendComment();
-                }}
-                onPaste={(e) => {
-                  const list = [...e.clipboardData.files];
-                  if (!list.length) return;
-                  e.preventDefault();
-                  // 截图粘贴进来通常都叫 image.png，加上时间区分
-                  void attach(list.map((f) => (f.name === 'image.png' ? new File([f], `截图-${new Date().toLocaleTimeString('sv').replaceAll(':', '')}.png`, { type: f.type }) : f)));
-                }}
-                onDragOver={(e) => e.dataTransfer.types.includes('Files') && e.preventDefault()}
-                onDrop={(e) => {
-                  if (!e.dataTransfer.files.length) return;
-                  e.preventDefault();
-                  void attach([...e.dataTransfer.files]);
-                }}
-              >
-                <MentionTextarea
-                  style={{ minHeight: 64 }}
-                  value={comment}
-                  onChange={setComment}
-                  candidates={agentCandidates(members, t.project)}
-                  onSubmit={() => void sendComment()}
-                  placeholder="写评论，支持 Markdown；输入 @ 提及 agent，可粘贴或拖入截图和文件（Ctrl+Enter 发表）"
-                  aria-label="评论"
-                />
-                {(files.length > 0 || uploading > 0) && (
-                  <div className="attachments">
-                    {files.map((f) => (
-                      <span key={f.id} className="file-chip">
-                        {f.name}
-                        <span className="faint">{fileSize(f.size)}</span>
-                        <button type="button" className="chip-x" aria-label={`移除 ${f.name}`} onClick={() => setFiles((cur) => cur.filter((x) => x.id !== f.id))}>
-                          ×
-                        </button>
-                      </span>
-                    ))}
-                    {uploading > 0 && <span className="faint">正在上传 {uploading} 个文件…</span>}
+                  <div className="btn-row" style={{ marginTop: 6 }}>
+                    <button className="btn" disabled={(!comment.trim() && !files.length) || uploading > 0}>
+                      发表评论
+                    </button>
+                    <button type="button" className="btn" onClick={() => fileInput.current?.click()}>
+                      添加附件
+                    </button>
+                    <input
+                      ref={fileInput}
+                      type="file"
+                      multiple
+                      hidden
+                      onChange={(e) => {
+                        void attach([...(e.target.files ?? [])]);
+                        e.target.value = '';
+                      }}
+                    />
                   </div>
-                )}
-                <div className="btn-row" style={{ marginTop: 6 }}>
-                  <button className="btn" disabled={(!comment.trim() && !files.length) || uploading > 0}>
-                    发表评论
-                  </button>
-                  <button type="button" className="btn" onClick={() => fileInput.current?.click()}>
-                    添加附件
-                  </button>
-                  <input
-                    ref={fileInput}
-                    type="file"
-                    multiple
-                    hidden
-                    onChange={(e) => {
-                      void attach([...(e.target.files ?? [])]);
-                      e.target.value = '';
-                    }}
-                  />
-                </div>
-              </form>
+                </form>
+              </div>
             </div>
 
-            {t.progress_log.length > 0 && (
-              <div className="section">
-                <h4>进度记录</h4>
-                <div className="list">
-                  {[...t.progress_log].reverse().map((p, i) => (
-                    <div key={i} className="list-item">
-                      <span className="feed-time">{clock(p.created_at)}</span>
-                      <span className="badge">{p.percent}%</span>
-                      <div style={{ flex: 1 }}>{p.note}</div>
-                    </div>
-                  ))}
+            <div className="drawer-side">
+              <div className="section side-card">
+                <h4>负责人与进度</h4>
+                <div>
+                  {t.assignee ? `${t.assignee_name}（${t.assignee}）` : '未指派'}
+                  {t.required_tags.length > 0 && <span className="faint"> · 需要：{t.required_tags.join('、')}</span>}
                 </div>
+                {!t.assignee && t.status === 'open' && (
+                  <Suggest list={recs} label="推荐指派" onPick={(a) => void act('assign', { agent: a }, '已指派')} />
+                )}
+                {t.status !== 'open' && t.status !== 'draft' && (
+                  <div style={{ marginTop: 8 }}>
+                    <div className="progress">
+                      <div style={{ width: `${t.progress}%` }} />
+                    </div>
+                    <div className="faint" style={{ marginTop: 4 }}>
+                      {t.progress}% {t.progress_note && `· ${t.progress_note}`}
+                    </div>
+                  </div>
+                )}
+                {t.lease_until && !closed && <div className="faint">租约到期：{clock(t.lease_until)}</div>}
+                {t.due_at && (
+                  <div className="faint">
+                    截止：{dateTime(t.due_at)}
+                    {(() => {
+                      const d = dueInfo(t);
+                      return d?.cls && <span className={`due ${d.cls}`} style={{ marginLeft: 6 }}>{d.text}</span>;
+                    })()}
+                  </div>
+                )}
+                {t.depends_on.length > 0 && (
+                  <div className="faint">
+                    前置任务：
+                    {t.depends_on.map((d) => (
+                      <a key={d} href="#" style={{ marginRight: 6 }} onClick={(e) => (e.preventDefault(), openTask(d))}>
+                        {d}
+                      </a>
+                    ))}
+                  </div>
+                )}
               </div>
-            )}
+              {t.subtasks.length > 0 && (
+                <div className="section">
+                  <h4>子任务</h4>
+                  <div className="list">
+                    {t.subtasks.map((s) => (
+                      <div key={s.id} className="list-item clickable" onClick={() => openTask(s.id)}>
+                        <StatusBadge task={s} />
+                        <div style={{ flex: 1 }}>
+                          <b>{s.id}</b> {s.title}
+                          <div className="faint">{s.assignee_name ?? '未指派'}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {t.progress_log.length > 0 && (
+                <div className="section">
+                  <h4>进度记录</h4>
+                  <div className="list">
+                    {[...t.progress_log].reverse().map((p, i) => (
+                      <div key={i} className="list-item">
+                        <span className="feed-time">{clock(p.created_at)}</span>
+                        <span className="badge">{p.percent}%</span>
+                        <div style={{ flex: 1 }}>{p.note}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         )}
       </aside>
