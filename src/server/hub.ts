@@ -2076,6 +2076,8 @@ export class Hub {
       .prepare('INSERT INTO comments (task_id, author, parts, created_at) VALUES (?, ?, ?, ?)')
       .run(t.id, author, JSON.stringify(parts), this.iso());
     const code = taskCode(t.project_id, t.num);
+    // 负责人在任务下回复了，说明这个任务里 @ 他的话已经看过
+    if (author === 'owner') this.db.prepare(`UPDATE events SET owner_read = 1 WHERE type = 'mention' AND audience = '[]' AND task_id = ?`).run(t.id);
     const who = this.actorName(author);
     const assignee = t.assignee_id === null ? null : agentCode(t.assignee_id);
     this.emit('comment.created', author, {
@@ -2250,6 +2252,8 @@ export class Hub {
       this.db
         .prepare('INSERT INTO messages (sender, recipient, body, created_at) VALUES (?, ?, ?, ?)')
         .run(from, target, body.trim(), this.iso());
+      // 负责人回了私信，就当已读过对方发来的私信
+      if (from === 'owner') this.db.prepare(`UPDATE events SET owner_read = 1 WHERE type = 'message.direct' AND audience = '[]' AND actor = ?`).run(target);
       this.emit('message.direct', from, {
         audience: target === 'owner' ? [] : [target],
         data: { from, to: target, body: body.trim() },
@@ -2585,6 +2589,45 @@ export class Hub {
     };
   }
 
+  // ───────────── 负责人已读 ─────────────
+
+  /**
+   * 把发给负责人的 @ / 私信标为已读，返回这次新标记的条数。
+   * seqs：指定事件；task：某个任务下的全部 @；from：某个 agent 发来的全部私信；
+   * type：只标 mention 或 message.direct；都不给时标记全部（可用 project 限定范围）。
+   */
+  markOwnerRead(
+    opts: { seqs?: number[]; task?: string; from?: string; type?: string; project?: string } = {},
+  ): { count: number } {
+    const where = [OWNER_INBOX_SQL, 'owner_read = 0'];
+    const params: (number | string)[] = [];
+    if (opts.seqs) {
+      const seqs = opts.seqs.filter((n) => Number.isInteger(n));
+      if (seqs.length === 0) return { count: 0 };
+      where.push(`seq IN (${seqs.map(() => '?').join(',')})`);
+      params.push(...seqs);
+    }
+    if (opts.task) {
+      where.push("type = 'mention' AND task_id = ?");
+      params.push(this.requireTask(opts.task).id);
+    }
+    if (opts.from) {
+      where.push("type = 'message.direct' AND actor = ?");
+      params.push(agentCode(this.requireAgentRow(opts.from).id));
+    }
+    if (opts.type) {
+      if (opts.type !== 'mention' && opts.type !== 'message.direct') throw invalid(`未知的类型：${opts.type}`);
+      where.push('type = ?');
+      params.push(opts.type);
+    }
+    if (opts.project) {
+      where.push('(project_id = ? OR project_id IS NULL)');
+      params.push(this.requireProject(opts.project).id);
+    }
+    const r = this.db.prepare(`UPDATE events SET owner_read = 1 WHERE ${where.join(' AND ')}`).run(...params);
+    return { count: Number(r.changes) };
+  }
+
   // ───────────── 总览 ─────────────
 
   overview(project?: string) {
@@ -2614,8 +2657,14 @@ export class Hub {
          ORDER BY updated_at DESC LIMIT 50`,
       )
       .all(now, ...params) as unknown as TaskRow[];
-    const mentions = this.eventsForOwner({ limit: 20, project })
-      .filter((e) => (e.type === 'mention' || e.type === 'message.direct') && e.audience !== null && e.audience.length === 0);
+    const mentions = (
+      this.db
+        .prepare(
+          `SELECT * FROM events WHERE ${OWNER_INBOX_SQL} AND owner_read = 0
+           ${projectId === null ? '' : 'AND (project_id = ? OR project_id IS NULL)'} ORDER BY seq DESC LIMIT 20`,
+        )
+        .all(...params) as unknown as EventRow[]
+    ).map((r) => this.toEvent(r));
     return {
       counts: {
         working: count('working'),
@@ -2632,6 +2681,9 @@ export class Hub {
     };
   }
 }
+
+// 发给负责人的 @ 和私信（总览「需要你处理」里那几条）
+const OWNER_INBOX_SQL = "type IN ('mention','message.direct') AND audience = '[]'";
 
 const DUE_SOON_MS = 2 * 3600_000;
 const STALL_MS = 2 * 3600_000;

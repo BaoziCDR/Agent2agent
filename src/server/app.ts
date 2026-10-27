@@ -421,6 +421,16 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
     const A = '/api/v1/admin';
 
     admin.get(`${A}/overview`, async (req) => hub.overview((req.query as Q).project));
+    admin.post(`${A}/owner-inbox/read`, async (req) => {
+      const b = (req.body ?? {}) as B;
+      return hub.markOwnerRead({
+        seqs: Array.isArray(b.seqs) ? b.seqs.map(Number) : undefined,
+        task: str(b.task),
+        from: str(b.from),
+        type: str(b.type),
+        project: str(b.project),
+      });
+    });
     admin.get(`${A}/search`, async (req) => {
       const q = req.query as Q;
       return hub.search({ kind: 'owner' }, q.q ?? '', q.project);

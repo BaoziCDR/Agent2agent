@@ -1,10 +1,10 @@
-import { useRef, useState } from 'react';
-import { get, type Message, post } from '../api';
+import { useEffect, useRef, useState } from 'react';
+import { get, markOwnerRead, type Message, post } from '../api';
 import { clock, useData, useHub } from '../ui';
 import { Markdown } from '../markdown';
 
 export function Messages() {
-  const { agents, projects, project, toast } = useHub();
+  const { agents, projects, project, toast, refresh } = useHub();
   const [to, setTo] = useState('');
   const [text, setText] = useState('');
   const textRef = useRef<HTMLTextAreaElement>(null);
@@ -12,6 +12,10 @@ export function Messages() {
   const bProject = bProjectChoice || (project ?? projects[0]?.id ?? '');
   const [bText, setBText] = useState('');
   const { data: messages, reload } = useData(() => get<Message[]>('/messages'), []);
+  // 打开私信页看到了，发给负责人的私信就算已读
+  useEffect(() => {
+    if (messages) markOwnerRead({ type: 'message.direct' }).then((n) => n && refresh());
+  }, [messages, refresh]);
 
   return (
     <div style={{ maxWidth: 900 }}>
