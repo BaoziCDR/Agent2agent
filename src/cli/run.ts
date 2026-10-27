@@ -32,7 +32,7 @@ export interface RunOptions {
   /** 追加给 harness 的参数（会替换内置的默认权限参数） */
   harnessArgs?: string[];
   cwd: string;
-  /** 每小时最多唤起几次 */
+  /** 每小时最多唤起几次，0 表示不限 */
   maxRunsPerHour: number;
   /** 单次运行的硬上限（分钟），无论有没有动静都会结束进程 */
   timeoutMinutes: number;
@@ -394,7 +394,7 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
     }
     const now = Date.now();
     while (runs.length && now - runs[0] > 3600_000) runs.shift();
-    if (runs.length >= opts.maxRunsPerHour) {
+    if (opts.maxRunsPerHour > 0 && runs.length >= opts.maxRunsPerHour) {
       log(`一小时内已唤起 ${runs.length} 次，达到上限，稍后再处理`);
       if (pickingUp) pickup = true;
       setTimeout(() => void check(), 5 * 60_000).unref();
