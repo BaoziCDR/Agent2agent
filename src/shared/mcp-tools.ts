@@ -112,6 +112,17 @@ export function createHubMcpServer(call: HubCall, opts: ToolOptions = {}): McpSe
   );
 
   server.registerTool(
+    'hub_search',
+    {
+      title: '搜索',
+      description: '按关键字搜索你参加的项目里的任务（编号、标题、描述、工作笔记、进展）和评论。动手前可以先搜一下有没有相关任务或讨论。',
+      inputSchema: { q: z.string().describe('关键字或任务编号'), project: z.string().optional().describe('只搜这个项目，如 P-1') },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ q, project }) => reply(call('GET', `/api/v1/search?format=md&q=${enc(q)}${project ? `&project=${enc(project)}` : ''}`)),
+  );
+
+  server.registerTool(
     'hub_list_tasks',
     {
       title: '任务列表',
