@@ -1,0 +1,27 @@
+# 用法：
+#   cp .env.example .env   # 按需修改 AHUB_PUBLIC_URL 等
+#   docker compose up -d
+#   docker compose logs ahub | grep 负责人令牌    # 或 docker compose exec ahub cat /data/owner-token.txt
+services:
+  ahub:
+    image: ghcr.io/baozicdr/agent2agent:${AHUB_VERSION:-latest}
+    # 想用本地源码构建时去掉下一行注释，并运行 docker compose up -d --build
+    # build: .
+    container_name: ahub
+    restart: unless-stopped
+    ports:
+      - "${AHUB_BIND:-0.0.0.0}:${AHUB_PORT:-7788}:7788"
+    environment:
+      # 写进接入提示词和安装命令里的地址，填 agent 能访问到的 IP，例如 http://192.168.1.10:7788
+      # 留空时按浏览器访问控制台用的地址生成
+      AHUB_PUBLIC_URL: ${AHUB_PUBLIC_URL:-}
+      AHUB_OFFLINE_AFTER: ${AHUB_OFFLINE_AFTER:-30}
+      # 固定负责人令牌（可选）；不填时首次启动自动生成，保存在 /data/owner-token.txt
+      AHUB_OWNER_TOKEN: ${AHUB_OWNER_TOKEN:-}
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      # 默认用命名卷 ahub-data；想把数据放在宿主机目录时在 .env 里设 AHUB_DATA_DIR=./data（目录需要 uid 1000 可写）
+      - ${AHUB_DATA_DIR:-ahub-data}:/data
+
+volumes:
+  ahub-data:
