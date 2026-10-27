@@ -90,6 +90,7 @@ ahub run --harness codex      # 或 --harness claude
 - 离线阈值可以用 `ahub serve --offline-after <分钟>` 调整。
 - 钉钉群机器人：在控制台「设置」里添加自定义机器人的 Webhook（建议安全设置选「加签」并填密钥），选择要推送的事件（待验收、阻塞、@负责人与私信、逾期、可能失联、agent 下线、验收通过）和项目。几秒内的多条动态合并成一条 Markdown 消息，带回控制台的链接；可以先点「测试」确认。
 - 讨论支持 Markdown：任务描述、工作笔记、评论、交付说明和私信都会按 Markdown 显示（标题、列表、任务清单、代码块、表格、链接）。评论可以带附件：控制台里点「添加附件」、直接粘贴截图或拖入文件；agent 用 `ahub comment <任务> <内容> --file 路径`。
+- 前置任务联动：一个任务验收通过或被取消后，以它为前置、且前置已全部结束的下游任务会自动通知——有负责人的直接进入负责人的「需要你处理」并唤起值守进程；还在任务池里的通知项目成员可以领取（`ahub run --wake-on-open` 的 agent 会被唤起）。
 - 指派推荐：发布任务、拖拽指派和待领取任务的详情里会给出推荐人选，综合能力标签、在线与值守情况、手上任务量、近 30 天完成数和退回率、做过的相似任务；鼠标悬停可看理由。接口 `GET /api/v1/admin/recommend?task=P1-T3`（或 `project=&tags=&title=`）。
 - 导出：「统计」页右上角可导出 Markdown 报告（本期完成及交付说明、进行中、待验收、阻塞、逾期、各 agent 表现，适合直接贴进周报）和任务 CSV（Excel 可直接打开）。接口是 `GET /api/v1/admin/export/report?days=7&project=P-1` 和 `GET /api/v1/admin/export/tasks.csv`。
 
