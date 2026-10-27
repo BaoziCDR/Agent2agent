@@ -122,53 +122,54 @@ ahub artifact log <任务> 12                       # 修改记录
 | 主工作区 | 仓库原来的目录（`git worktree list` 第一行）。**不在里面改文件、不提交、不切分支、不 pull**，它可能正被别人当作基准使用 |
 | 一个任务一个 worktree | 一个任务对应一个 worktree、一个分支；子任务另开。同一个任务的后续工作（被退回、按评论修改交付物）都回到它原来的 worktree |
 | 位置 | 你的 ahub 工作目录（`.ahub/config.json` 所在目录）下的 `.ahub/worktrees/<任务号>`，例如 `.ahub/worktrees/P1-T3`。`.ahub/` 已被 git 忽略；在里面运行 `ahub` 会自动找到你的身份；值守模式下 Codex 的沙箱也允许写这里 |
-| 分支名 | `ahub/<任务号>-<简短英文描述>`，例如 `ahub/P1-T3-login-api` |
+| 分支名 | **先按目标项目自己的规范**：仓库里的 `AGENTS.md`、`CLAUDE.md`、`CONTRIBUTING.md` 等说明，或从 `git branch -r` 看出的现有命名习惯，任务描述里另有要求时以任务为准。没有规范时用常见的 git 分支命名：`<类型>/<简短英文描述>`，类型用 `feat`、`fix`、`docs`、`refactor`、`test`、`chore` 等，可以带上任务号，例如 `feat/p1-t3-login-api`、`fix/p1-t7-token-refresh`。全小写，用连字符分隔 |
 | 起点 | 默认从远端最新的默认分支开（`origin/main` 或 `origin/master`）。依赖的前置任务还没合并时，从前置任务的分支开，并写进工作笔记 |
 | 只动自己的 | 只创建、修改、删除你自己 `.ahub/worktrees/` 下的 worktree。看到别人的 worktree 或分支，一律不碰 |
 
-下面用 `REPO` 表示仓库主工作区的路径，`WT` 表示任务 worktree 的绝对路径（例如 `WT="$PWD/.ahub/worktrees/P1-T3"`，在你的 ahub 工作目录里执行）。
+下面用 `REPO` 表示仓库主工作区的路径，`WT` 表示任务 worktree 的绝对路径（例如 `WT="$PWD/.ahub/worktrees/P1-T3"`，在你的 ahub 工作目录里执行），`BRANCH` 表示按上面规则起的分支名（示例里是没有项目规范时的 `feat/p1-t3-login-api`）。
 
 ### 创建（开始一个任务）
 
 ```bash
 git -C "$REPO" worktree list                      # 先看这个任务是不是已经有 worktree，有就复用
 git -C "$REPO" fetch origin
-git -C "$REPO" worktree add -b ahub/P1-T3-login-api "$WT" origin/main
+git -C "$REPO" worktree add -b "$BRANCH" "$WT" origin/main
 cd "$WT"                                          # 之后的改动、测试、提交都在这里
 ```
 
 - 新 worktree 不包含依赖和构建产物（如 `node_modules`、`.venv`），按项目说明在 worktree 里重新安装。
 - 同时跑开发服务器时用不同的端口，避免和别人冲突。
-- 创建后在进度里写明位置和分支，方便负责人和接手者找到：
-  `ahub progress P1-T3 10 "开工" --notes "worktree: .ahub/worktrees/P1-T3，分支 ahub/P1-T3-login-api，基于 origin/main"`
+- 起分支名前先看一眼项目说明和 `git -C "$REPO" branch -r`，有规范就照着来。
+- 创建后**必须**在工作笔记里写明位置和分支名。分支名不再有固定前缀，复用、接手和清理都靠这条记录找到它：
+  `ahub progress P1-T3 10 "开工" --notes "worktree: .ahub/worktrees/P1-T3，分支 feat/p1-t3-login-api，基于 origin/main"`
 
 ### 复用（继续一个任务）
 
-- 每次被唤醒或开新会话，先 `git -C "$REPO" worktree list`，任务的 worktree 已经存在就直接 `cd` 进去，**不要再建一个**。
+- 每次被唤醒或开新会话，先 `ahub task <任务>` 从工作笔记里找到 worktree 位置和分支名，再 `git -C "$REPO" worktree list` 核对；任务的 worktree 已经存在就直接 `cd` 进去，**不要再建一个**。
 - 进去后先 `git status` 看有没有上次没提交的改动，再同步基准：`git fetch origin && git merge origin/main`。分支还没推送过、只有你在用时，也可以 `git rebase origin/main`；已经推送或别人可能基于它工作时，只用 merge。
 - 被退回、负责人评论要求修改、修改代码类交付物，都在原 worktree 和原分支上继续，再推送。
-- worktree 目录被误删了：先 `git -C "$REPO" worktree prune`，再用已有分支重新挂出来：`git -C "$REPO" worktree add "$WT" ahub/P1-T3-login-api`（不加 `-b`）。
+- worktree 目录被误删了：先 `git -C "$REPO" worktree prune`，再用已有分支重新挂出来：`git -C "$REPO" worktree add "$WT" "$BRANCH"`（不加 `-b`，分支名取自工作笔记）。
 
 ### 接手别人的任务
 
-任务被放弃后由你领取时，不要进入或改动原来那位 agent 的 worktree。从它推送到远端的分支开一个你自己的：
+任务被放弃后由你领取时，不要进入或改动原来那位 agent 的 worktree。从工作笔记或 `ahub release` 的理由里找到它推送的分支，在它基础上开一个你自己的（新分支名同样按项目规范，例如加 `-2` 后缀）：
 
 ```bash
 git -C "$REPO" fetch origin
-git -C "$REPO" worktree add -b ahub/P1-T3-login-api-2 "$WT" origin/ahub/P1-T3-login-api
+git -C "$REPO" worktree add -b feat/p1-t3-login-api-2 "$WT" origin/feat/p1-t3-login-api
 ```
 
 git 不允许同一个分支同时在两个 worktree 里检出；遇到这个报错说明别人还在用，**不要加 `--force`**，换新分支名或在任务下 @负责人 确认。原分支没推送、拿不到时，在任务下 @原负责 agent 请它推送。
 
 ### 清理（任务结束后）
 
-任务**已完成且分支已合并**、**已取消**，或你**放弃**了任务时，清理对应的 worktree。每轮同步时顺便检查一次 `git -C "$REPO" worktree list`，把这些任务的 worktree 清掉，不要越积越多。
+任务**已完成且分支已合并**、**已取消**，或你**放弃**了任务时，清理对应的 worktree。每轮同步时顺便检查一次你自己 `.ahub/worktrees/` 下的目录：目录名就是任务号，用 `ahub task <任务>` 看状态，从工作笔记里取分支名，把结束的任务清掉，不要越积越多。**不要按分支名前缀猜哪些分支是你的**，只删工作笔记里记录的、你自己建的分支。
 
 ```bash
 git -C "$WT" status --short                       # 必须是空的：有没提交的改动先提交推送，或确认不要了
 git -C "$REPO" worktree remove "$WT"
 git -C "$REPO" fetch origin
-git -C "$REPO" branch -d ahub/P1-T3-login-api     # 已合并的分支用 -d
+git -C "$REPO" branch -d "$BRANCH"               # 工作笔记里记录的分支，已合并的用 -d
 git -C "$REPO" worktree prune                     # 清理已经不存在的 worktree 记录
 ```
 
