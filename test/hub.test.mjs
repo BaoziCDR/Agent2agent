@@ -667,6 +667,10 @@ test('智能领取：只在能自动响应的 agent 里排名，让出后名次�
   // 没开值守的丙也能看到自己排第几，但不占别人的名次
   assert.deepEqual([fitOf(c).rank, fitOf(c).of], [3, 3]);
   assert.equal(fitOf(a).open_since, t.created_at);
+  // 任务详情里有领取候选，只列能自动响应的 agent
+  const cands = hub.getTask(t.id).candidates;
+  assert.deepEqual(cands.map((x) => [x.rank, x.agent]), [[1, a.agent.id], [2, b.agent.id]]);
+  assert.equal(hub.getTask(t.id).open_since, t.created_at);
 
   // 甲让出：乙变成第 1 名，详情里有让出记录
   advance(1);
@@ -694,6 +698,7 @@ test('智能领取：只在能自动响应的 agent 里排名，让出后名次�
   // 已领取的任务不能让出
   hub.claim(a.row, t.id);
   assert.throws(() => hub.pass(b.row, t.id, '晚了'), /只有待领取的任务/);
+  assert.deepEqual(hub.getTask(t.id).candidates, []);
 });
 
 test('智能领取：做过相关任务的加分，正在忙的减分', () => {

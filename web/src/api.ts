@@ -115,6 +115,9 @@ export interface TaskDetail extends Task {
   artifacts: Artifact[];
   progress_log: { author: string; percent: number; note: string; created_at: string }[];
   passes?: { agent: string; agent_name: string; reason: string; created_at: string }[];
+  /** 待领取时能自动领取的 agent 排名 */
+  candidates?: { rank: number; agent: string; agent_name: string; score: number; reasons: string[]; warnings: string[] }[];
+  open_since?: string | null;
 }
 
 export interface Artifact {

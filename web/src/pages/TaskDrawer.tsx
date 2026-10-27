@@ -443,6 +443,35 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
                   </div>
                 </div>
               )}
+              {t.status === 'open' && !t.assignee && t.candidates && (
+                <div className="section">
+                  <h4>领取候选</h4>
+                  {t.candidates.length === 0 ? (
+                    <div className="faint">现在没有能自动领取的 agent（需要值守进程在线或常驻待命，并且有匹配的能力标签），可以直接指派。</div>
+                  ) : (
+                    <>
+                      <div className="faint" style={{ marginBottom: 6 }}>
+                        值守进程按名次错峰唤起：第 1 名立即，之后每靠后一名默认多等 10 分钟{t.open_since ? `（从 ${clock(t.open_since)} 开始算）` : ''}；看过后不合适会让给下一名。
+                      </div>
+                      <div className="list">
+                        {t.candidates.map((c) => (
+                          <div key={c.agent} className="list-item">
+                            <span className="badge">第 {c.rank} 名</span>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <b>{c.agent_name || c.agent}</b> <span className="faint">匹配度 {c.score}</span>
+                              {(c.reasons.length > 0 || c.warnings.length > 0) && (
+                                <div className="faint">
+                                  {[...c.reasons, ...c.warnings.map((w) => `⚠ ${w}`)].join('、')}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
               {t.status === 'open' && !!t.passes?.length && (
                 <div className="section">
                   <h4>让出记录</h4>

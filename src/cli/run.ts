@@ -6,7 +6,7 @@ import { type ClaimFit, type ClaimSettings, claimKey, planClaims } from './claim
 import type { CliConfig } from './config.js';
 import { AuthError, identityCode, isDeadIdentity, isFinal, openSession, releaseSession } from './auth.js';
 import { cleanup, codexHookArgs, deliveredSeqs, hookCommand, probeCodexHookTrust, queueItems, writeClaudeSettings } from './interject.js';
-import { type JudgeMode, applyVerdict, judgePrompt, runJudge, shouldJudge } from './judge.js';
+import { type JudgeMode, applyVerdict, judgePrompt, runClaimJudge, runJudge, shouldJudge, shouldJudgeClaim } from './judge.js';
 import {
   type SessionDecision,
   type SessionRecord,
@@ -79,6 +79,8 @@ interface Inbox {
   pending_assignments: { id: string; title: string }[];
   claimable: { id: string; title: string; fit?: ClaimFit }[];
 }
+
+type ClaimWake = ReturnType<typeof planClaims>['wake'][number];
 
 /** 唤起时要列给 harness 的任务；kind 说明它为什么在这里，默认是任务池里可领取的。 */
 type OpenTask = { id: string; title: string; kind?: string; mine?: boolean };
@@ -301,6 +303,7 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
   const claimLog = new Map<string, string>(); // 每个任务上次记下的领取判断，变了才写日志
   let claimTimer: NodeJS.Timeout | null = null;
   let capacity = 0; // 这次唤起最多还能领几个
+  let judging = false; // 正在让小模型判断任务池里的任务，这期间的检查等它结束再做
   let pickup = true; // 启动和恢复后的第一次检查：接手指派给自己的、进行中的和可领取的任务
   let stopChild: () => void = () => {}; // 退出值守时顺带结束正在运行的 harness
   let touch: () => void = () => {}; // 运行中的 harness 有动静时调用，推迟空闲超时
@@ -330,6 +333,10 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
       void feed();
       return;
     }
+    if (judging) {
+      again = true;
+      return;
+    }
     if (paused) return; // 恢复后会重新检查，积压的事项不会丢
     let inbox: Inbox;
     try {
@@ -354,6 +361,19 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
     for (const x of [...plan.later.map((l) => ({ id: l.id, why: l.why })), ...plan.skipped]) {
       if (claimLog.get(x.id) !== x.why) log(`任务池 ${x.id}：${x.why}`);
       claimLog.set(x.id, x.why);
+    }
+    if (opts.harness !== 'custom' && plan.wake.some((w) => shouldJudgeClaim(!!w.gray, { ...opts.judge, harness: opts.harness as 'claude' | 'codex' }))) {
+      judging = true;
+      try {
+        plan.wake = await judgeClaims(plan.wake, active, inbox.claimable);
+      } finally {
+        judging = false;
+      }
+      if (again) {
+        // 判断期间来了新事件，这次唤起之后（或者马上）再检查一遍
+        again = false;
+        setTimeout(() => void check(), 0).unref();
+      }
     }
     for (const w of plan.wake) open.push({ id: w.id, title: w.title, kind: w.why });
     if (claimTimer) clearTimeout(claimTimer);
@@ -394,6 +414,65 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
       again = false;
       void check();
     }
+  };
+
+  /**
+   * 智能领取第二期：匹配度在灰区的任务先让小模型看任务详情，判断不适合就直接让出，不唤起 harness；
+   * 判断适合、没给出判断或出错时照常唤起，由 harness 自己读任务决定。
+   */
+  const judgeClaims = async (wakeList: ClaimWake[], active: number, claimable: Inbox['claimable']): Promise<ClaimWake[]> => {
+    const judgeOpts = { ...opts.judge, harness: opts.harness as 'claude' | 'codex' };
+    type Me = { name?: string; platform?: string; skills?: string[]; projects?: { tags: string[] }[] };
+    let me: Me | undefined;
+    const kept: ClaimWake[] = [];
+    for (const w of wakeList) {
+      if (stopping || !shouldJudgeClaim(!!w.gray, judgeOpts)) {
+        kept.push(w);
+        continue;
+      }
+      const fit = claimable.find((t) => t.id === w.id)?.fit;
+      if (opts.dryRun || !fit) {
+        if (opts.dryRun) log(`（试运行）任务池 ${w.id} 匹配度在灰区，正式运行时会先交给小模型判断要不要领`);
+        kept.push(w);
+        continue;
+      }
+      try {
+        const self: Me = (me ??= (await api('GET', '/api/v1/me')) as Me);
+        const t = (await api('GET', `/api/v1/tasks/${encodeURIComponent(w.id)}`)) as {
+          id: string;
+          title: string;
+          status: string;
+          description?: string;
+          acceptance?: string[];
+          required_tags?: string[];
+          parent?: string | null;
+        };
+        if (t.status !== 'open') continue; // 判断前已经被别人领了
+        log(`任务池 ${w.id} 匹配度 ${fit.score}${w.gray ? ' 在灰区' : ''}，交给小模型判断要不要领`);
+        const verdict = await runClaimJudge(
+          {
+            agent: { name: self.name ?? cfg.name ?? '', platform: self.platform ?? opts.harness, tags: [...new Set([...(self.projects ?? []).flatMap((p) => p.tags), ...(self.skills ?? [])])], cwd },
+            task: t,
+            fit,
+            active,
+          },
+          judgeOpts,
+          harnessEnv(''),
+        );
+        if (verdict?.decision === 'pass') {
+          await api('POST', `/api/v1/tasks/${encodeURIComponent(w.id)}/pass`, { reason: `小模型判断不适合：${verdict.reason || '未说明'}` });
+          log(`任务池 ${w.id}：小模型判断不适合，已让出（${verdict.reason || '未说明'}）`);
+          claimed.add(`${w.id}@${fit.open_since}`);
+          continue;
+        }
+        if (verdict) w.why = `${w.why}；小模型判断适合：${verdict.reason || '未说明'}`;
+        else log(`任务池 ${w.id}：小模型没有给出判断，照常唤起`);
+      } catch (err) {
+        log(`任务池 ${w.id}：判断要不要领时出错，照常唤起（${(err as Error).message}）`);
+      }
+      kept.push(w);
+    }
+    return kept;
   };
 
   /** 读任务关系，给会话决策用；读不到就只按同一任务匹配 */

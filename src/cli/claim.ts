@@ -16,6 +16,9 @@ export interface ClaimSettings {
   staggerMinutes: number;
 }
 
+/** 匹配度在门槛以上这么多分以内算灰区 */
+export const CLAIM_GRAY_BAND = 20;
+
 export const DEFAULT_CLAIM_SETTINGS: ClaimSettings = { policy: 'smart', maxActive: 2, minScore: 30, staggerMinutes: 10 };
 
 export interface ClaimFit {
@@ -36,8 +39,8 @@ export interface ClaimableTask {
 }
 
 export interface ClaimPlan {
-  /** 现在就为它们唤起，why 写进提示词和运行记录 */
-  wake: { id: string; title: string; why: string }[];
+  /** 现在就为它们唤起，why 写进提示词和运行记录；gray 表示匹配度刚过门槛，可以先问小模型 */
+  wake: { id: string; title: string; why: string; gray?: boolean }[];
   /** 名次靠后，到点还没人领再唤起 */
   later: { id: string; at: number; why: string }[];
   skipped: { id: string; why: string }[];
@@ -82,7 +85,7 @@ export function planClaims(tasks: ClaimableTask[], active: number, cfg: ClaimSet
     }
     const since = Date.parse(f.open_since);
     const at = (Number.isNaN(since) ? now : since) + Math.max(0, f.rank - 1) * cfg.staggerMinutes * 60_000;
-    if (at <= now) plan.wake.push({ id: t.id, title: t.title, why: `任务池里有适合你的任务，${desc}` });
+    if (at <= now) plan.wake.push({ id: t.id, title: t.title, why: `任务池里有适合你的任务，${desc}`, gray: f.score < cfg.minScore + CLAIM_GRAY_BAND });
     else plan.later.push({ id: t.id, at, why: `${desc}，${clock(at)} 还没人领就唤起` });
   }
   return plan;

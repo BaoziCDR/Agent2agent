@@ -49,3 +49,38 @@ test('提示词：任务池里的任务要求先判断，适合就领、不适�
   const mine = buildPrompt({ name: 'a', agent: 'A-1' }, [], [{ id: 'T1', title: '写文档', kind: '你进行中', mine: true }]);
   assert.doesNotMatch(mine, /ahub pass/);
 });
+
+test('匹配度刚过门槛的任务标为灰区，唤起前可以先问小模型', async () => {
+  const p = planClaims([task('T1', { score: 80, rank: 1 }), task('T2', { score: 35, rank: 1 })], 0, CFG, NOW);
+  assert.deepEqual(p.wake.map((w) => [w.id, w.gray]), [['T1', false], ['T2', true]]);
+  const { shouldJudgeClaim, claimPrompt, parseClaimVerdict, judgeCommand } = await import('../dist/cli/judge.js');
+  const opts = { mode: 'gray', harness: 'claude', timeoutSeconds: 60 };
+  assert.equal(shouldJudgeClaim(true, opts), true);
+  assert.equal(shouldJudgeClaim(false, opts), false);
+  assert.equal(shouldJudgeClaim(false, { ...opts, mode: 'always' }), true);
+  assert.equal(shouldJudgeClaim(true, { ...opts, mode: 'off' }), false);
+  assert.equal(shouldJudgeClaim(true, { ...opts, harness: 'codex' }), false); // Codex 没指定模型不判断
+
+  const prompt = claimPrompt({
+    agent: { name: 'Claude-后端', platform: 'claude', tags: ['后端'], cwd: '/repo' },
+    task: { id: 'P1-T2', title: '做 iOS 推送', description: '需要 Xcode', required_tags: [], acceptance: ['真机收到推送'] },
+    fit: { score: 35, rank: 1, of: 2, reasons: ['在线'], warnings: ['正在处理别的事'] },
+    active: 1,
+  });
+  assert.match(prompt, /能力标签：后端/);
+  assert.match(prompt, /P1-T2：做 iOS 推送/);
+  assert.match(prompt, /- 真机收到推送/);
+  assert.match(prompt, /注意：正在处理别的事/);
+
+  // Claude 的结构化输出和 Codex 的 agent_message 都能解析，答非所问返回 null
+  assert.deepEqual(parseClaimVerdict(JSON.stringify({ type: 'result', structured_output: { decision: 'pass', reason: '需要 Mac。' } })), { decision: 'pass', reason: '需要 Mac' });
+  assert.deepEqual(
+    parseClaimVerdict(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: '{"decision":"claim","reason":"后端改动"}' } })),
+    { decision: 'claim', reason: '后端改动' },
+  );
+  assert.equal(parseClaimVerdict('{"decision":"reuse","reason":"x"}'), null);
+  // 领取判断用自己的输出格式
+  const c = judgeCommand(opts, '/x', '系统', { type: 'object', properties: { decision: { enum: ['claim', 'pass'] } } });
+  assert.ok(c.args.includes('系统'));
+  assert.match(c.args.at(-1), /claim/);
+});

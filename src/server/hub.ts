@@ -252,6 +252,19 @@ export interface TaskDetail extends TaskView {
   progress_log: { author: string; percent: number; note: string; created_at: string }[];
   /** 看过任务后觉得不适合、让给别人的 agent */
   passes: { agent: string; agent_name: string; reason: string; created_at: string }[];
+  /** 待领取时：能自动领取的 agent 按匹配度的排名，值守进程按这个名次错峰唤起 */
+  candidates: ClaimCandidate[];
+  /** 最近一次变成可领取的时间 */
+  open_since: string | null;
+}
+
+export interface ClaimCandidate {
+  rank: number;
+  agent: string;
+  agent_name: string;
+  score: number;
+  reasons: string[];
+  warnings: string[];
 }
 
 export type ReceiptKind = 'comment' | 'message' | 'task';
@@ -2061,6 +2074,11 @@ export class Hub {
           created_at: string;
         }[]
       ).map((p) => ({ agent: agentCode(p.agent_id), agent_name: this.agentName(p.agent_id) ?? '', reason: p.reason, created_at: p.created_at })),
+      candidates:
+        t.status === 'open' && t.assignee_id === null
+          ? this.claimRanking(t).map((r, i) => ({ rank: i + 1, agent: r.id, agent_name: r.name, score: r.score, reasons: r.reasons, warnings: r.warnings }))
+          : [],
+      open_since: t.status === 'open' ? (t.opened_at ?? t.updated_at) : null,
     };
   }
 
