@@ -10,6 +10,7 @@ import { Invite } from './pages/Invite';
 import { Messages } from './pages/Messages';
 import { GlobalSearch } from './search';
 import { Stats } from './pages/Stats';
+import { Settings } from './pages/Settings';
 import { Feed } from './pages/Feed';
 import { Projects } from './pages/Projects';
 import { TaskDrawer } from './pages/TaskDrawer';
@@ -24,6 +25,7 @@ const PAGES = [
   { id: 'feed', label: '实时动态' },
   { id: 'stats', label: '统计' },
   { id: 'projects', label: '项目' },
+  { id: 'settings', label: '设置' },
 ] as const;
 type PageId = (typeof PAGES)[number]['id'];
 
@@ -205,6 +207,7 @@ export function App() {
     feed: Feed,
     stats: Stats,
     projects: Projects,
+    settings: Settings,
   }[route.page];
 
   return (
