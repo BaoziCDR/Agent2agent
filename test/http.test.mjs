@@ -248,3 +248,30 @@ test('导出：Markdown 报告和任务 CSV', async () => {
   assert.ok(lines.some((l) => l.includes('"实现登录, ""接口"""')));
   assert.equal((await req('GET', '/api/v1/admin/export/tasks.csv', undefined, {})).status, 401);
 });
+
+test('评论附件：上传后随评论发出，任务详情和 Markdown 里都能看到', async () => {
+  const { app, req, project, join: joinAgent } = await setup();
+  const a = await joinAgent('甲');
+  const t = (await req('POST', '/api/v1/admin/tasks', { project: project.id, title: '修 bug' })).json();
+  const up = await app.inject({
+    method: 'POST',
+    url: '/api/v1/files?name=报错截图.png',
+    headers: { authorization: 'Bearer owner_test', 'content-type': 'application/octet-stream' },
+    payload: Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+  });
+  assert.equal(up.statusCode, 201);
+  const f = up.json();
+  // 只有附件、没有文字也可以
+  assert.equal((await req('POST', `/api/v1/admin/tasks/${t.id}/comments`, { text: '', files: [f.id] })).status, 200);
+  assert.equal((await req('POST', `/api/v1/admin/tasks/${t.id}/comments`, { text: '' })).status, 400);
+  assert.equal((await req('POST', `/api/v1/admin/tasks/${t.id}/comments`, { text: 'x', files: ['nope-nope-nope'] })).status, 400);
+  const c = (await req('GET', `/api/v1/admin/tasks/${t.id}`)).json().comments[0];
+  assert.deepEqual(c.parts.map((p) => p.kind), ['file']);
+  assert.equal(c.parts[0].mime, 'image/png');
+  const ev = (await req('GET', '/api/v1/admin/events?limit=1')).json()[0];
+  assert.match(ev.summary, /〔附件：报错截图\.png〕/);
+  // agent 也能带附件评论，详情 Markdown 里给出可下载的链接
+  await req('POST', `/api/v1/tasks/${t.id}/comments`, { text: '**看这里**', files: [f.id] }, a.headers);
+  const md = await req('GET', `/api/v1/tasks/${t.id}?format=md`, undefined, a.headers);
+  assert.match(md.text, /\*\*看这里\*\* 〔附件 \[报错截图\.png\]\(http:\/\/[^)]+\/files\/[\w-]+\)〕/);
+});

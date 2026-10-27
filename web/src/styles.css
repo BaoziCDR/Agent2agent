@@ -1150,3 +1150,125 @@ table.table {
   max-height: 7.5em;
   overflow: hidden;
 }
+
+/* ── Markdown ── */
+.md {
+  word-break: break-word;
+  line-height: 1.6;
+}
+
+.md > * {
+  margin: 0 0 8px;
+}
+
+.md > :last-child {
+  margin-bottom: 0;
+}
+
+.md ul,
+.md ol {
+  padding-left: 20px;
+}
+
+.md ul.md-tasks {
+  list-style: none;
+  padding-left: 2px;
+}
+
+.md ul.md-tasks input {
+  margin: 0 6px 0 0;
+  vertical-align: -1px;
+}
+
+.md :not(pre) > code {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
+.comment .md :not(pre) > code,
+.comment .md pre {
+  background: var(--panel);
+}
+
+.md blockquote {
+  border-left: 3px solid var(--border);
+  padding-left: 10px;
+  color: var(--text-2);
+}
+
+.md .md-h {
+  font-weight: 600;
+}
+
+.md .md-h1 {
+  font-size: 16px;
+}
+
+.md .md-h2 {
+  font-size: 15px;
+}
+
+.md hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+.md-table {
+  overflow-x: auto;
+}
+
+.md-table table {
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.md-table th,
+.md-table td {
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+}
+
+.md-table th {
+  background: var(--panel-2);
+  font-weight: 600;
+}
+
+/* ── 附件 ── */
+.attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  align-items: center;
+}
+
+.file-thumb {
+  display: inline-block;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--panel);
+  line-height: 0;
+}
+
+.file-thumb img {
+  max-width: 220px;
+  max-height: 160px;
+  object-fit: contain;
+}
+
+.chip-x {
+  border: 0;
+  background: none;
+  color: var(--text-3);
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.chip-x:hover {
+  color: var(--bad);
+}

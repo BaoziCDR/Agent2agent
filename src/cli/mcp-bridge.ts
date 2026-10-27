@@ -1,7 +1,7 @@
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { createHubMcpServer, type HubCall } from '../shared/mcp-tools.js';
 import { type CliConfig, saveConfig } from './config.js';
-import { fileArtifact } from './files.js';
+import { fileArtifact, uploadFile } from './files.js';
 
 const LAST_SEQ_RE = /本次读到第 (\d+) 号事件/;
 
@@ -37,6 +37,7 @@ export async function runStdioBridge(cfg: CliConfig, configPath: string) {
 
   const server = createHubMcpServer(call, {
     fileArtifact: (path) => fileArtifact(cfg, path),
+    uploadFile: async (path) => (await uploadFile(cfg, path)).id,
     join: async (input) => {
       if (!cfg.hub) throw new Error('还没有配置 Hub 地址，请在 MCP 启动参数里加 --hub <地址>');
       const res = await fetch(`${cfg.hub}/api/v1/join`, {

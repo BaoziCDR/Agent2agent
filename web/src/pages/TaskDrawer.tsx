@@ -1,11 +1,36 @@
-import { useEffect, useState } from 'react';
-import { get, patch, post, type Part, type TaskDetail } from '../api';
+import { useEffect, useRef, useState } from 'react';
+import { get, patch, post, uploadFile, type Part, type TaskDetail, type Uploaded } from '../api';
 import { Modal, StatusBadge, clock, dateTime, dueInfo, splitList, timeAgo, toLocalInput, useData, useHub } from '../ui';
-import { MentionText, MentionTextarea, agentCandidates } from '../mention';
+import { MentionTextarea, agentCandidates } from '../mention';
+import { Markdown } from '../markdown';
 
 const fileSize = (n: number) => (n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`);
 
-const partText = (parts: Part[]) => parts.map((p) => p.text ?? p.url ?? JSON.stringify(p.data)).join('\n');
+const partText = (parts: Part[]) =>
+  parts
+    .filter((p) => p.kind !== 'file')
+    .map((p) => p.text ?? p.url ?? JSON.stringify(p.data))
+    .join('\n');
+
+const isImage = (p: { mime?: string }) => /^image\/(png|jpeg|gif|webp)$/.test(p.mime ?? '');
+
+/** 文件：图片显示缩略图，其他显示文件名和大小。 */
+function FilePart({ p }: { p: Part }) {
+  if (isImage(p))
+    return (
+      <a className="file-thumb" href={p.url} target="_blank" rel="noreferrer" title={`${p.name} · ${fileSize(p.size ?? 0)}`}>
+        <img src={p.url} alt={p.name} loading="lazy" />
+      </a>
+    );
+  return (
+    <div className="file-chip">
+      <a href={p.url} target="_blank" rel="noreferrer" download={p.name}>
+        {p.name}
+      </a>
+      <span className="faint">{fileSize(p.size ?? 0)}</span>
+    </div>
+  );
+}
 
 export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void }) {
   const { agents, toast, refresh, openTask } = useHub();
@@ -13,6 +38,9 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
   const [comment, setComment] = useState('');
   const [dialog, setDialog] = useState<null | 'reject' | 'cancel' | 'edit'>(null);
   const [reason, setReason] = useState('');
+  const [files, setFiles] = useState<Uploaded[]>([]);
+  const [uploading, setUploading] = useState(0);
+  const fileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && !dialog && onClose();
@@ -30,6 +58,29 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
     } catch (err) {
       toast((err as Error).message, true);
       return false;
+    }
+  };
+
+  const attach = async (list: File[]) => {
+    if (!list.length) return;
+    if (files.length + list.length > 10) return toast('一条评论最多带 10 个附件', true);
+    setUploading((n) => n + list.length);
+    for (const f of list) {
+      try {
+        const up = await uploadFile(f);
+        setFiles((cur) => [...cur, up]);
+      } catch (err) {
+        toast((err as Error).message, true);
+      } finally {
+        setUploading((n) => n - 1);
+      }
+    }
+  };
+  const sendComment = async () => {
+    if ((!comment.trim() && !files.length) || uploading) return;
+    if (await act('comments', { text: comment, files: files.map((f) => f.id) })) {
+      setComment('');
+      setFiles([]);
     }
   };
 
@@ -171,7 +222,7 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
 
             <div className="section">
               <h4>描述</h4>
-              <div className="prose">{t.description || <span className="faint">（无）</span>}</div>
+              {t.description ? <Markdown text={t.description} agents={agents} /> : <span className="faint">（无）</span>}
             </div>
 
             {t.acceptance.length > 0 && (
@@ -188,7 +239,7 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
             {t.notes && (
               <div className="section">
                 <h4>工作笔记</h4>
-                <div className="prose">{t.notes}</div>
+                <Markdown text={t.notes} agents={agents} />
               </div>
             )}
 
@@ -219,12 +270,7 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
                     </div>
                     {a.parts.map((p, i) =>
                       p.kind === 'file' ? (
-                        <div key={i} className="file-chip">
-                          <a href={p.url} target="_blank" rel="noreferrer" download={p.name}>
-                            {p.name}
-                          </a>
-                          <span className="faint">{fileSize(p.size ?? 0)}</span>
-                        </div>
+                        <FilePart key={i} p={p} />
                       ) : p.kind === 'link' ? (
                         <div key={i}>
                           <a href={p.url} target="_blank" rel="noreferrer">
@@ -232,7 +278,11 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
                           </a>
                         </div>
                       ) : (
-                        <pre key={i}>{p.text ?? JSON.stringify(p.data, null, 2)}</pre>
+                        p.text !== undefined ? (
+                          <Markdown key={i} text={p.text} agents={agents} />
+                        ) : (
+                          <pre key={i}>{JSON.stringify(p.data, null, 2)}</pre>
+                        )
                       ),
                     )}
                   </div>
@@ -248,15 +298,32 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
                   <div className="faint">
                     {c.author === 'owner' ? '负责人' : `${c.author_name}（${c.author}）`} · {clock(c.created_at)}
                   </div>
-                  <div className="prose">
-                    <MentionText text={partText(c.parts)} agents={agents} />
-                  </div>
+                  {partText(c.parts) && <Markdown text={partText(c.parts)} agents={agents} />}
+                  {c.parts.some((p) => p.kind === 'file') && (
+                    <div className="attachments">
+                      {c.parts.map((p, i) => p.kind === 'file' && <FilePart key={i} p={p} />)}
+                    </div>
+                  )}
                 </div>
               ))}
               <form
-                onSubmit={async (e) => {
+                className="comment-form"
+                onSubmit={(e) => {
                   e.preventDefault();
-                  if (await act('comments', { text: comment })) setComment('');
+                  void sendComment();
+                }}
+                onPaste={(e) => {
+                  const list = [...e.clipboardData.files];
+                  if (!list.length) return;
+                  e.preventDefault();
+                  // 截图粘贴进来通常都叫 image.png，加上时间区分
+                  void attach(list.map((f) => (f.name === 'image.png' ? new File([f], `截图-${new Date().toLocaleTimeString('sv').replaceAll(':', '')}.png`, { type: f.type }) : f)));
+                }}
+                onDragOver={(e) => e.dataTransfer.types.includes('Files') && e.preventDefault()}
+                onDrop={(e) => {
+                  if (!e.dataTransfer.files.length) return;
+                  e.preventDefault();
+                  void attach([...e.dataTransfer.files]);
                 }}
               >
                 <MentionTextarea
@@ -264,13 +331,42 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
                   value={comment}
                   onChange={setComment}
                   candidates={agentCandidates(members, t.project)}
-                  onSubmit={async () => comment.trim() && (await act('comments', { text: comment })) && setComment('')}
-                  placeholder="写评论，输入 @ 选择要提及的 agent（Ctrl+Enter 发表）"
+                  onSubmit={() => void sendComment()}
+                  placeholder="写评论，支持 Markdown；输入 @ 提及 agent，可粘贴或拖入截图和文件（Ctrl+Enter 发表）"
                   aria-label="评论"
                 />
-                <button className="btn" style={{ marginTop: 6 }} disabled={!comment.trim()}>
-                  发表评论
-                </button>
+                {(files.length > 0 || uploading > 0) && (
+                  <div className="attachments">
+                    {files.map((f) => (
+                      <span key={f.id} className="file-chip">
+                        {f.name}
+                        <span className="faint">{fileSize(f.size)}</span>
+                        <button type="button" className="chip-x" aria-label={`移除 ${f.name}`} onClick={() => setFiles((cur) => cur.filter((x) => x.id !== f.id))}>
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                    {uploading > 0 && <span className="faint">正在上传 {uploading} 个文件…</span>}
+                  </div>
+                )}
+                <div className="btn-row" style={{ marginTop: 6 }}>
+                  <button className="btn" disabled={(!comment.trim() && !files.length) || uploading > 0}>
+                    发表评论
+                  </button>
+                  <button type="button" className="btn" onClick={() => fileInput.current?.click()}>
+                    添加附件
+                  </button>
+                  <input
+                    ref={fileInput}
+                    type="file"
+                    multiple
+                    hidden
+                    onChange={(e) => {
+                      void attach([...(e.target.files ?? [])]);
+                      e.target.value = '';
+                    }}
+                  />
+                </div>
               </form>
             </div>
 
