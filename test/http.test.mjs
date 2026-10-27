@@ -541,3 +541,12 @@ test('删除 agent：只能删已停用的，任务放回任务池，历史保�
   assert.equal(deleted.json().error.code, 'agent_deleted');
   assert.equal((await req('PATCH', `/api/v1/admin/agents/${a.agent.id}`, { status: 'active' })).status, 409); // 删除后不能再启用
 });
+
+test('自动下线时长：负责人可以在设置里改，超出范围拒绝，重启后仍生效', async () => {
+  const { req, hub } = await setup();
+  assert.deepEqual((await req('GET', '/api/v1/admin/presence-settings')).json(), { idle_minutes: 30, stream_grace_minutes: 2 });
+  assert.equal((await req('PATCH', '/api/v1/admin/presence-settings', { idle_minutes: 2 })).status, 400);
+  assert.deepEqual((await req('PATCH', '/api/v1/admin/presence-settings', { idle_minutes: 60, stream_grace_minutes: 5 })).json(), { idle_minutes: 60, stream_grace_minutes: 5 });
+  const { Hub: H } = await import('../dist/server/hub.js');
+  assert.deepEqual(new H(hub.db).presenceSettings(), { idle_minutes: 60, stream_grace_minutes: 5 });
+});

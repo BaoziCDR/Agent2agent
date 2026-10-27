@@ -392,6 +392,15 @@ export class Hub {
     this.offlineAfterMs = (opts.offlineAfterMinutes ?? 30) * 60_000;
     this.streamGraceMs = (opts.streamGraceMinutes ?? 2) * 60_000;
     this.bus.setMaxListeners(0);
+    // 负责人在控制台改过的超时时长优先于启动参数
+    const saved = (key: string) => {
+      const row = this.db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined;
+      return row ? Number(row.value) : NaN;
+    };
+    const idle = saved('presence_idle_minutes');
+    const grace = saved('presence_stream_grace_minutes');
+    if (idle > 0) this.offlineAfterMs = idle * 60_000;
+    if (grace > 0) this.streamGraceMs = grace * 60_000;
   }
 
   private iso(offsetMinutes = 0) {
@@ -659,6 +668,31 @@ export class Hub {
             ? `${a.name}（${me}）下线了`
             : `${a.name}（${me}）很久没有出现，已离线`) + (tasks.length ? `；手上还有 ${tasks.join('、')}` : ''),
     });
+  }
+
+  /** 自动下线的超时时长（分钟） */
+  presenceSettings() {
+    return { idle_minutes: Math.round(this.offlineAfterMs / 60_000), stream_grace_minutes: Math.round(this.streamGraceMs / 60_000) };
+  }
+
+  setPresenceSettings(input: { idle_minutes?: number; stream_grace_minutes?: number }) {
+    const check = (v: number | undefined, min: number, max: number, what: string) => {
+      if (v === undefined) return undefined;
+      if (!Number.isInteger(v) || v < min || v > max) throw invalid(`${what}要在 ${min} 到 ${max} 分钟之间`);
+      return v;
+    };
+    const idle = check(input.idle_minutes, 5, 1440, '空闲超时');
+    const grace = check(input.stream_grace_minutes, 1, 60, '值守断线宽限');
+    const put = this.db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
+    if (idle !== undefined) {
+      put.run('presence_idle_minutes', String(idle));
+      this.offlineAfterMs = idle * 60_000;
+    }
+    if (grace !== undefined) {
+      put.run('presence_stream_grace_minutes', String(grace));
+      this.streamGraceMs = grace * 60_000;
+    }
+    return this.presenceSettings();
   }
 
   /** 进程退出时交还授权 ID，立即下线 */
