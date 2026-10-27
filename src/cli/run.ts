@@ -109,6 +109,7 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
   let timer: NodeJS.Timeout | null = null;
   const runs: number[] = [];
   let stopping = false;
+  let paused = false; // 负责人在控制台暂停了值守
 
   const api = async (method: string, path: string, body?: unknown) => {
     const res = await fetch(cfg.hub + path, {
@@ -122,11 +123,12 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
   const report = (state: 'working' | 'idle' | 'stopped', note: string) =>
     api('POST', '/api/v1/me/activity', { state, note }).catch(() => undefined);
 
-  const check = async () => {
+  const check = async (force = false) => {
     if (running) {
       again = true;
       return;
     }
+    if (paused) return; // 恢复后会重新检查，积压的事项不会丢
     let inbox: Inbox;
     try {
       inbox = (await api('GET', '/api/v1/inbox')) as Inbox; // 不带 ack：只看不确认，留给 harness 自己确认
@@ -138,6 +140,9 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
     const fresh = new Set(inbox.events.filter((e) => e.seq > handled && e.task).map((e) => e.task));
     const open = opts.wakeOnOpen ? inbox.claimable.filter((t) => fresh.has(t.id)) : [];
     const top = Math.max(handled, ...inbox.events.map((e) => e.seq));
+    if (force && !reasons.length && !open.length) {
+      reasons.push({ seq: top, type: 'agent.control', task: null, summary: '负责人让你检查一遍收件箱和手上的任务' });
+    }
     if (!reasons.length && !open.length) {
       handled = top;
       return;
@@ -173,6 +178,7 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
       return;
     }
     await report('working', note);
+    const startedAt = new Date().toISOString();
     mkdirSync(logDir, { recursive: true });
     const logFile = join(logDir, `${new Date().toISOString().replace(/[:.]/g, '-')}.log`);
     const out = createWriteStream(logFile);
@@ -223,6 +229,34 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
     summary = (summary || stdout).trim().split('\n').filter(Boolean).pop() ?? '';
     log(`${code === 0 ? '完成' : `退出码 ${code}`}，日志：${logFile}`);
     await report('idle', code === 0 ? summary.slice(0, 200) : `运行失败（退出码 ${code}），详见本机日志`);
+    await api('POST', '/api/v1/me/runs', {
+      harness: opts.harness,
+      trigger: note,
+      started_at: startedAt,
+      ended_at: new Date().toISOString(),
+      code,
+      summary: code === 0 ? summary : `${summary}\n（本机日志：${logFile}）`.trim(),
+    }).catch(() => undefined);
+  };
+
+  const control = (raw: string) => {
+    let action = '';
+    try {
+      action = String((JSON.parse(raw) as { data?: { action?: string } }).data?.action ?? '');
+    } catch {
+      return;
+    }
+    if (action === 'pause' && !paused) {
+      paused = true;
+      log('负责人暂停了值守：收到的事项先积压，恢复后再处理');
+    } else if (action === 'resume' && paused) {
+      paused = false;
+      log('负责人恢复了值守');
+      void check();
+    } else if (action === 'wake') {
+      log('负责人要求立即检查');
+      void check(true);
+    }
   };
 
   const schedule = () => {
@@ -250,9 +284,13 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
           while ((i = buf.indexOf('\n\n')) >= 0) {
             const block = buf.slice(0, i);
             buf = buf.slice(i + 2);
-            const id = block.split('\n').find((l) => l.startsWith('id: '));
+            const lines = block.split('\n');
+            const id = lines.find((l) => l.startsWith('id: '));
             if (id) lastId = Number(id.slice(4)) || lastId;
-            if (block.split('\n').some((l) => l.startsWith('data: '))) schedule();
+            const data = lines.find((l) => l.startsWith('data: '));
+            if (!data) continue;
+            if (lines.includes('event: agent.control')) control(data.slice(6));
+            else schedule();
           }
         }
         log('连接断开，准备重连');
@@ -275,6 +313,12 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
   process.on('SIGTERM', stop);
 
   log(`值守模式启动：${cfg.name ?? ''}（${cfg.agent ?? ''}）→ ${cfg.hub}，工作目录 ${cwd}，唤起 ${opts.harness}`);
+  try {
+    paused = !!((await api('GET', '/api/v1/me')) as { daemon_paused?: boolean }).daemon_paused;
+    if (paused) log('负责人在控制台暂停了值守，恢复前不会唤起');
+  } catch {
+    // 读不到就按未暂停处理
+  }
   // 启动时先处理积压的事项，再定期兜底检查
   await check();
   setInterval(() => void check(), 5 * 60_000).unref();

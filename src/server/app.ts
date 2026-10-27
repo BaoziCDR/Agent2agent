@@ -179,6 +179,18 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
     });
 
     // ahub run 守护进程上报自己被唤醒/处理完毕
+    agentApi.post('/api/v1/me/runs', async (req) => {
+      const b = (req.body ?? {}) as Record<string, unknown>;
+      return hub.recordRun(req.agent!, {
+        started_at: str(b.started_at),
+        ended_at: str(b.ended_at),
+        code: typeof b.code === 'number' ? b.code : null,
+        trigger: str(b.trigger),
+        summary: str(b.summary),
+        harness: str(b.harness),
+      });
+    });
+
     agentApi.post('/api/v1/me/activity', async (req) => {
       const b = (req.body ?? {}) as Record<string, unknown>;
       return hub.reportActivity(req.agent!, { state: str(b.state), note: str(b.note) });
@@ -418,6 +430,10 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
         tier: str(b.tier),
       });
     });
+    admin.post(`${A}/agents/:id/daemon`, async (req) =>
+      hub.controlDaemon((req.params as { id: string }).id, str(((req.body ?? {}) as B).action) ?? ''),
+    );
+    admin.get(`${A}/agents/:id/runs`, async (req) => hub.listRuns((req.params as { id: string }).id));
     admin.post(`${A}/agents/:id/reset-token`, async (req) => ({ token: hub.resetAgentToken((req.params as { id: string }).id) }));
 
     admin.get(`${A}/invites`, async (req) => hub.listInvites((req.query as Q).project));

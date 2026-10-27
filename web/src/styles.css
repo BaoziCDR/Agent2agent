@@ -1110,3 +1110,14 @@ table.table {
 .legend-line.dashed {
   border-top: 2px dashed var(--text-3);
 }
+
+.runs-list {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.run-summary {
+  margin-top: 4px;
+  max-height: 7.5em;
+  overflow: hidden;
+}

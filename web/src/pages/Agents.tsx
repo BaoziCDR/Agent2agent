@@ -1,12 +1,34 @@
 import { useState } from 'react';
-import { type Agent, patch, post } from '../api';
-import { CodeBox, Modal, PLATFORM_LABEL, PRESENCE_LABEL, presence, timeAgo, useHub } from '../ui';
+import { type Agent, get, patch, post, type Run } from '../api';
+import { CodeBox, Modal, PLATFORM_LABEL, PRESENCE_LABEL, dateTime, presence, timeAgo, useData, useHub } from '../ui';
+
+const duration = (r: Run) => {
+  const s = Math.max(0, Math.round((Date.parse(r.ended_at) - Date.parse(r.started_at)) / 1000));
+  return s < 60 ? `${s} 秒` : s < 3600 ? `${Math.floor(s / 60)} 分 ${s % 60} 秒` : `${Math.floor(s / 3600)} 小时 ${Math.floor((s % 3600) / 60)} 分`;
+};
+
+function daemonState(a: Agent): { text: string; cls: string } {
+  if (a.daemon_paused) return { text: a.daemon ? '已暂停' : '已暂停（未运行）', cls: 'warn' };
+  if (!a.daemon) return { text: '未运行', cls: '' };
+  return a.activity ? { text: '处理中', cls: 'accent' } : { text: '值守中', cls: 'good' };
+}
 
 const TIER: Record<string, string> = { L1: '命令行/实时', L2: 'MCP', L3: 'HTTP 轮询', L4: '人工中继' };
 
 export function Agents() {
   const { agents, project, toast, refresh, openTask, go } = useHub();
   const [token, setToken] = useState<{ agent: Agent; token: string } | null>(null);
+  const [runsOf, setRunsOf] = useState<Agent | null>(null);
+
+  const daemon = async (a: Agent, action: 'pause' | 'resume' | 'wake') => {
+    try {
+      await post(`/agents/${a.id}/daemon`, { action });
+      toast({ pause: `已暂停 ${a.name} 的值守`, resume: `已恢复 ${a.name} 的值守`, wake: `已让 ${a.name} 立即检查` }[action]);
+      refresh();
+    } catch (err) {
+      toast((err as Error).message, true);
+    }
+  };
   const list = project ? agents.filter((a) => a.projects.some((p) => p.id === project)) : agents;
 
   const toggle = async (a: Agent) => {
@@ -25,7 +47,7 @@ export function Agents() {
         <div>
           <h1 className="page-title">Agent</h1>
           <p className="page-sub" style={{ margin: 0 }}>
-            在线：保持着实时连接（如值守进程）；活跃：10 分钟内有请求；空闲：2 小时内出现过；离线：更久没出现，或值守进程断线超过 2 分钟。下线和重新上线都会通知你。
+            在线：保持着实时连接（如值守进程）；活跃：10 分钟内有请求；空闲：2 小时内出现过；离线：更久没出现，或值守进程断线超过 2 分钟。下线和重新上线都会通知你。值守列可以暂停、恢复或立即唤醒 ahub run，并查看每次运行的记录。
           </p>
         </div>
         <button className="btn primary" onClick={() => go('invite')}>
@@ -45,6 +67,7 @@ export function Agents() {
                 <th>平台 / 接入</th>
                 <th>项目与标签</th>
                 <th>进行中</th>
+                <th>值守</th>
                 <th>最后出现</th>
                 <th />
               </tr>
@@ -90,6 +113,33 @@ export function Agents() {
                         </a>
                       ))}
                     </td>
+                    <td>
+                      {(() => {
+                        const d = daemonState(a);
+                        return <span className={`badge ${d.cls}`}>{d.text}</span>;
+                      })()}
+                      <div className="btn-row" style={{ gap: 4, marginTop: 6 }}>
+                        {a.daemon_paused ? (
+                          <button className="btn small" onClick={() => daemon(a, 'resume')}>
+                            恢复
+                          </button>
+                        ) : (
+                          a.daemon && (
+                            <>
+                              <button className="btn small" onClick={() => daemon(a, 'pause')}>
+                                暂停
+                              </button>
+                              <button className="btn small" disabled={!!a.activity} onClick={() => daemon(a, 'wake')} title="让它立即检查一遍收件箱和手上的任务">
+                                唤醒
+                              </button>
+                            </>
+                          )
+                        )}
+                        <button className="btn small" onClick={() => setRunsOf(a)}>
+                          记录
+                        </button>
+                      </div>
+                    </td>
                     <td className="faint">{timeAgo(a.last_seen_at)}</td>
                     <td>
                       <div className="btn-row">
@@ -120,6 +170,7 @@ export function Agents() {
           </div>
         )}
       </div>
+      {runsOf && <RunsDialog agent={runsOf} onClose={() => setRunsOf(null)} />}
       {token && (
         <Modal title={`${token.agent.name} 的新令牌`} onClose={() => setToken(null)}>
           <p className="muted">把新令牌交给这个 agent，让它更新 .ahub/config.json 里的 token 字段。关闭后不会再显示。</p>
@@ -132,5 +183,38 @@ export function Agents() {
         </Modal>
       )}
     </div>
+  );
+}
+
+function RunsDialog({ agent, onClose }: { agent: Agent; onClose: () => void }) {
+  const { data: runs } = useData(() => get<Run[]>(`/agents/${agent.id}/runs`), [agent.id]);
+  return (
+    <Modal title={`${agent.name} 的值守运行记录`} onClose={onClose}>
+      {!agent.daemon && (
+        <p className="faint" style={{ marginTop: 0 }}>
+          值守进程未运行。在 agent 的工作目录运行 <code>ahub run --harness codex</code>（或 claude）即可开启。
+        </p>
+      )}
+      {runs && runs.length === 0 && <div className="empty">还没有运行记录</div>}
+      <div className="list runs-list">
+        {runs?.map((r) => (
+          <div key={r.id} className="list-item">
+            <span className={`badge ${r.code === 0 ? 'good' : 'bad'}`}>{r.code === 0 ? '成功' : r.code === null ? '中断' : `退出码 ${r.code}`}</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="faint">
+                {dateTime(r.started_at)} · 用时 {duration(r)} · {r.harness}
+              </div>
+              <div>唤起原因：{r.trigger || '—'}</div>
+              {r.summary && <div className="prose faint run-summary">{r.summary}</div>}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="btn-row" style={{ marginTop: 12 }}>
+        <button className="btn" onClick={onClose}>
+          关闭
+        </button>
+      </div>
+    </Modal>
   );
 }
