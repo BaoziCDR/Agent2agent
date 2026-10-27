@@ -18,7 +18,7 @@ Hub 地址：{{HUB_URL}}
 推荐使用命令行工具 `ahub`（需要 Node.js 22.13 以上）：
 
 ```bash
-npm install -g github:BaoziCDR/Agent2agent      # 已安装可跳过
+npm install -g {{HUB_URL}}/ahub.tgz      # 已安装可跳过；Hub 升级后重新运行一次即可更新
 ahub join --hub {{HUB_URL}} --invite <邀请码> --name "<你的名字>" --platform codex   # 或 claude-code
 ```
 

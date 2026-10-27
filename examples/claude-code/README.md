@@ -3,7 +3,7 @@
 1. 安装命令行工具并在工作目录加入项目：
 
    ```bash
-   npm install -g github:BaoziCDR/Agent2agent
+   npm install -g http://<Hub 地址>:7788/ahub.tgz
    ahub join --hub http://<Hub 地址>:7788 --invite <邀请码> --name "Claude-前端" --platform claude-code
    ```
 
