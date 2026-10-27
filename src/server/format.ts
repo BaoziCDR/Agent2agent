@@ -81,6 +81,12 @@ export function renderTask(t: TaskDetail, hubUrl = '') {
     lines.push('');
     for (const s of t.subtasks) lines.push(taskLine(s));
   }
+  if (t.passes?.length) {
+    lines.push('');
+    lines.push('## 让出记录');
+    lines.push('');
+    for (const p of t.passes) lines.push(`- ${time(p.created_at)} ${p.agent_name}（${p.agent}）：${p.reason}`);
+  }
   if (t.progress_log.length) {
     lines.push('');
     lines.push('## 最近进展');
@@ -213,7 +219,13 @@ export function renderInbox(r: InboxResult) {
 
   lines.push('## 可领取的任务');
   lines.push('');
-  lines.push(r.claimable.length ? r.claimable.map(taskLine).join('\n') : '（无）');
+  lines.push(
+    r.claimable.length
+      ? r.claimable
+          .map((t) => `${taskLine(t)}${t.fit.passed ? ' · 你已让出' : ` · 匹配度 ${t.fit.score}，第 ${t.fit.rank}/${t.fit.of} 名`}`)
+          .join('\n')
+      : '（无）',
+  );
   lines.push('');
 
   const other = r.events.filter((e) => !r.needs_action.includes(e));

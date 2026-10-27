@@ -93,6 +93,7 @@ export interface TaskDetail extends Task {
   receipts: Receipt[];
   artifacts: Artifact[];
   progress_log: { author: string; percent: number; note: string; created_at: string }[];
+  passes?: { agent: string; agent_name: string; reason: string; created_at: string }[];
 }
 
 export interface Artifact {

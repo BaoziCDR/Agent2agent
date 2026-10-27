@@ -33,12 +33,13 @@ const TITLES: Partial<Record<string, string>> = {
   'agent.offline': 'Agent 下线了',
   'task.overdue': '任务逾期',
   'task.stalled': '任务疑似原地打转',
+  'task.unclaimed': '没有 agent 愿意领取',
 };
 
 /** 需要负责人处理或知晓的事件才弹通知。 */
 export function notificationTitle(e: HubEvent): string | null {
   if ((e.type === 'mention' || e.type === 'message.direct') && e.audience?.length === 0) return TITLES[e.type]!;
-  if (e.type === 'task.lease_expiring' || e.type === 'agent.offline' || e.type === 'task.overdue' || e.type === 'task.stalled') return TITLES[e.type]!;
+  if (e.type === 'task.lease_expiring' || e.type === 'agent.offline' || e.type === 'task.overdue' || e.type === 'task.stalled' || e.type === 'task.unclaimed') return TITLES[e.type]!;
   if (e.type === 'task.status_changed') {
     if (e.data.to === 'review') return '有任务待验收';
     if (e.data.to === 'input_required') return '有任务被阻塞';

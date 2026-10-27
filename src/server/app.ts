@@ -319,6 +319,14 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
     };
 
     action('/api/v1/tasks/:id/claim', (a, id) => hub.claim(a, id), taskDone('领取'));
+    action(
+      '/api/v1/tasks/:id/pass',
+      (a, id, b) => hub.pass(a, id, str(b.reason) ?? ''),
+      (r) => {
+        const x = r as { task: string; remaining: number };
+        return `已让出 ${x.task}。${x.remaining ? `还有 ${x.remaining} 个 agent 可以领取它。` : '没有其他 agent 可以自动领取了，已提醒负责人。'}\n`;
+      },
+    );
     action('/api/v1/tasks/:id/accept', (a, id) => hub.accept(a, id), taskDone('接受'));
     action('/api/v1/tasks/:id/decline', (a, id, b) => hub.decline(a, id, str(b.reason) ?? ''), taskDone('拒绝'));
     action(
