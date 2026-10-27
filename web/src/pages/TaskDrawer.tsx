@@ -351,6 +351,7 @@ function EditTask({ task, onClose, onSaved }: { task: TaskDetail; onClose: () =>
   const [priority, setPriority] = useState(task.priority);
   const [tags, setTags] = useState(task.required_tags.join(', '));
   const [due, setDue] = useState(toLocalInput(task.due_at));
+  const [deps, setDeps] = useState(task.depends_on.join(', '));
   return (
     <Modal title={`编辑 ${task.id}`} onClose={onClose}>
       <div className="field">
@@ -383,6 +384,11 @@ function EditTask({ task, onClose, onSaved }: { task: TaskDetail; onClose: () =>
           <input id="ed-due" type="datetime-local" className="input" value={due} onChange={(e) => setDue(e.target.value)} />
         </div>
       </div>
+      <div className="field">
+        <label htmlFor="ed-deps">前置任务</label>
+        <input id="ed-deps" className="input" value={deps} onChange={(e) => setDeps(e.target.value)} placeholder="如：P1-T3, P1-T4" />
+        <div className="hint">前置任务全部完成后，这个任务才能被领取</div>
+      </div>
       <div className="btn-row">
         <button
           className="btn primary"
@@ -396,6 +402,7 @@ function EditTask({ task, onClose, onSaved }: { task: TaskDetail; onClose: () =>
                 priority,
                 required_tags: splitList(tags),
                 ...(due !== toLocalInput(task.due_at) ? { due_at: due ? new Date(due).toISOString() : null } : {}),
+                ...(splitList(deps).join(',') !== task.depends_on.join(',') ? { depends_on: splitList(deps).map((d) => d.toUpperCase()) } : {}),
                 version: task.version,
               });
               toast('已保存');
