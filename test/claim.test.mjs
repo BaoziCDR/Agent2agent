@@ -84,3 +84,18 @@ test('匹配度刚过门槛的任务标为灰区，唤起前可以先问小模�
   assert.ok(c.args.includes('系统'));
   assert.match(c.args.at(-1), /claim/);
 });
+
+test('唤起提示里带上私信和评论的全文，短的保持摘要', async () => {
+  const { eventText } = await import('../dist/cli/run.js');
+  const long = '第一行说明\n' + '很长的内容'.repeat(30);
+  const dm = { seq: 1, type: 'message.direct', task: null, data: { body: long }, summary: `乙给你发来私信：${long.slice(0, 60)}…` };
+  const t = eventText(dm);
+  assert.match(t, /^乙给你发来私信：\n  > 第一行说明\n  > 很长的内容/);
+  assert.ok(t.includes('很长的内容'.repeat(30)));
+  const short = { seq: 2, type: 'mention', task: 'P1-T1', data: { text: '@甲 看一下' }, summary: '负责人在 P1-T1 里 @了你：@甲 看一下' };
+  assert.equal(eventText(short), short.summary);
+  assert.match(eventText({ ...dm, data: { body: 'x'.repeat(3000) } }), /太长已截断/);
+  assert.equal(eventText({ seq: 3, type: 'task.assigned', task: 'P1-T1', data: {}, summary: '负责人把 P1-T1 指派给了你' }), '负责人把 P1-T1 指派给了你');
+  const prompt = buildPrompt({ name: '甲', agent: 'A-1' }, [dm], []);
+  assert.ok(prompt.includes('很长的内容'.repeat(30)));
+});
