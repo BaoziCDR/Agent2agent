@@ -1,4 +1,5 @@
 import { get, type Overview as OverviewData } from '../api';
+import { AnswerBox } from '../answer';
 import { StatusBadge, clock, dueInfo, presence, PRESENCE_LABEL, timeAgo, useData, useHub, agentLabel } from '../ui';
 
 export function Overview() {
@@ -78,7 +79,7 @@ export function Overview() {
                     </div>
                     <div className="faint">
                       {t.status === 'review' && `${t.assignee_name ?? ''} 已提交，等待验收`}
-                      {t.status === 'input_required' && `阻塞原因：${t.block_reason}`}
+                      {t.status === 'input_required' && `${t.block_options.length ? '等你回答' : '阻塞原因'}：${t.block_reason}`}
                       {t.status === 'draft' && `${t.created_by === 'owner' ? '你' : t.created_by} 的草稿，尚未发布`}
                       {t.status === 'working' && t.lease_until && new Date(t.lease_until) < new Date() && `${t.assignee_name ?? ''} 很久没有上报进度，可能已失联`}
                       {(() => {
@@ -86,6 +87,7 @@ export function Overview() {
                         return d?.cls === 'bad' && <span className="due bad">{t.status === 'working' || t.status === 'input_required' ? ' · ' : ''}{d.text}</span>;
                       })()}
                     </div>
+                    {t.status === 'input_required' && t.block_options.length > 0 && <AnswerBox task={t} compact />}
                   </div>
                 </div>
               ))}

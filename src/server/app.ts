@@ -276,7 +276,7 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
         }),
       taskDone('上报进度'),
     );
-    action('/api/v1/tasks/:id/block', (a, id, b) => hub.block(a, id, str(b.reason) ?? ''), taskDone('标记阻塞'));
+    action('/api/v1/tasks/:id/block', (a, id, b) => hub.block(a, id, str(b.reason) ?? '', strArr(b.options) ?? []), taskDone('标记阻塞'));
     action('/api/v1/tasks/:id/unblock', (a, id, b) => hub.unblock({ kind: 'agent', agent: a }, id, str(b.note)), taskDone('解除阻塞'));
     action(
       '/api/v1/tasks/:id/submit',
@@ -550,6 +550,7 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
     ownerAction('approve', (id, b) => hub.approve(id, str(b.comment)));
     ownerAction('reject', (id, b) => hub.reject(id, str(b.reason) ?? ''));
     ownerAction('cancel', (id, b) => hub.cancel(id, str(b.reason)));
+    ownerAction('answer', (id, b) => hub.answer(id, str(b.answer) ?? ''));
     ownerAction('unblock', (id, b) => hub.unblock({ kind: 'owner' }, id, str(b.note)));
     ownerAction('comments', (id, b) => hub.comment({ kind: 'owner' }, id, str(b.text) ?? '', strArr(b.files)));
 

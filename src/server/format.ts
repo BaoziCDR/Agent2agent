@@ -41,7 +41,10 @@ export function renderTask(t: TaskDetail, hubUrl = '') {
   if (t.depends_on.length) lines.push(`依赖：${t.depends_on.join('、')}`);
   if (t.required_tags.length) lines.push(`需要能力：${t.required_tags.join('、')}`);
   if (t.due_at) lines.push(dueNote(t, '').replace(/^截止 /, '截止：'));
-  if (t.block_reason && t.status === 'input_required') lines.push(`阻塞原因：${t.block_reason}`);
+  if (t.block_reason && t.status === 'input_required') {
+    lines.push(`阻塞原因：${t.block_reason}`);
+    if (t.block_options.length) lines.push(`可选答案：${t.block_options.join(' / ')}（等负责人选择）`);
+  }
   lines.push('');
   const source = t.created_by === 'owner' ? '负责人发布' : `由 ${t.created_by} 创建；${AGENT_CONTENT_NOTE}`;
   lines.push(`## 描述（${source}）`);

@@ -275,3 +275,28 @@ test('评论附件：上传后随评论发出，任务详情和 Markdown 里都�
   const md = await req('GET', `/api/v1/tasks/${t.id}?format=md`, undefined, a.headers);
   assert.match(md.text, /\*\*看这里\*\* 〔附件 \[报错截图\.png\]\(http:\/\/[^)]+\/files\/[\w-]+\)〕/);
 });
+
+test('阻塞提问：agent 给出选项，负责人点选后解除阻塞并通知 agent', async () => {
+  const { req, project, join: joinAgent } = await setup();
+  const a = await joinAgent('甲');
+  const t = (await req('POST', '/api/v1/admin/tasks', { project: project.id, title: '建表' })).json();
+  await req('POST', `/api/v1/tasks/${t.id}/claim`, {}, a.headers);
+  assert.equal((await req('POST', `/api/v1/tasks/${t.id}/block`, { reason: '用哪个数据库？', options: Array(7).fill(0).map((_, i) => `x${i}`) }, a.headers)).status, 400);
+  await req('POST', `/api/v1/tasks/${t.id}/block`, { reason: '用哪个数据库？', options: ['MySQL', 'PostgreSQL', 'MySQL'] }, a.headers);
+  const blocked = (await req('GET', `/api/v1/admin/tasks/${t.id}`)).json();
+  assert.equal(blocked.status, 'input_required');
+  assert.deepEqual(blocked.block_options, ['MySQL', 'PostgreSQL']);
+  const md = await req('GET', `/api/v1/tasks/${t.id}?format=md`, undefined, a.headers);
+  assert.match(md.text, /可选答案：MySQL \/ PostgreSQL/);
+  // 先读一遍收件箱，之后只看新事件
+  await req('GET', '/api/v1/inbox?ack=1', undefined, a.headers);
+  const r = await req('POST', `/api/v1/admin/tasks/${t.id}/answer`, { answer: 'PostgreSQL' });
+  assert.equal(r.status, 200);
+  const after = (await req('GET', `/api/v1/admin/tasks/${t.id}`)).json();
+  assert.equal(after.status, 'working');
+  assert.deepEqual(after.block_options, []);
+  assert.match(after.comments.at(-1).parts[0].text, /\*\*回答\*\*「用哪个数据库？」：PostgreSQL/);
+  const inbox = (await req('GET', '/api/v1/inbox', undefined, a.headers)).json();
+  assert.ok(inbox.needs_action.some((e) => e.type === 'task.status_changed' && /负责人回答了 P1-T1 的问题：PostgreSQL/.test(e.summary)));
+  assert.equal((await req('POST', `/api/v1/admin/tasks/${t.id}/answer`, { answer: 'x' })).status, 409);
+});

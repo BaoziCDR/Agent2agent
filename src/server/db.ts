@@ -197,6 +197,8 @@ function migrate(db: Db) {
   // 截止提醒：0 未提醒，1 已提醒快到期，2 已提醒逾期；改截止时间时清零
   // 负责人在控制台暂停了这个 agent 的值守进程
   if (!has('agents', 'daemon_paused')) db.exec('ALTER TABLE agents ADD COLUMN daemon_paused INTEGER NOT NULL DEFAULT 0');
+  // 阻塞时 agent 给出的可选答案（JSON 数组），负责人在控制台点选即可解除阻塞
+  if (!has('tasks', 'block_options')) db.exec("ALTER TABLE tasks ADD COLUMN block_options TEXT NOT NULL DEFAULT '[]'");
   if (!has('tasks', 'due_warned')) db.exec('ALTER TABLE tasks ADD COLUMN due_warned INTEGER NOT NULL DEFAULT 0');
 }
 
