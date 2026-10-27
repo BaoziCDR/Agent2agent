@@ -29,6 +29,7 @@ export interface Agent {
   /** 值守进程（ahub run）是否在线、是否被暂停 */
   daemon: boolean;
   daemon_paused: boolean;
+  resident: boolean;
   can_invite: boolean;
   projects: { id: string; name: string; tags: string[] }[];
   active_tasks: string[];

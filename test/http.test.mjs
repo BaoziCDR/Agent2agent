@@ -99,6 +99,24 @@ test('空闲等待：连续落空后直接返回提示，续等和值守进程�
   assert.match(r.wait.hint, /值守进程/);
 });
 
+test('常驻等待：不受连续落空限制，控制台显示常驻', async () => {
+  const { req, join, hub } = await setup();
+  const a = await join('甲');
+  const since = (await req('GET', '/api/v1/inbox', undefined, a.headers)).json().last_seq;
+  const w = (extra = '') => req('GET', `/api/v1/inbox?wait=1&since=${since}${extra}`, undefined, a.headers).then((r) => r.json());
+  for (let i = 0; i < 4; i++) {
+    const r = await w('&resident=1');
+    assert.equal(r.wait.skipped, false);
+    assert.match(r.wait.hint, /--resident/);
+  }
+  assert.equal(hub.idleWaits(1), 0);
+  const me = (await req('GET', '/api/v1/admin/agents')).json().find((x) => x.id === 'A-1');
+  assert.equal(me.resident, true);
+  // 值守进程在线时仍然不等待
+  hub.markDaemon(1, 1);
+  assert.equal((await w('&resident=1')).wait.skipped, true);
+});
+
 test('搜索：任务、评论、私信；agent 只能搜自己的项目', async () => {
   const { req, join, project } = await setup();
   const a = await join('甲');
