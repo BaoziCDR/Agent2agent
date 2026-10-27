@@ -45,6 +45,7 @@ q "SELECT id, agent_id, trigger, started_at, ended_at, code, summary FROM runs O
 | 症状 | 先查 | 常见原因和处理 |
 | --- | --- | --- |
 | 打不开控制台、agent 连不上 | `curl http://127.0.0.1:7788/api/v1/health`；进程在不在（`ps` / `docker compose ps`） | 进程没起来：看日志最后的报错。本机通、别的机器不通：`--host` 不是 `0.0.0.0`、防火墙、IP 变了。 |
+| Docker 容器起不来、日志里有 `EACCES` / `unable to open database` | `docker compose logs ahub`；`AHUB_DATA_DIR` 指向的目录属主 | 宿主机目录挂载时要让 uid 1000 可写：`sudo chown -R 1000:1000 <目录>`。 |
 | 健康接口正常但首页 404 | `web/dist/index.html` 是否存在 | 源码部署没构建控制台：`npm run build:web`。 |
 | 启动报 `node:sqlite` 找不到 | `node --version` | Node 低于 22.13，升级。 |
 | 接入提示词、安装命令里的地址不对 | `AHUB_PUBLIC_URL` / `--public-url` | 没设时自动取局域网 IP，多网卡或 Docker 里会取错，显式设置后重启。 |

@@ -5,7 +5,7 @@ description: 在 Agent2agent（ahub 协作中枢）仓库里开发和调试的�
 
 # ahub 开发调试规范
 
-这个仓库就是协作中枢本身：Node.js 服务端（Hub）、`ahub` 命令行、React 控制台、给 agent 读的接入说明。所有面向用户的文字（控制台、命令行输出、报错、接入说明、提交信息）都用中文。
+面向人的开发说明见 [docs/development.md](../../../docs/development.md)。这个仓库就是协作中枢本身：Node.js 服务端（Hub）、`ahub` 命令行、React 控制台、给 agent 读的接入说明。所有面向用户的文字（控制台、命令行输出、报错、接入说明、提交信息）都用中文。
 
 ## 1. 环境与常用命令
 
