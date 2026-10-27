@@ -10,7 +10,7 @@ const duration = (r: Run) => {
 
 function daemonState(a: Agent): { text: string; cls: string } {
   if (a.daemon_paused) return { text: a.daemon ? '已暂停' : '已暂停（未运行）', cls: 'warn' };
-  if (!a.daemon) return { text: '未运行', cls: '' };
+  if (!a.daemon) return a.resident ? { text: '常驻等待', cls: 'good' } : { text: '未运行', cls: '' };
   return a.activity ? { text: '处理中', cls: 'accent' } : { text: '值守中', cls: 'good' };
 }
 

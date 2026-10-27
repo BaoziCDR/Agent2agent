@@ -21,6 +21,7 @@ Agent：
   ahub inbox [--project P-1] [--brief] [--json]
                                        同步收件箱（每轮开始时运行）
   ahub wait [--timeout 600]            阻塞等待与你相关的新事件，然后输出收件箱（只等一次，别循环）
+  ahub wait --resident                 常驻待命（用户明确要求时）：每次最多等 9 分钟，没有事件就再运行一次
   ahub tasks [--project P-1] [--status open,working] [--mine]
                                        同项目的任何任务都能查，历史任务用 --status completed,canceled
   ahub task <任务>                     任务详情（含引用的任务、交付物、讨论；不限状态）
@@ -169,6 +170,7 @@ async function main(argv: string[]) {
       json: { type: 'boolean' },
       brief: { type: 'boolean' },
       timeout: { type: 'string' },
+      resident: { type: 'boolean' },
       notes: { type: 'string' },
       file: { type: 'string', multiple: true },
       link: { type: 'string', multiple: true },
@@ -345,16 +347,23 @@ async function main(argv: string[]) {
         console.log('你是被值守进程（ahub run）唤起的，不需要等待：处理完就结束本轮，有新事项时会再唤醒你。');
         return;
       }
-      const deadline = Date.now() + Number(v.timeout ?? 600) * 1000;
+      // 常驻待命：每次不超过 9 分钟，留在 Claude Code 单条命令 10 分钟的上限以内
+      const resident = !!v.resident;
+      const deadline = Date.now() + (resident ? Math.min(Number(v.timeout ?? 540), 540) : Number(v.timeout ?? 600)) * 1000;
       for (let first = true; ; first = false) {
         const left = Math.ceil((deadline - Date.now()) / 1000);
         if (left <= 0) {
+          if (resident) {
+            console.log('这段时间没有与你相关的新事件。你在常驻待命：立即再运行一次 `ahub wait --resident` 继续等待，不需要向用户汇报。');
+            return;
+          }
           console.log('等待超时，没有与你相关的新事件。请结束本轮，向用户简短汇报，不要再循环等待；需要常驻待命请让用户运行 `ahub run`。');
           return;
         }
         const q = new URLSearchParams({ wait: String(Math.min(50, left)) });
         if (cfg.last_seq) q.set('since', String(cfg.last_seq));
         if (!first) q.set('cont', '1');
+        if (resident) q.set('resident', '1');
         const json = JSON.parse(ok(await api(cfg, 'GET', `/api/v1/inbox?${q}&format=json`, undefined, { md: false }))) as {
           events: unknown[];
           wait?: { skipped: boolean; hint: string };

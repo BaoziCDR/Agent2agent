@@ -120,6 +120,8 @@ export interface AgentView {
   /** 值守进程（ahub run）是否连着 Hub，是否被负责人暂停 */
   daemon: boolean;
   daemon_paused: boolean;
+  /** 在交互式会话里用 ahub wait --resident 常驻待命 */
+  resident: boolean;
   /** 负责人允许它为所在项目创建邀请 */
   can_invite: boolean;
   projects: { id: string; name: string; tags: string[] }[];
@@ -307,6 +309,8 @@ export class Hub {
   private activity = new Map<number, { state: string; note: string; at: string }>();
   private daemons = new Map<number, number>();
   private emptyWaits = new Map<number, { n: number; at: number }>();
+  /** agent id → 最近一次常驻等待（ahub wait --resident）的时间（毫秒） */
+  private residents = new Map<number, number>();
   private offlineAfterMs: number;
   private streamGraceMs: number;
 
@@ -438,6 +442,16 @@ export class Hub {
   noteWait(agentId: number, empty: boolean) {
     if (!empty) this.emptyWaits.delete(agentId);
     else this.emptyWaits.set(agentId, { n: this.idleWaits(agentId) + 1, at: this.now().getTime() });
+  }
+
+  /** 交互式会话里常驻待命的 agent：每次等待都会刷新，15 分钟没再等就不算了 */
+  noteResident(agentId: number) {
+    this.residents.set(agentId, this.now().getTime());
+  }
+
+  isResident(agentId: number) {
+    const at = this.residents.get(agentId);
+    return at !== undefined && this.now().getTime() - at < 15 * 60_000;
   }
 
   isLive(agentId: number) {
@@ -1194,6 +1208,7 @@ export class Hub {
       activity: presence === 'online' ? (this.activity.get(a.id) ?? null) : null,
       daemon: this.hasDaemon(a.id),
       daemon_paused: !!a.daemon_paused,
+      resident: this.isResident(a.id),
       can_invite: !!a.can_invite,
       projects: this.agentProjects(a.id),
       active_tasks: active.map((t) => taskCode(t.project_id, t.num)),

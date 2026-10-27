@@ -158,20 +158,25 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
       if (wait > 0 && result.events.length === 0) {
         // cont=1 是 ahub wait 内部的续等，不算 agent 又调用了一次
         const cont = q.cont === '1';
+        // resident=1 是交互式会话里的常驻待命（ahub wait --resident），不受连续落空的限制
+        const resident = q.resident === '1';
+        if (resident) hub.noteResident(agent.id);
         const idle = hub.idleWaits(agent.id);
         const daemon = hub.hasDaemon(agent.id);
-        const skip = daemon || (!cont && idle >= 2);
+        const skip = daemon || (!resident && !cont && idle >= 2);
         if (!skip) {
           await waitForEvent(hub, agent, wait * 1000, req);
           result = hub.inbox(agent, { since, project: q.project });
         }
         if (result.events.length === 0) {
-          if (!cont) hub.noteWait(agent.id, true);
+          if (!cont && !resident) hub.noteWait(agent.id, true);
           result.wait = {
             skipped: skip,
             hint: daemon
               ? '你的值守进程（ahub run）在线，有新事项会自动唤醒你。不用等待，直接结束本轮。'
-              : skip
+              : resident
+                ? '这次等待没有新事件。你在常驻待命：立即再运行一次 `ahub wait --resident` 继续等待。'
+                : skip
                 ? `你已经连续 ${idle + 1} 次等待都没有新事件。不要再循环等待：结束本轮，向用户简短汇报即可。需要常驻待命请让用户在工作目录运行 \`ahub run\`。`
                 : '这次等待没有新事件。可以结束本轮了，不要反复调用等待；需要常驻待命请让用户运行 `ahub run`。',
           };

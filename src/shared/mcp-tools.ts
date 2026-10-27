@@ -86,11 +86,13 @@ export function createHubMcpServer(call: HubCall, opts: ToolOptions = {}): McpSe
       inputSchema: {
         since: z.number().int().optional().describe('只等这个事件号之后的新事件，一般传上次同步返回的事件号'),
         seconds: z.number().int().min(1).max(50).optional().describe('最长等待秒数，默认 45'),
+        resident: z.boolean().optional().describe('用户明确要求常驻待命时传 true：不受连续落空限制，落空后接着再调用'),
       },
       annotations: { readOnlyHint: true },
     },
-    async ({ since, seconds }) => {
+    async ({ since, seconds, resident }) => {
       const q = new URLSearchParams({ format: 'md', wait: String(seconds ?? 45) });
+      if (resident) q.set('resident', '1');
       if (since !== undefined) q.set('since', String(since));
       return reply(call('GET', `/api/v1/inbox?${q}`));
     },
