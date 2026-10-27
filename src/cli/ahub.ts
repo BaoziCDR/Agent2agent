@@ -316,7 +316,7 @@ async function main(argv: string[]) {
       port: Number(v.port ?? process.env.AHUB_PORT ?? 7788),
       host: v.host ?? process.env.AHUB_HOST ?? '0.0.0.0',
       dataDir: v.data ?? process.env.AHUB_DATA ?? './.ahub-data',
-      publicUrl: v['public-url'] ?? process.env.AHUB_PUBLIC_URL,
+      publicUrl: v['public-url'] || process.env.AHUB_PUBLIC_URL || undefined,
       resetOwnerToken: v['reset-owner-token'],
       ownerToken: v['owner-token'] ?? process.env.AHUB_OWNER_TOKEN,
       offlineAfterMinutes: Number(v['offline-after'] ?? process.env.AHUB_OFFLINE_AFTER ?? 30) || 30,

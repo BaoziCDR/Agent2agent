@@ -1,0 +1,17 @@
+node_modules
+dist
+web/dist
+.ahub
+.ahub-data
+*.db
+*.db-wal
+*.db-shm
+.git
+.github
+.claude
+.agents
+docs
+test
+Dockerfile
+docker-compose.yml
+.env
