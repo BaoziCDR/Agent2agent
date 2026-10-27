@@ -755,6 +755,30 @@ table.table {
   margin-bottom: 4px;
 }
 
+.h4-hint {
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--text-3);
+  margin-left: 10px;
+}
+
+.quote-btn {
+  position: fixed;
+  z-index: 25;
+  transform: translate(-50%, calc(-100% - 8px));
+  box-shadow: 0 4px 14px rgba(16, 24, 40, 0.18);
+  white-space: nowrap;
+}
+
+/* 评论里的引用：带出处的灰底块 */
+.comment .md blockquote {
+  background: var(--panel);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 6px 6px 0;
+  padding: 6px 12px;
+  color: var(--text-2);
+}
+
 .artifact {
   border: 1px solid var(--border);
   border-radius: 10px;

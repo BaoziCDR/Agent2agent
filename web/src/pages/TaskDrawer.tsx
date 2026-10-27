@@ -49,6 +49,53 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
       return false;
     }
   });
+  // 在交付物上划选文字时，浮出「引用到评论」按钮
+  const drawerRef = useRef<HTMLElement>(null);
+  const [quote, setQuote] = useState<{ text: string; source: string; x: number; y: number } | null>(null);
+  useEffect(() => {
+    let frame = 0;
+    const update = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const sel = document.getSelection();
+        const text = sel && !sel.isCollapsed ? sel.toString().trim() : '';
+        const range = text ? sel!.getRangeAt(0) : null;
+        const node = range?.commonAncestorContainer;
+        const el = node && (node.nodeType === 1 ? (node as Element) : node.parentElement);
+        const art = el?.closest<HTMLElement>('.artifact[data-source]');
+        if (!range || !art || !drawerRef.current?.contains(art)) return setQuote(null);
+        const r = range.getBoundingClientRect();
+        setQuote({ text, source: art.dataset.source!, x: r.left + r.width / 2, y: r.top < 70 ? r.bottom + 44 : r.top });
+      });
+    };
+    document.addEventListener('selectionchange', update);
+    document.addEventListener('scroll', update, true);
+    return () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener('selectionchange', update);
+      document.removeEventListener('scroll', update, true);
+    };
+  }, []);
+  const insertQuote = () => {
+    if (!quote) return;
+    const body = quote.text
+      .slice(0, 2000)
+      .split('\n')
+      .map((l) => (l.trim() ? `> ${l}` : '>'))
+      .join('\n');
+    const block = `> **引自${quote.source}**\n${body}\n\n`;
+    setComment((c) => (c.trim() ? `${c.replace(/\s*$/, '')}\n\n${block}` : block));
+    setQuote(null);
+    document.getSelection()?.removeAllRanges();
+    setTimeout(() => {
+      const ta = drawerRef.current?.querySelector<HTMLTextAreaElement>('.comment-form textarea');
+      if (!ta) return;
+      ta.focus();
+      ta.setSelectionRange(ta.value.length, ta.value.length);
+      ta.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    });
+  };
+
   const toggleWide = () =>
     setWide((w) => {
       try {
@@ -109,7 +156,7 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
   return (
     <>
       <div className="drawer-mask" onClick={onClose} />
-      <aside className={`drawer${wide ? ' wide' : ''}`} aria-label={`任务 ${id}`}>
+      <aside ref={drawerRef} className={`drawer${wide ? ' wide' : ''}`} aria-label={`任务 ${id}`}>
         <div className="drawer-head">
           <div className="btn-row" style={{ justifyContent: 'space-between' }}>
             <span className="faint">
@@ -234,9 +281,11 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
 
               {t.artifacts.length > 0 && (
                 <div className="section">
-                  <h4>交付物</h4>
+                  <h4>
+                    交付物<span className="h4-hint">划选文字可以引用到评论</span>
+                  </h4>
                   {t.artifacts.map((a) => (
-                    <div key={a.id} className="artifact">
+                    <div key={a.id} className="artifact" data-source={`「${a.name}」（${a.author}）`}>
                       <div className="faint artifact-meta">
                         {a.name} · {a.author} · {clock(a.created_at)}
                       </div>
@@ -416,6 +465,17 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
               )}
             </div>
           </div>
+        )}
+        {quote && (
+          <button
+            className="btn small primary quote-btn"
+            style={{ left: Math.min(Math.max(quote.x, 70), window.innerWidth - 70), top: quote.y }}
+            // 按下时不让浏览器清掉选区
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={insertQuote}
+          >
+            引用到评论
+          </button>
         )}
       </aside>
 
