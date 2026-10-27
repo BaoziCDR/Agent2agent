@@ -14,8 +14,10 @@ export interface RunOptions {
   cwd: string;
   /** 每小时最多唤起几次 */
   maxRunsPerHour: number;
-  /** 单次运行的最长时间（分钟），超时结束进程 */
+  /** 单次运行的硬上限（分钟），无论有没有动静都会结束进程 */
   timeoutMinutes: number;
+  /** 多少分钟既没有输出、也没有在 Hub 上留下动态，就认为卡住并结束进程；有动静就自动续期 */
+  idleMinutes: number;
   /** 有新事件后等几秒再检查，把短时间内的多条事件合并成一次唤起 */
   debounceSeconds: number;
   /** 任务池里出现可领取的新任务时也唤起 */
@@ -50,7 +52,8 @@ const log = (msg: string) => console.log(`[${new Date().toLocaleTimeString('zh-C
 /** 默认参数：让 harness 能在工作目录里改文件，并能运行 ahub 访问 Hub。 */
 export function harnessCommand(opts: RunOptions, resume: RunState): { cmd: string; args: string[] } {
   if (opts.harness === 'claude') {
-    const args = ['-p', '--output-format', 'json'];
+    // stream-json 边跑边输出，值守进程才能据此判断它还在干活；最后一行仍是带 session_id 的结果
+    const args = ['-p', '--output-format', 'stream-json', '--verbose'];
     if (!opts.newSession && resume.claude_session) args.push('--resume', resume.claude_session);
     args.push(...(opts.harnessArgs ?? ['--permission-mode', 'acceptEdits', '--allowedTools', 'Bash(ahub:*)']));
     return { cmd: 'claude', args };
@@ -110,6 +113,8 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
   const runs: number[] = [];
   let stopping = false;
   let paused = false; // 负责人在控制台暂停了值守
+  let stopChild: () => void = () => {}; // 退出值守时顺带结束正在运行的 harness
+  let touch: () => void = () => {}; // 运行中的 harness 有动静时调用，推迟空闲超时
 
   const api = async (method: string, path: string, body?: unknown) => {
     const res = await fetch(cfg.hub + path, {
@@ -184,6 +189,7 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
     const out = createWriteStream(logFile);
     out.write(`$ ${cmd} ${args.join(' ')}\n\n${prompt}\n\n----\n`);
     let stdout = '';
+    let killed = '';
     const code = await new Promise<number | null>((done) => {
       const child = spawn(cmd, args, {
         cwd,
@@ -191,28 +197,56 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
         // Windows 上 codex/claude 是 .cmd 脚本，需要经过 shell；参数里没有用户文本，提示词走标准输入
         shell: opts.harness === 'custom' || process.platform === 'win32',
         stdio: ['pipe', 'pipe', 'pipe'],
+        // 单独一个进程组，结束时连同它拉起的子进程一起结束，否则子进程占着输出管道，运行一直收不了尾
+        detached: process.platform !== 'win32',
       });
-      const kill = setTimeout(() => {
-        log(`运行超过 ${opts.timeoutMinutes} 分钟，结束进程`);
-        child.kill('SIGTERM');
-      }, opts.timeoutMinutes * 60_000);
+      const killTree = (sig: NodeJS.Signals) => {
+        if (!child.pid || child.exitCode !== null) return;
+        try {
+          if (process.platform === 'win32') spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+          else process.kill(-child.pid, sig);
+        } catch {
+          child.kill(sig);
+        }
+      };
+      stopChild = () => killTree('SIGTERM');
+      let last = Date.now();
+      touch = () => {
+        last = Date.now();
+      };
+      const started = last;
+      const watch = setInterval(() => {
+        const now = Date.now();
+        if (now - started >= opts.timeoutMinutes * 60_000) killed = `运行达到单次上限 ${opts.timeoutMinutes} 分钟，已结束`;
+        else if (now - last >= opts.idleMinutes * 60_000) killed = `${opts.idleMinutes} 分钟没有任何输出或 Hub 动态，判断为卡住，已结束`;
+        else return;
+        log(killed);
+        clearInterval(watch);
+        killTree('SIGTERM');
+        setTimeout(() => killTree('SIGKILL'), 10_000).unref();
+      }, Math.min(30_000, opts.idleMinutes * 30_000));
       child.stdout.on('data', (d: Buffer) => {
+        touch();
         stdout += d.toString();
         out.write(d);
       });
-      child.stderr.on('data', (d: Buffer) => out.write(d));
+      child.stderr.on('data', (d: Buffer) => {
+        touch();
+        out.write(d);
+      });
       child.on('error', (err) => {
         out.write(`\n启动失败：${err.message}\n`);
         log(`启动 ${cmd} 失败：${err.message}`);
       });
       child.on('close', (c) => {
-        clearTimeout(kill);
+        clearInterval(watch);
+        touch = () => {};
+        stopChild = () => {};
         done(c);
       });
       child.stdin.on('error', () => undefined);
       child.stdin.end(prompt);
     });
-    out.end();
     let summary = '';
     if (opts.harness === 'claude') {
       try {
@@ -227,8 +261,13 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
       }
     }
     summary = (summary || stdout).trim().split('\n').filter(Boolean).pop() ?? '';
+    if (killed) {
+      out.write(`\n----\n${killed}\n`);
+      summary = `${killed}。${summary}`.slice(0, 2000);
+    }
+    out.end();
     log(`${code === 0 ? '完成' : `退出码 ${code}`}，日志：${logFile}`);
-    await report('idle', code === 0 ? summary.slice(0, 200) : `运行失败（退出码 ${code}），详见本机日志`);
+    await report('idle', code === 0 ? summary.slice(0, 200) : killed || `运行失败（退出码 ${code}），详见本机日志`);
     await api('POST', '/api/v1/me/runs', {
       harness: opts.harness,
       trigger: note,
@@ -290,7 +329,10 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
             const data = lines.find((l) => l.startsWith('data: '));
             if (!data) continue;
             if (lines.includes('event: agent.control')) control(data.slice(6));
-            else schedule();
+            else {
+              touch(); // harness 在 Hub 上上报进度、评论等也算有动静
+              schedule();
+            }
           }
         }
         log('连接断开，准备重连');
@@ -306,13 +348,14 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
   const stop = () => {
     if (stopping) process.exit(0);
     stopping = true;
+    stopChild();
     log('正在退出（再按一次 Ctrl+C 强制退出）');
     void report('stopped', '').finally(() => process.exit(0));
   };
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
 
-  log(`值守模式启动：${cfg.name ?? ''}（${cfg.agent ?? ''}）→ ${cfg.hub}，工作目录 ${cwd}，唤起 ${opts.harness}`);
+  log(`值守模式启动：${cfg.name ?? ''}（${cfg.agent ?? ''}）→ ${cfg.hub}，工作目录 ${cwd}，唤起 ${opts.harness}，空闲 ${opts.idleMinutes} 分钟无动静或运行满 ${opts.timeoutMinutes} 分钟结束`);
   try {
     paused = !!((await api('GET', '/api/v1/me')) as { daemon_paused?: boolean }).daemon_paused;
     if (paused) log('负责人在控制台暂停了值守，恢复前不会唤起');
