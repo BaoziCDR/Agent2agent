@@ -1,9 +1,10 @@
 import { spawn } from 'node:child_process';
-import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import type { CliConfig } from './config.js';
 import { AuthError, identityCode, isDeadIdentity, isFinal, openSession, releaseSession } from './auth.js';
+import { cleanup, codexHookArgs, deliveredSeqs, hookCommand, probeCodexHookTrust, queueItems, writeClaudeSettings } from './interject.js';
 import { type JudgeMode, applyVerdict, judgePrompt, runJudge, shouldJudge } from './judge.js';
 import {
   type SessionDecision,
@@ -48,8 +49,17 @@ export interface RunOptions {
   cacheTtlMinutes?: number;
   /** 规则打分落在灰区时交给小模型判断：off 不用，gray 只在灰区（默认），always 有候选会话就判断 */
   judge: { mode: JudgeMode; model?: string; timeoutSeconds: number };
+  /** 运行中来了新评论、@、私信时，通过 harness 的 PostToolUse 钩子在下一次工具调用后带进去；关掉就等这一轮结束再唤起 */
+  interject: boolean;
   /** 只打印将要执行的命令，不真正唤起 */
   dryRun: boolean;
+}
+
+/** 给 harness 装上插话钩子要用的东西：钩子命令、Claude 的设置文件、Codex 跳过钩子信任的参数放在哪 */
+export interface HookSetup {
+  command: string;
+  settingsFile?: string;
+  codexTrust?: 'exec' | 'root';
 }
 
 interface HubEvent {
@@ -115,11 +125,12 @@ export function codexRolloutUsage(id: string, home = process.env.CODEX_HOME || j
 const log = (msg: string) => console.log(`[${new Date().toLocaleTimeString('zh-CN', { hour12: false })}] ${msg}`);
 
 /** 默认参数：让 harness 能在工作目录里改文件，并能运行 ahub 访问 Hub。 */
-export function harnessCommand(opts: RunOptions, resumeId?: string): { cmd: string; args: string[] } {
+export function harnessCommand(opts: RunOptions, resumeId?: string, hook?: HookSetup): { cmd: string; args: string[] } {
   if (opts.harness === 'claude') {
     // stream-json 边跑边输出，值守进程才能据此判断它还在干活；最后一行仍是带 session_id 的结果
     const args = ['-p', '--output-format', 'stream-json', '--verbose'];
     if (resumeId) args.push('--resume', resumeId);
+    if (hook?.settingsFile) args.push('--settings', hook.settingsFile);
     args.push(...(opts.harnessArgs ?? ['--permission-mode', 'acceptEdits', '--allowedTools', 'Bash(ahub:*)']));
     return { cmd: 'claude', args };
   }
@@ -127,6 +138,12 @@ export function harnessCommand(opts: RunOptions, resumeId?: string): { cmd: stri
     // codex exec 默认只读沙箱且不能联网；放开工作目录写入和网络，才能运行 ahub
     // --json 输出事件流，才能拿到会话号；续用时用 exec resume <会话号>
     const args = ['exec', '--json'];
+    if (hook?.codexTrust) {
+      // 钩子是值守进程临时生成的，不会提前在 /hooks 里信任过，只能对这一次运行跳过信任检查
+      if (hook.codexTrust === 'root') args.unshift('--dangerously-bypass-hook-trust');
+      else args.push('--dangerously-bypass-hook-trust');
+      args.push(...codexHookArgs(hook.command));
+    }
     args.push(...(opts.harnessArgs ?? ['--sandbox', 'workspace-write', '-c', 'sandbox_workspace_write.network_access=true', '--skip-git-repo-check']));
     if (resumeId) args.push('resume', resumeId);
     args.push('-'); // 从标准输入读提示词
@@ -237,6 +254,39 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
   let again = false;
   let timer: NodeJS.Timeout | null = null;
   const runs: number[] = [];
+  // 运行中插话：Codex 要较新的版本才有钩子，启动时先确认；Windows 上 Codex 要经过 shell，内联配置的引号保不住，先不启用
+  const codexTrust = opts.interject && opts.harness === 'codex' && process.platform !== 'win32' ? (opts.dryRun ? 'exec' : probeCodexHookTrust()) : null;
+  const canInterject = opts.interject && (opts.harness === 'claude' || !!codexTrust);
+  if (opts.interject && opts.harness === 'codex' && !codexTrust) log('本机的 Codex 不支持钩子（或在 Windows 上），运行中来的新事项会等这一轮结束再处理');
+  let spool = ''; // 正在运行的 harness 的待投递文件
+  const queued = new Set<number>(); // 已经写进待投递文件的事项
+  const delivered = new Set<number>(); // 已经送到正在运行的 harness 的事项，之后不再为它们唤起
+
+  /** harness 运行中有新事项：写进待投递文件，等它下一次调用工具时由钩子带进去 */
+  const feed = async () => {
+    const file = spool;
+    if (!file) return;
+    let inbox: Inbox;
+    try {
+      inbox = (await api('GET', '/api/v1/inbox')) as Inbox;
+    } catch {
+      return; // 读不到就等这一轮结束后照常唤起
+    }
+    const items = inbox.needs_action.filter((e) => e.seq > handled && !queued.has(e.seq));
+    if (file !== spool || !items.length) return;
+    queueItems(file, items.map((e) => ({ seq: e.seq, summary: e.summary })));
+    for (const e of items) queued.add(e.seq);
+    log(`运行中来了 ${items.length} 条新事项，等 harness 下一次调用工具时带进去`);
+  };
+  /** 看钩子取走了哪些事项：打上 👌，算作这一轮已经处理 */
+  const collect = async (file: string) => {
+    const fresh = deliveredSeqs(file).filter((seq) => !delivered.has(seq));
+    if (!fresh.length) return;
+    for (const seq of fresh) delivered.add(seq);
+    touch();
+    log(`已把 ${fresh.length} 条新事项送到正在运行的 harness`);
+    await api('POST', '/api/v1/me/receipts', { state: 'working', seqs: fresh }).catch(() => undefined);
+  };
   let stopping = false;
   let paused = false; // 负责人在控制台暂停了值守
   let pickup = true; // 启动和恢复后的第一次检查：接手指派给自己的、进行中的和可领取的任务
@@ -265,6 +315,7 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
   const check = async (force = false) => {
     if (running) {
       again = true;
+      void feed();
       return;
     }
     if (paused) return; // 恢复后会重新检查，积压的事项不会丢
@@ -275,7 +326,8 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
       log(`读取收件箱失败：${(err as Error).message}`);
       return;
     }
-    const reasons = inbox.needs_action.filter((e) => e.seq > handled);
+    for (const seq of delivered) if (seq <= handled) delivered.delete(seq);
+    const reasons = inbox.needs_action.filter((e) => e.seq > handled && !delivered.has(e.seq));
     const fresh = new Set(inbox.events.filter((e) => e.seq > handled && e.task).map((e) => e.task));
     const open: OpenTask[] = opts.wakeOnOpen ? inbox.claimable.filter((t) => fresh.has(t.id)) : [];
     const pickingUp = pickup;
@@ -393,7 +445,14 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
 
   const attempt = async (reasons: HubEvent[], open: OpenTask[], note: string, tasks: string[], resumeId: string | undefined, why: string) => {
     const prompt = buildPrompt(cfg, reasons, open, !!resumeId);
-    const { cmd, args } = harnessCommand(opts, resumeId);
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    let hook: HookSetup | undefined;
+    let file = '';
+    if (canInterject) {
+      file = join(logDir, 'interject', `${stamp}.jsonl`);
+      hook = { command: hookCommand(file), settingsFile: opts.harness === 'claude' ? file.replace(/\.jsonl$/, '.settings.json') : undefined, codexTrust: codexTrust ?? undefined };
+    }
+    const { cmd, args } = harnessCommand(opts, resumeId, hook);
     if (opts.dryRun) {
       log(`（试运行）${cmd} ${args.join(' ')}\n${prompt}`);
       return 'ok';
@@ -407,7 +466,11 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
     }).catch(() => undefined);
     const startedAt = new Date().toISOString();
     mkdirSync(logDir, { recursive: true });
-    const logFile = join(logDir, `${new Date().toISOString().replace(/[:.]/g, '-')}.log`);
+    const logFile = join(logDir, `${stamp}.log`);
+    if (hook) {
+      mkdirSync(dirname(file), { recursive: true });
+      if (hook.settingsFile) writeClaudeSettings(hook.settingsFile, hook.command);
+    }
     const out = createWriteStream(logFile);
     out.write(`$ ${cmd} ${args.join(' ')}\n# 会话：${why || '—'}\n\n${prompt}\n\n----\n`);
     let stdout = '';
@@ -432,6 +495,12 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
         }
       };
       stopChild = () => killTree('SIGTERM');
+      if (file) {
+        spool = file;
+        queued.clear();
+        void feed(); // 准备会话期间来的事项也带进去
+      }
+      const pick = file ? setInterval(() => void collect(file), 3000) : undefined;
       let last = Date.now();
       touch = () => {
         last = Date.now();
@@ -462,6 +531,7 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
       });
       child.on('close', (c) => {
         clearInterval(watch);
+        clearInterval(pick);
         touch = () => {};
         stopChild = () => {};
         done(c);
@@ -469,6 +539,13 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
       child.stdin.on('error', () => undefined);
       child.stdin.end(prompt);
     });
+    if (file) {
+      // 没送到的事项留在文件里，删掉文件后下一轮照常唤起
+      await collect(file);
+      spool = '';
+      cleanup(file);
+      if (hook?.settingsFile) rmSync(hook.settingsFile, { force: true });
+    }
     const parsed: Parsed = opts.harness === 'claude' ? parseClaudeOutput(stdout) : opts.harness === 'codex' ? parseCodexOutput(stdout) : {};
     let summary = parsed.result ?? '';
     // Codex 的输出是事件流，取不到总结时不拿原始 JSON 充数
