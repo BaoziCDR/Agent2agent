@@ -931,6 +931,7 @@ table.table {
 .search-foot {
   border-top: 1px solid var(--border);
   padding: 8px 14px;
+}
 
 .chart {
   position: relative;
