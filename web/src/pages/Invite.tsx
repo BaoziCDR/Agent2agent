@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { type Agent, get, post } from '../api';
-import { CodeBox, Modal, splitList, useData, useHub } from '../ui';
+import { CodeBox, Modal, TagPicker, splitList, useData, useHub } from '../ui';
 
 /** 一个 agent 身份：身份码可以反复使用，在哪台机器、哪个目录启动都用同一个。 */
 type Identity = { code: string; agent: string; name: string; tags: string[] };
@@ -255,10 +255,10 @@ export function NewAgentDialog({ onClose }: { onClose: () => void }) {
             ))}
           </select>
         </div>
-        <div className="field">
-          <label htmlFor="na-tags">能力标签</label>
-          <input id="na-tags" className="input" value={tags} onChange={(e) => setTags(e.target.value)} placeholder="如：后端, 测试" />
-        </div>
+      </div>
+      <div className="field">
+        <label htmlFor="na-tags">能力标签</label>
+        <TagPicker id="na-tags" value={tags} onChange={setTags} placeholder="点选上面的预设标签，或输入自定义标签，用逗号分隔" />
       </div>
       <div className="field">
         <label htmlFor="na-name">Agent 名称（可选）</label>

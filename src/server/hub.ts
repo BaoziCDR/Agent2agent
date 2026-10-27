@@ -17,6 +17,9 @@ import {
   TIERS,
 } from '../shared/model.js';
 
+/** 预设标签的默认值，负责人可以在设置里改 */
+export const DEFAULT_PRESET_TAGS = ['前端', '后端', '移动端', '测试', '文档', '设计', '运维', '数据'];
+
 export class HubError extends Error {
   constructor(
     public status: number,
@@ -1096,6 +1099,7 @@ export class Hub {
         .prepare(`SELECT * FROM tasks WHERE project_id = ? AND status = 'open' ORDER BY priority, num`)
         .all(m.project_id) as unknown as TaskRow[];
       for (const t of rows) {
+        if (this.isTagging(t.id)) continue;
         if (!this.tagsMatch(t, [...tags, ...skills])) continue;
         if (!this.depsDone(t)) continue;
         out.push(t);
@@ -1192,6 +1196,93 @@ export class Hub {
       }
       return { ok: true as const, task: code, remaining };
     });
+  }
+
+  // ───────────── 标签 ─────────────
+
+  /** 自动打标签进行中的任务：先不放进可领取列表，免得在打上标签前就被不合适的 agent 领走 */
+  private tagging = new Map<number, number>();
+
+  holdForTagging(taskId: number, ms = 30_000) {
+    this.tagging.set(taskId, this.now().getTime() + ms);
+  }
+
+  releaseTagging(taskId: number) {
+    this.tagging.delete(taskId);
+  }
+
+  private isTagging(taskId: number) {
+    const until = this.tagging.get(taskId);
+    if (until === undefined) return false;
+    if (until > this.now().getTime()) return true;
+    this.tagging.delete(taskId);
+    return false;
+  }
+
+  /** 创建 agent（邀请码）时可选的预设标签；负责人在设置里维护 */
+  presetTags(): string[] {
+    const row = this.db.prepare("SELECT value FROM settings WHERE key = 'preset_tags'").get() as { value: string } | undefined;
+    return row ? json<string[]>(row.value, []) : DEFAULT_PRESET_TAGS;
+  }
+
+  setPresetTags(tags: string[]): string[] {
+    const clean = [...new Set(tags.map((t) => String(t).trim()).filter(Boolean))].slice(0, 50);
+    if (clean.some((t) => t.length > 20)) throw invalid('每个标签最多 20 个字');
+    this.db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('preset_tags', ?)").run(JSON.stringify(clean));
+    return clean;
+  }
+
+  taskRowId(code: string) {
+    return this.requireTask(code).id;
+  }
+
+  /** 预设标签和已经在用的标签（agent 的能力标签、任务要求的标签），给控制台的标签选择器用 */
+  tagOptions(): { presets: string[]; in_use: string[] } {
+    const used = new Set<string>();
+    for (const r of this.db.prepare('SELECT tags FROM memberships').all() as { tags: string }[]) for (const t of json<string[]>(r.tags, [])) used.add(t);
+    for (const r of this.db.prepare("SELECT skills FROM agents WHERE status = 'active'").all() as { skills: string }[]) for (const t of json<string[]>(r.skills, [])) used.add(t);
+    for (const r of this.db.prepare("SELECT required_tags FROM tasks WHERE required_tags != '[]'").all() as { required_tags: string }[])
+      for (const t of json<string[]>(r.required_tags, [])) used.add(t);
+    const presets = this.presetTags();
+    return { presets, in_use: [...used].filter((t) => !presets.includes(t)).sort() };
+  }
+
+  /** 项目里有 agent 具备的能力标签和人数：自动打标签只从这里选，保证打上的标签有人能领 */
+  memberTags(projectId: number): Map<string, number> {
+    const out = new Map<string, number>();
+    const rows = this.db
+      .prepare("SELECT m.tags, a.skills FROM memberships m JOIN agents a ON a.id = m.agent_id WHERE m.project_id = ? AND a.status = 'active'")
+      .all(projectId) as { tags: string; skills: string }[];
+    for (const r of rows) for (const t of new Set([...json<string[]>(r.tags, []), ...json<string[]>(r.skills, [])])) out.set(t, (out.get(t) ?? 0) + 1);
+    return out;
+  }
+
+  /** 自动打标签的结果：任务还没被人手动打过标签时才写入；没有合适的标签也发一条动态，让值守进程重新检查 */
+  applyAutoTags(code: string, tags: string[], reason: string, failed?: string) {
+    const t = this.requireTask(code);
+    this.releaseTagging(t.id);
+    const allowed = this.memberTags(t.project_id);
+    const pick = [...new Set(tags)].filter((x) => allowed.has(x)).slice(0, 3);
+    const untouched = t.required_tags === '[]' && (t.status === 'open' || t.status === 'draft');
+    // 这期间负责人已经手动打了标签，或任务已经被领走：不再改动
+    if (!untouched) return this.taskView(t);
+    this.write(() => {
+      if (pick.length) {
+        this.db.prepare('UPDATE tasks SET required_tags = ?, updated_at = ?, version = version + 1 WHERE id = ?').run(JSON.stringify(pick), this.iso(), t.id);
+      }
+      const updated = this.taskById(t.id);
+      this.emit('task.updated', 'owner', {
+        task: updated,
+        audience: t.status === 'draft' ? [] : null,
+        data: { fields: pick.length ? ['required_tags'] : [], auto_tags: pick, reason, ...(failed ? { error: failed } : {}) },
+        summary: failed
+          ? `自动给 ${code} 打标签失败（${excerpt(failed)}），先不限定能力标签`
+          : pick.length
+            ? `自动给 ${code} 打了能力标签：${pick.join('、')}${reason ? `（${excerpt(reason)}）` : ''}`
+            : `${code} 不需要特定能力标签，所有项目成员都可以领取`,
+      });
+    });
+    return this.taskView(this.taskById(t.id));
   }
 
   private tagsMatch(t: TaskRow, tags: string[]) {

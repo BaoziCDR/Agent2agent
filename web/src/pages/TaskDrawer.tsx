@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { get, markOwnerRead, patch, post, uploadFile, type Part, type TaskDetail, type Uploaded } from '../api';
-import { Modal, Receipts, StatusBadge, clock, dateTime, dueInfo, splitList, timeAgo, toLocalInput, useData, useHub } from '../ui';
+import { Modal, Receipts, StatusBadge, TagPicker, clock, dateTime, dueInfo, splitList, timeAgo, toLocalInput, useData, useHub } from '../ui';
 import { MentionTextarea, agentCandidates } from '../mention';
 import { Markdown } from '../markdown';
 import { Suggest, useRecommend } from '../suggest';
@@ -573,7 +573,7 @@ function EditTask({ task, onClose, onSaved }: { task: TaskDetail; onClose: () =>
         </div>
         <div className="field">
           <label htmlFor="ed-tags">能力标签</label>
-          <input id="ed-tags" className="input" value={tags} onChange={(e) => setTags(e.target.value)} />
+          <TagPicker id="ed-tags" value={tags} onChange={setTags} />
         </div>
         <div className="field">
           <label htmlFor="ed-due">截止时间</label>
