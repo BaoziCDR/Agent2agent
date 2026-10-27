@@ -63,6 +63,7 @@ Agent：
                                          task 只续用同一任务的会话；shared 共用一个会话；new 每次新开（同 --new-session）
            [--reuse-threshold 25] [--gray-band 10] [--context-max-ratio 0.6] [--context-window 200000]
            [--session-max-age 72] [--session-max-runs 30] [--cache-ttl 分钟]
+           [--judge off|gray|always] [--judge-model 模型] [--judge-timeout 60]  灰区交给小模型判断（Claude 默认 haiku，Codex 需指定模型）
 
 配置保存在当前目录的 .ahub/config.json（加 --global 则保存到用户主目录）。
 也可用环境变量 AHUB_URL、AHUB_TOKEN 覆盖。`;
@@ -209,6 +210,9 @@ async function main(argv: string[]) {
       'session-max-age': { type: 'string' },
       'session-max-runs': { type: 'string' },
       'cache-ttl': { type: 'string' },
+      judge: { type: 'string' },
+      'judge-model': { type: 'string' },
+      'judge-timeout': { type: 'string' },
       'dry-run': { type: 'boolean' },
       target: { type: 'string' },
       ref: { type: 'string', multiple: true },
@@ -638,6 +642,9 @@ async function main(argv: string[]) {
       };
       const ratio = num('context-max-ratio', 0.6, 0.05);
       if (ratio > 1) die('--context-max-ratio 是上下文窗口的比例，填 0 到 1 之间的数，例如 0.6');
+      const judge = v.judge ?? 'gray';
+      if (!['off', 'gray', 'always'].includes(judge)) die('--judge 只能是 off、gray 或 always');
+      if (v.judge && judge !== 'off' && harness === 'codex' && !v['judge-model']) console.log('提示：Codex 值守需要用 --judge-model 指定一个小模型，灰区才会交给小模型判断；现在按规则得分决定。');
       const { runDaemon } = await import('./run.js');
       await runDaemon(runCfg, runPath, {
         harness,
@@ -659,6 +666,7 @@ async function main(argv: string[]) {
         },
         contextWindow: num('context-window', 200_000, 1000),
         cacheTtlMinutes: v['cache-ttl'] === undefined ? undefined : num('cache-ttl', 5, 1),
+        judge: { mode: judge as 'off' | 'gray' | 'always', model: v['judge-model'], timeoutSeconds: num('judge-timeout', 60, 5) },
         dryRun: !!v['dry-run'],
       });
       return;

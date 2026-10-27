@@ -229,3 +229,50 @@ test('提示词：续用时只给新事项，新开时提醒先读工作笔记',
   assert.match(full, /这是一个新会话/);
   assert.match(full, /1\. 先运行 `ahub inbox`/);
 });
+
+test('小模型判断：只在灰区、有候选会话时判断，Codex 需指定模型', async () => {
+  const { shouldJudge } = await import('../dist/cli/judge.js');
+  const gray = { action: 'new', session: session(), score: 23, gray: true, reason: 'r', breakdown: ['父子任务 +30'] };
+  const clear = { ...gray, score: 55, gray: false, action: 'reuse' };
+  const none = { action: 'new', gray: false, reason: 'r', breakdown: [] };
+  const o = { mode: 'gray', harness: 'claude', timeoutSeconds: 60 };
+  assert.equal(shouldJudge(gray, o), true);
+  assert.equal(shouldJudge(clear, o), false);
+  assert.equal(shouldJudge(clear, { ...o, mode: 'always' }), true);
+  assert.equal(shouldJudge(none, { ...o, mode: 'always' }), false);
+  assert.equal(shouldJudge(gray, { ...o, mode: 'off' }), false);
+  assert.equal(shouldJudge(gray, { ...o, harness: 'codex' }), false);
+  assert.equal(shouldJudge(gray, { ...o, harness: 'codex', model: 'gpt-mini' }), true);
+});
+
+test('小模型判断：提示词带上会话摘要和打分，能解析 Claude 和 Codex 的回答', async () => {
+  const { judgePrompt, parseVerdict, applyVerdict, judgeCommand } = await import('../dist/cli/judge.js');
+  const d = { action: 'new', session: session({ summary: '写完了首页初稿' }), score: 23, gray: true, reason: '最相关的会话得分 23', breakdown: ['P1-T2 的父子任务 P1-T1 +30', '空闲 1 小时 -2'] };
+  const prompt = judgePrompt(d, ['负责人把 P1-T2 指派给了你'], 25, NOW);
+  assert.match(prompt, /写完了首页初稿/);
+  assert.match(prompt, /规则打分：23/);
+  assert.match(prompt, /上下文已用 10%/);
+
+  const claudeOut = JSON.stringify({ type: 'result', result: 'x', structured_output: { decision: 'reuse', reason: '子任务紧接着父任务' } });
+  assert.deepEqual(parseVerdict(claudeOut), { decision: 'reuse', reason: '子任务紧接着父任务' });
+  const codexOut = [
+    JSON.stringify({ type: 'thread.started', thread_id: 't' }),
+    JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: '{"decision":"new","reason":"上下文无关"}' } }),
+  ].join('\n');
+  assert.deepEqual(parseVerdict(codexOut), { decision: 'new', reason: '上下文无关' });
+  assert.equal(parseVerdict('不知道'), null);
+  assert.equal(parseVerdict(JSON.stringify({ type: 'result', structured_output: { decision: 'maybe' } })), null);
+
+  const applied = applyVerdict(d, { decision: 'reuse', reason: '子任务紧接着父任务' });
+  assert.equal(applied.action, 'reuse');
+  assert.match(applied.reason, /小模型判断续用会话 sess-aaa：子任务紧接着父任务；规则得分 23/);
+  const kept = applyVerdict(d, null);
+  assert.equal(kept.action, 'new');
+  assert.match(kept.reason, /按规则处理/);
+
+  const c = judgeCommand({ harness: 'claude', mode: 'gray', timeoutSeconds: 60 }, '/x');
+  assert.deepEqual(c.args.slice(0, 3), ['-p', '--model', 'haiku']);
+  assert.ok(c.args.includes('--json-schema'));
+  const x = judgeCommand({ harness: 'codex', mode: 'gray', model: 'gpt-mini', timeoutSeconds: 60 }, '/s.json');
+  assert.deepEqual(x.args.slice(-3), ['--output-schema', '/s.json', '-']);
+});
