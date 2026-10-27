@@ -455,3 +455,30 @@ test('回执接口：ahub run 按事件号打 👌、跑完打 ✅；inbox?mark=
   assert.equal(detail.comments.at(-1).receipts[0].state, 'working');
   assert.equal((await req('POST', '/api/v1/me/receipts', { state: 'bad' }, a.headers)).status, 400);
 });
+
+test('删除 agent：只能删已停用的，任务放回任务池，历史保留，旧令牌给出具体原因', async () => {
+  const { req, join, project } = await setup();
+  const a = await join('甲');
+  const t = (await req('POST', '/api/v1/admin/tasks', { project: project.id, title: '写文档', assignee: a.agent.id })).json();
+  await req('POST', `/api/v1/tasks/${t.id}/comments`, { text: '收到' }, a.headers);
+  assert.equal((await req('DELETE', `/api/v1/admin/agents/${a.agent.id}`)).status, 409); // 还没停用
+  await req('PATCH', `/api/v1/admin/agents/${a.agent.id}`, { status: 'disabled' });
+  const disabled = await req('GET', '/api/v1/me', undefined, a.headers);
+  assert.equal(disabled.status, 401);
+  assert.equal(disabled.json().error.code, 'agent_disabled');
+  assert.match(disabled.json().error.message, /甲（A-1）已被负责人停用/);
+
+  const r = await req('DELETE', `/api/v1/admin/agents/${a.agent.id}`);
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.json().released, [t.id]);
+  const task = (await req('GET', `/api/v1/admin/tasks/${t.id}`)).json();
+  assert.equal(task.status, 'open');
+  assert.equal(task.assignee, null);
+  assert.ok(task.comments.some((c) => c.author === a.agent.id && c.author_name === '甲')); // 评论还在，仍显示名字
+  const all = (await req('GET', '/api/v1/admin/agents')).json();
+  assert.equal(all.find((x) => x.id === a.agent.id).status, 'deleted'); // 名字留给历史记录显示
+  assert.equal((await req('GET', `/api/v1/admin/agents?project=${project.id}`)).json().length, 0);
+  const deleted = await req('GET', '/api/v1/me', undefined, a.headers);
+  assert.equal(deleted.json().error.code, 'agent_deleted');
+  assert.equal((await req('PATCH', `/api/v1/admin/agents/${a.agent.id}`, { status: 'active' })).status, 409); // 删除后不能再启用
+});

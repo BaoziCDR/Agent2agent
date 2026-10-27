@@ -6,7 +6,7 @@ export function Overview() {
   const { project, projects, agents, events, openTask, go, refresh } = useHub();
   const { data, reload } = useData(() => get<OverviewData>(`/overview${project ? `?project=${project}` : ''}`), [project]);
   const scopeName = project ? projects.find((p) => p.id === project)?.name : '全部项目';
-  const scopedAgents = project ? agents.filter((a) => a.projects.some((p) => p.id === project)) : agents;
+  const scopedAgents = project ? agents.filter((a) => a.projects.some((p) => p.id === project)) : agents.filter((a) => a.status !== 'deleted');
   // 只看面向全体或负责人的事件；发给某个 agent 的定向事件（如「指派给了你」）在实时动态页里看
   const feed = events
     .filter((e) => (!project || e.project === project || e.project === null) && (e.type === 'task.overdue' || !(e.audience && e.audience.length > 0)))

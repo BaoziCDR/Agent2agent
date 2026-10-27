@@ -1,21 +1,38 @@
 import { useEffect, useState } from 'react';
-import { del, get, type Invite as InviteData, post } from '../api';
+import { type Agent, del, get, type Invite as InviteData, post } from '../api';
 import { CodeBox, Modal, agentLabel, clock, splitList, useData, useHub } from '../ui';
 
-function harnessPrompt(hub: string, code: string, platform: string, name: string, tags: string[], resident = false) {
-  const dir = platform === 'codex' ? '.codex/skills/ahub-collab' : '.claude/skills/ahub-collab';
-  const join = `ahub join --hub ${hub} --invite ${code} --name "${name || '<你的名字>'}" --platform ${platform}${tags.length ? ` --tags ${tags.join(',')}` : ''}`;
-  return `请加入我的多 Agent 协作中枢（Hub），按它的规则领取任务、汇报进度、和其他 agent 协作。
+/** 用邀请码加入新身份，或者（code 为空）用工作目录里已有的身份重新启动。 */
+type Identity = { code: string; name: string; tags: string[] } | { code: null; name: string; agent: string };
+
+const skillDir = (platform: string) => (platform === 'codex' ? '.codex/skills/ahub-collab' : '.claude/skills/ahub-collab');
+
+function harnessPrompt(hub: string, id: Identity, platform: string, resident = false) {
+  const dir = skillDir(platform);
+  const steps =
+    id.code !== null
+      ? `请加入我的多 Agent 协作中枢（Hub），按它的规则领取任务、汇报进度、和其他 agent 协作。
 
 1. 安装命令行工具 ahub（已安装可跳过；Hub 升级后重新运行一次即可更新）：
    npm install -g ${hub}/ahub.tgz
-2. 在当前工作目录加入项目${name ? `（你的名字已经定好：${name}）` : '（把 <你的名字> 换成你自己起的名字：简短、能看出你的平台和分工）'}：
-   ${join}
+2. 在当前工作目录加入项目${id.name ? `（你的名字已经定好：${id.name}）` : '（把 <你的名字> 换成你自己起的名字：简短、能看出你的平台和分工）'}：
+   ahub join --hub ${hub} --invite ${id.code} --name "${id.name || '<你的名字>'}" --platform ${platform}${id.tags.length ? ` --tags ${id.tags.join(',')}` : ''}
 3. 阅读接入说明：优先使用本地已安装的 ahub-collab skill（${dir}/SKILL.md）；没有的话运行
    ahub skill install
-   安装（skill 内置在 ahub 里，版本与 ahub 一致），然后阅读它。也可以用 ahub skill show 直接查看。
+   安装（skill 内置在 ahub 里，版本与 ahub 一致），然后阅读它。也可以用 ahub skill show 直接查看。`
+      : `你是我的多 Agent 协作中枢（Hub）里的 agent ${id.name}（${id.agent}），之前的会话已经关掉，现在接着以这个身份工作。
+
+1. 确认 ahub 是最新的（Hub 升级后需要更新）：
+   npm install -g ${hub}/ahub.tgz
+2. 确认身份：在原来的工作目录（有 .ahub/config.json 的那个目录）运行
+   ahub whoami
+   显示的应该是 ${id.name}（${id.agent}）。提示找不到配置、身份不对或已被停用时，停下来告诉我，不要自己重新加入。
+3. 重新阅读接入说明：本地的 ahub-collab skill（${dir}/SKILL.md），先运行 ahub skill update 更新到当前版本；没有的话运行 ahub skill install。也可以用 ahub skill show 直接查看。`;
+  return `${steps}
 4. 运行 ahub inbox 同步收件箱，然后按接入说明里的「每轮工作循环」工作：
-   每轮开始先 ahub inbox；只做已领取或已接受的任务；每轮结束前 ahub progress 上报进度和工作笔记。
+   每轮开始先 ahub inbox；只做已领取或已接受的任务；每轮结束前 ahub progress 上报进度和工作笔记。${
+     id.code === null ? '\n   手上已有进行中的任务时，先 ahub task <任务> 读工作笔记，从上次停下的地方接着做。' : ''
+   }
 ${
     resident
       ? `5. 常驻待命：这个会话要一直开着接任务。手上没有可做的事时，运行 ahub wait --resident 等待新事件（每次最多 9 分钟）：
@@ -26,10 +43,11 @@ ${
   }`;
 }
 
-/** 在 agent 所在机器的终端直接运行：一步加入并进入值守，收到任务时自动唤起 harness。 */
-function runCommand(hub: string, code: string, harness: 'codex' | 'claude', name: string, tags: string[], bypass: boolean) {
+/** 在 agent 所在机器的终端直接运行：一步加入（或续用工作目录里的身份）并进入值守，收到任务时自动唤起 harness。 */
+function runCommand(hub: string, id: Identity, harness: 'codex' | 'claude', bypass: boolean) {
   const skip = !bypass ? '' : harness === 'claude' ? ' --harness-arg=--dangerously-skip-permissions' : ' --harness-arg=--dangerously-bypass-approvals-and-sandbox --harness-arg=--skip-git-repo-check';
-  return `ahub run --harness ${harness} --hub ${hub} --invite ${code} --name "${name || '<名字>'}"${tags.length ? ` --tags ${tags.join(',')}` : ''}${skip}`;
+  if (id.code === null) return `ahub run --harness ${harness}${skip}`;
+  return `ahub run --harness ${harness} --hub ${hub} --invite ${id.code} --name "${id.name || '<名字>'}"${id.tags.length ? ` --tags ${id.tags.join(',')}` : ''}${skip}`;
 }
 
 function chatPrompt(hub: string, code: string) {
@@ -45,24 +63,44 @@ function chatPrompt(hub: string, code: string) {
 
 /** 接入提示词和值守命令：生成邀请码后显示，邀请码还没用完时也能在「邀请码记录」里再打开。 */
 function InvitePrompts({ invite, hub }: { invite: InviteData; hub: string }) {
-  const [tab, setTab] = useState<'codex' | 'claude' | 'mcp' | 'other'>('codex');
+  return <HarnessPrompts hub={hub} id={{ code: invite.code, name: invite.agent_name, tags: invite.tags }} />;
+}
+
+/** 已加入的 agent 关掉后重新启动用的提示词和命令：续用工作目录里的身份，不需要邀请码。 */
+export function RestartDialog({ agent, onClose }: { agent: Agent; onClose: () => void }) {
+  const { url } = useHubUrl();
+  return (
+    <Modal title={`重新启动 ${agent.name}`} onClose={onClose} wide>
+      <p className="muted" style={{ marginTop: -6 }}>
+        在 {agent.name} 原来的工作目录里打开 agent，把提示词粘贴给它；或者在那个目录的终端运行值守命令。它会续用目录里 .ahub/config.json 保存的身份，不需要新的邀请码。
+      </p>
+      <span className="hint">如果原来的目录已经删掉或配置丢了，就需要生成新的邀请码，让它以新身份加入。</span>
+      {url && <HarnessPrompts hub={url} id={{ code: null, name: agent.name, agent: agent.id }} defaultTab={agent.platform === 'claude-code' ? 'claude' : 'codex'} />}
+    </Modal>
+  );
+}
+
+function HarnessPrompts({ hub, id, defaultTab = 'codex' }: { hub: string; id: Identity; defaultTab?: 'codex' | 'claude' }) {
+  const [tab, setTab] = useState<'codex' | 'claude' | 'mcp' | 'other'>(defaultTab);
   const [bypass, setBypass] = useState(false);
   const [resident, setResident] = useState(false);
-  const tags = invite.tags;
+  const restart = id.code === null;
   const prompts = {
-    codex: harnessPrompt(hub, invite.code, 'codex', invite.agent_name, tags, resident),
-    claude: harnessPrompt(hub, invite.code, 'claude-code', invite.agent_name, tags, resident),
-    other: chatPrompt(hub, invite.code),
+    codex: harnessPrompt(hub, id, 'codex', resident),
+    claude: harnessPrompt(hub, id, 'claude-code', resident),
+    other: id.code === null ? '' : chatPrompt(hub, id.code),
   };
   const run = (harness: 'codex' | 'claude') => (
     <div style={{ marginTop: 14 }}>
       <div className="btn-row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-        <div className="faint">或者在 agent 所在机器的终端运行下面的命令：一步加入并开始值守，收到指派、@、私信时自动唤起 {harness === 'claude' ? 'Claude Code' : 'Codex'}</div>
+        <div className="faint">
+          或者在 agent 所在机器的终端{restart ? '（原来的工作目录）' : ''}运行下面的命令：{restart ? '续用已有身份' : '一步加入'}并开始值守，收到指派、@、私信时自动唤起 {harness === 'claude' ? 'Claude Code' : 'Codex'}
+        </div>
         <label className="faint" style={{ display: 'flex', gap: 4, alignItems: 'center', whiteSpace: 'nowrap' }}>
           <input type="checkbox" checked={bypass} onChange={(e) => setBypass(e.target.checked)} /> 跳过权限确认
         </label>
       </div>
-      <CodeBox text={runCommand(hub, invite.code, harness, invite.agent_name, tags, bypass)} />
+      <CodeBox text={runCommand(hub, id, harness, bypass)} />
       {bypass && <span className="hint">开启后 agent 执行命令、改文件都不再询问，只在你信任的工作目录里使用。</span>}
     </div>
   );
@@ -78,13 +116,21 @@ function InvitePrompts({ invite, hub }: { invite: InviteData; hub: string }) {
         <button className={`tab ${tab === 'mcp' ? 'active' : ''}`} onClick={() => setTab('mcp')}>
           MCP 配置（可选）
         </button>
-        <button className={`tab ${tab === 'other' ? 'active' : ''}`} onClick={() => setTab('other')}>
-          其他 agent
-        </button>
+        {!restart && (
+          <button className={`tab ${tab === 'other' ? 'active' : ''}`} onClick={() => setTab('other')}>
+            其他 agent
+          </button>
+        )}
       </div>
       {(tab === 'codex' || tab === 'claude') && (
         <div className="btn-row" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-          <span className="faint">{resident ? '常驻待命：agent 在这个会话里一直等新任务，适合需要你开着的交互式会话（如 Mac 上用 computer use）' : '粘贴给 agent：它会自己安装 ahub、加入项目，做完手上的事就结束本轮'}</span>
+          <span className="faint">
+            {resident
+              ? '常驻待命：agent 在这个会话里一直等新任务，适合需要你开着的交互式会话（如 Mac 上用 computer use）'
+              : restart
+                ? '粘贴给 agent：它会确认身份、同步收件箱，接着做手上的事，做完就结束本轮'
+                : '粘贴给 agent：它会自己安装 ahub、加入项目，做完手上的事就结束本轮'}
+          </span>
           <label className="faint" style={{ display: 'flex', gap: 4, alignItems: 'center', whiteSpace: 'nowrap' }}>
             <input type="checkbox" checked={resident} onChange={(e) => setResident(e.target.checked)} /> 常驻待命
           </label>
@@ -102,11 +148,13 @@ function InvitePrompts({ invite, hub }: { invite: InviteData; hub: string }) {
           {run('claude')}
         </>
       )}
-      {tab === 'other' && <CodeBox text={prompts.other} />}
+      {tab === 'other' && !restart && <CodeBox text={prompts.other} />}
       {tab === 'mcp' && (
         <div>
           <p className="muted" style={{ marginTop: 0 }}>
-            agent 先用上面的提示词加入（会在工作目录生成 .ahub/config.json），再按下面配置 MCP，就能直接调用 hub_ 工具。
+            {restart
+              ? '已经配置过 MCP 的不用重复配置；没有配置过的在原来的工作目录按下面配置，就能直接调用 hub_ 工具。'
+              : 'agent 先用上面的提示词加入（会在工作目录生成 .ahub/config.json），再按下面配置 MCP，就能直接调用 hub_ 工具。'}
           </p>
           <div className="faint">Claude Code（在工作目录运行）</div>
           <CodeBox text="claude mcp add ahub -- ahub mcp" />

@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { type Agent, get, patch, post, type Run } from '../api';
-import { InviteDialog, InviteList } from './Invite';
+import { type Agent, del, get, patch, post, type Run } from '../api';
+import { InviteDialog, InviteList, RestartDialog } from './Invite';
 import { CodeBox, Modal, PLATFORM_LABEL, PRESENCE_LABEL, dateTime, presence, timeAgo, useData, useHub } from '../ui';
 
 const duration = (r: Run) => {
@@ -20,6 +20,7 @@ export function Agents({ startInvite = false }: { startInvite?: boolean }) {
   const { agents, project, toast, refresh, openTask, go } = useHub();
   const [token, setToken] = useState<{ agent: Agent; token: string } | null>(null);
   const [runsOf, setRunsOf] = useState<Agent | null>(null);
+  const [restartOf, setRestartOf] = useState<Agent | null>(null);
   const [tab, setTab] = useState<'members' | 'invites'>('members');
   const [inviting, setInviting] = useState(startInvite);
   const [inviteVersion, setInviteVersion] = useState(0);
@@ -37,12 +38,26 @@ export function Agents({ startInvite = false }: { startInvite?: boolean }) {
       toast((err as Error).message, true);
     }
   };
-  const list = project ? agents.filter((a) => a.projects.some((p) => p.id === project)) : agents;
+  // 删除了的 agent 只为历史任务和评论保留名字，不再列为成员
+  const members = agents.filter((a) => a.status !== 'deleted');
+  const list = project ? members.filter((a) => a.projects.some((p) => p.id === project)) : members;
 
   const toggle = async (a: Agent) => {
     try {
       await patch(`/agents/${a.id}`, { status: a.status === 'active' ? 'disabled' : 'active' });
       toast(a.status === 'active' ? `已停用 ${a.name}` : `已启用 ${a.name}`);
+      refresh();
+    } catch (err) {
+      toast((err as Error).message, true);
+    }
+  };
+
+  const remove = async (a: Agent) => {
+    const tasks = a.active_tasks.length ? `\n它手上的 ${a.active_tasks.join('、')} 中未提交的会放回任务池。` : '';
+    if (!confirm(`删除 ${a.name}（${a.id}）？\n它的令牌永久失效，不再出现在成员列表里；做过的任务、评论和交付物都保留，仍显示它的名字。${tasks}`)) return;
+    try {
+      const r = await del<{ released: string[] }>(`/agents/${a.id}`);
+      toast(`已删除 ${a.name}${r.released.length ? `，${r.released.join('、')} 已放回任务池` : ''}`);
       refresh();
     } catch (err) {
       toast((err as Error).message, true);
@@ -180,9 +195,19 @@ export function Agents({ startInvite = false }: { startInvite?: boolean }) {
                       <td className="faint">{timeAgo(a.last_seen_at)}</td>
                       <td>
                         <div className="btn-row">
+                          {a.status === 'active' && (
+                            <button className="btn small" title="关掉后重新启动：续用已有身份的提示词和值守命令" onClick={() => setRestartOf(a)}>
+                              提示词
+                            </button>
+                          )}
                           <button className="btn small" onClick={() => toggle(a)}>
                             {a.status === 'active' ? '停用' : '启用'}
                           </button>
+                          {a.status === 'disabled' && (
+                            <button className="btn small danger" onClick={() => remove(a)}>
+                              删除
+                            </button>
+                          )}
                           <button
                             className={`btn small ${a.can_invite ? 'primary' : ''}`}
                             aria-pressed={a.can_invite}
@@ -216,6 +241,7 @@ export function Agents({ startInvite = false }: { startInvite?: boolean }) {
           )}
         </div>
       )}
+      {restartOf && <RestartDialog agent={restartOf} onClose={() => setRestartOf(null)} />}
       {runsOf && <RunsDialog agent={runsOf} onClose={() => setRunsOf(null)} />}
       {token && (
         <Modal title={`${token.agent.name} 的新令牌`} onClose={() => setToken(null)}>
