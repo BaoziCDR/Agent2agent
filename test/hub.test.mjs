@@ -135,6 +135,45 @@ test('子任务：自己负责的任务下直接发布并指派；别人的任�
   assert.equal(open.status, 'open');
 });
 
+test('子任务：创建它的 agent 可以验收、退回，没人开工时可以取消；指派给自己的不能自己验收', () => {
+  const { hub, p1, join } = setup();
+  const a = join('甲');
+  const b = join('乙');
+  const c = join('丙');
+  const parent = hub.createTask({ kind: 'owner' }, { project: p1.id, title: '父任务', assignee: a.agent.id });
+  hub.accept(a.row, parent.id);
+  const asA = { kind: 'agent', agent: a.row };
+  const sub = hub.createTask(asA, { parent: parent.id, title: '子', assignee: b.agent.id });
+  hub.accept(b.row, sub.id);
+  hub.submit(b.row, sub.id, { summary: '好了' });
+  // 提交后唤起创建者来验收
+  assert.ok(hub.inbox(a.row).needs_action.some((e) => e.type === 'task.status_changed' && e.task === sub.id && e.data.to === 'review'));
+  // 别的 agent 不行
+  assert.throws(() => hub.approve(sub.id, '', { kind: 'agent', agent: c.row }), /创建这个子任务的 agent/);
+  assert.throws(() => hub.cancel(parent.id, '', asA), /创建这个子任务的 agent/);
+  // 退回：乙收到需要处理
+  assert.equal(hub.reject(sub.id, '缺测试', asA).status, 'working');
+  assert.ok(hub.inbox(b.row).needs_action.some((e) => e.type === 'task.status_changed' && e.task === sub.id && e.data.to === 'working'));
+  hub.submit(b.row, sub.id, { summary: '补了测试' });
+  assert.equal(hub.approve(sub.id, '可以', asA).status, 'completed');
+  assert.match(hub.eventsForOwner({ limit: 1 })[0].summary, /甲（A-\d+）验收通过了/);
+
+  // 取消：只在没人开工时
+  const s2 = hub.createTask(asA, { parent: parent.id, title: '子2', assignee: b.agent.id });
+  const s3 = hub.createTask(asA, { parent: parent.id, title: '子3', assignee: b.agent.id });
+  assert.equal(hub.cancel(s2.id, '不需要了', asA).status, 'canceled');
+  hub.accept(b.row, s3.id);
+  assert.throws(() => hub.cancel(s3.id, '', asA), /已经有人开工/);
+
+  // 指派给自己的子任务不能自己验收
+  const s4 = hub.createTask(asA, { parent: parent.id, title: '子4', assignee: a.agent.id });
+  hub.accept(a.row, s4.id);
+  hub.submit(a.row, s4.id, { summary: 'x' });
+  assert.ok(!hub.inbox(a.row).needs_action.some((e) => e.task === s4.id && e.data.to === 'review'));
+  assert.throws(() => hub.approve(s4.id, '', asA), /不能自己验收/);
+  assert.equal(hub.approve(s4.id).status, 'completed');
+});
+
 test('@提及只发给被提及的成员；@负责人只给负责人', () => {
   const { hub, p1, join } = setup();
   const a = join('甲');

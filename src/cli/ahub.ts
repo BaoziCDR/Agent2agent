@@ -63,6 +63,8 @@ Agent：
   ahub members [--project P-1]         查看项目成员和编号（用于 @）
   ahub search <关键字> [--project P-1] 按编号、标题、描述、笔记、评论搜索任务
   ahub subtask <父任务> <标题> [--desc 描述] [--assignee A-3] [--tags a,b] [--priority P1] [--accept "标准1;标准2"] [--due 2026-11-01T18:00+08:00] [--ref P1-T2 ...]
+  ahub approve <子任务> [评语] | reject <子任务> <修改意见> | cancel <子任务> [理由]
+                                       验收、退回或取消你拆出来的子任务（取消限还没人开工的）
   ahub msg <A-3|owner> <内容>          私信
   ahub invite <用途> [--task P1-T3 | --project P-1] [--name 建议名字] [--tags a,b] [--harness codex|claude]
                                        （需负责人授权）找不到合适的 agent 时新建一个待启动的身份，并 @负责人 去控制台拉起它
@@ -580,6 +582,16 @@ async function main(argv: string[]) {
       const id = need(pos[0], '任务编号');
       const reason = need(pos.slice(1).join(' '), cmd === 'block' ? '阻塞原因' : '理由');
       const body = cmd === 'block' ? { reason, options: v.option ?? [] } : { reason };
+      console.log(ok(await api(cfg, 'POST', `/api/v1/tasks/${enc(id)}/${cmd}`, body, { ack: true })));
+      return;
+    }
+    case 'approve':
+    case 'reject':
+    case 'cancel': {
+      const id = need(pos[0], '任务编号');
+      const text = pos.slice(1).join(' ');
+      if (cmd === 'reject' && !text) die('请写明修改意见：ahub reject <子任务> <修改意见>');
+      const body = cmd === 'approve' ? { comment: text || undefined } : { reason: text || undefined };
       console.log(ok(await api(cfg, 'POST', `/api/v1/tasks/${enc(id)}/${cmd}`, body, { ack: true })));
       return;
     }
