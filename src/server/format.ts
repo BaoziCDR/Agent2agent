@@ -10,7 +10,19 @@ function taskLine(t: TaskView) {
   const who = t.assignee ? ` · ${t.assignee_name}（${t.assignee}）` : '';
   const progress = ['working', 'input_required'].includes(t.status) ? ` · ${t.progress}%` : '';
   const tags = t.required_tags.length ? ` · 需要：${t.required_tags.join('、')}` : '';
-  return `- **${t.id}** [${t.priority}] ${t.title} — ${t.status_label}${who}${progress}${tags}`;
+  return `- **${t.id}** [${t.priority}] ${t.title} — ${t.status_label}${who}${progress}${tags}${dueNote(t)}`;
+}
+
+/** 截止时间的简短说明，如「 · 截止 11-01 18:00（剩 3 小时）」；已结束或待验收的任务不提示剩余时间。 */
+export function dueNote(t: { due_at: string | null; status: string }, prefix = ' · ') {
+  if (!t.due_at) return '';
+  const at = new Date(t.due_at);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const text = `${prefix}截止 ${pad(at.getMonth() + 1)}-${pad(at.getDate())} ${pad(at.getHours())}:${pad(at.getMinutes())}`;
+  if (!['open', 'assigned', 'working', 'input_required'].includes(t.status)) return text;
+  const left = at.getTime() - Date.now();
+  const span = (ms: number) => (ms >= 86400_000 ? `${Math.floor(ms / 86400_000)} 天` : ms >= 3600_000 ? `${Math.floor(ms / 3600_000)} 小时` : `${Math.max(1, Math.floor(ms / 60_000))} 分钟`);
+  return `${text}（${left < 0 ? `已逾期 ${span(-left)}` : `剩 ${span(left)}`}）`;
 }
 
 export function renderTaskList(tasks: TaskView[], title = '任务列表') {
@@ -28,7 +40,7 @@ export function renderTask(t: TaskDetail, hubUrl = '') {
   if (t.parent) lines.push(`父任务：${t.parent}`);
   if (t.depends_on.length) lines.push(`依赖：${t.depends_on.join('、')}`);
   if (t.required_tags.length) lines.push(`需要能力：${t.required_tags.join('、')}`);
-  if (t.due_at) lines.push(`截止：${t.due_at}`);
+  if (t.due_at) lines.push(dueNote(t, '').replace(/^截止 /, '截止：'));
   if (t.block_reason && t.status === 'input_required') lines.push(`阻塞原因：${t.block_reason}`);
   lines.push('');
   const source = t.created_by === 'owner' ? '负责人发布' : `由 ${t.created_by} 创建；${AGENT_CONTENT_NOTE}`;

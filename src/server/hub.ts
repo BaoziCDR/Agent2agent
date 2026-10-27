@@ -78,6 +78,7 @@ interface TaskRow {
   block_reason: string;
   lease_until: string | null;
   lease_warned: number;
+  due_warned: number;
   due_at: string | null;
   created_at: string;
   updated_at: string;
@@ -592,6 +593,8 @@ export class Hub {
       case 'message.direct':
       case 'owner.broadcast':
       case 'task.lease_expiring':
+      case 'task.due_soon':
+      case 'task.overdue':
         return true;
       case 'task.status_changed':
         return e.data.assignee === me && e.data.from === 'review' && e.data.to === 'working';
@@ -1114,6 +1117,7 @@ export class Hub {
   ): TaskView {
     const title = input.title?.trim();
     if (!title) throw invalid('任务标题不能为空');
+    input = { ...input, due_at: normalizeDue(input.due_at) };
     const priority = (input.priority ?? 'P2').toUpperCase() as Priority;
     if (!PRIORITIES.includes(priority)) throw invalid('优先级只能是 P0–P3');
 
@@ -1176,7 +1180,7 @@ export class Hub {
           parent?.id ?? null,
           JSON.stringify(deps),
           JSON.stringify(input.required_tags ?? []),
-          input.due_at ?? null,
+          input.due_at ?? parent?.due_at ?? null,
           now,
           now,
         );
@@ -1219,6 +1223,7 @@ export class Hub {
   ): TaskView {
     const t = this.requireTask(code);
     if (input.version !== undefined && input.version !== t.version) throw conflict('任务已被其他人修改，请刷新后重试');
+    const due = input.due_at === undefined ? undefined : normalizeDue(input.due_at);
     const priority = input.priority ? (input.priority.toUpperCase() as Priority) : t.priority;
     if (!PRIORITIES.includes(priority)) throw invalid('优先级只能是 P0–P3');
     const deps =
@@ -1235,7 +1240,7 @@ export class Hub {
       this.db
         .prepare(
           `UPDATE tasks SET title = ?, description = ?, acceptance = ?, priority = ?, required_tags = ?, depends_on = ?, due_at = ?,
-            updated_at = ?, version = version + 1 WHERE id = ?`,
+            due_warned = CASE WHEN due_at IS ? THEN due_warned ELSE 0 END, updated_at = ?, version = version + 1 WHERE id = ?`,
         )
         .run(
           input.title?.trim() || t.title,
@@ -1244,7 +1249,8 @@ export class Hub {
           priority,
           input.required_tags === undefined ? t.required_tags : JSON.stringify(input.required_tags),
           deps,
-          input.due_at === undefined ? t.due_at : input.due_at,
+          due === undefined ? t.due_at : due,
+          due === undefined ? t.due_at : due,
           this.iso(),
           t.id,
         );
@@ -1710,6 +1716,38 @@ export class Hub {
   // ───────────── 租约 ─────────────
 
   /** 找出租约到期的任务，提醒负责人和当事 agent（每个租约只提醒一次，不自动收回）。 */
+  /** 定时调用：任务快到截止时间（2 小时内）和已经逾期时，各提醒负责的 agent 一次（没人负责时只提醒负责人）。 */
+  sweepDue(): number {
+    const now = this.now().getTime();
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM tasks WHERE due_at IS NOT NULL AND due_at < ? AND due_warned < 2
+         AND status IN ('open','assigned','working','input_required')`,
+      )
+      .all(new Date(now + DUE_SOON_MS).toISOString()) as unknown as TaskRow[];
+    let n = 0;
+    this.write(() => {
+      for (const t of rows) {
+        const overdue = Date.parse(t.due_at!) <= now;
+        if (!overdue && t.due_warned >= 1) continue;
+        n++;
+        this.db.prepare('UPDATE tasks SET due_warned = ? WHERE id = ?').run(overdue ? 2 : 1, t.id);
+        const who = t.assignee_id === null ? null : agentCode(t.assignee_id);
+        const code = taskCode(t.project_id, t.num);
+        const left = Math.max(1, Math.round((Date.parse(t.due_at!) - now) / 60_000));
+        this.emit(overdue ? 'task.overdue' : 'task.due_soon', 'owner', {
+          task: t,
+          audience: who ? [who] : [],
+          data: { assignee: who, due_at: t.due_at },
+          summary: overdue
+            ? `${code}「${t.title}」已超过截止时间${who ? `（${this.agentName(t.assignee_id)}）` : '，还没有人领取'}`
+            : `${code}「${t.title}」还有 ${left >= 60 ? `${Math.round(left / 60)} 小时` : `${left} 分钟`}到截止时间${who ? '' : '，还没有人领取'}`,
+        });
+      }
+    });
+    return n;
+  }
+
   sweepLeases(): number {
     const rows = this.db
       .prepare(
@@ -1848,12 +1886,19 @@ export class Hub {
         .prepare(`SELECT COUNT(*) AS n FROM tasks WHERE lease_warned = 1 AND status IN ('working','input_required') ${scope}`)
         .get(...params) as { n: number }
     ).n;
+    const now = this.iso();
+    const overdue = (
+      this.db
+        .prepare(`SELECT COUNT(*) AS n FROM tasks WHERE due_at IS NOT NULL AND due_at < ? AND status IN (${LIVE_SQL}) ${scope}`)
+        .get(now, ...params) as { n: number }
+    ).n;
     const attention = this.db
       .prepare(
-        `SELECT * FROM tasks WHERE (status IN ('review','input_required','draft') OR (lease_warned = 1 AND status = 'working')) ${scope}
+        `SELECT * FROM tasks WHERE (status IN ('review','input_required','draft') OR (lease_warned = 1 AND status = 'working')
+           OR (due_at IS NOT NULL AND due_at < ? AND status IN (${LIVE_SQL}))) ${scope}
          ORDER BY updated_at DESC LIMIT 50`,
       )
-      .all(...params) as unknown as TaskRow[];
+      .all(now, ...params) as unknown as TaskRow[];
     const mentions = this.eventsForOwner({ limit: 20, project })
       .filter((e) => (e.type === 'mention' || e.type === 'message.direct') && e.audience !== null && e.audience.length === 0);
     return {
@@ -1863,12 +1908,24 @@ export class Hub {
         input_required: count('input_required'),
         open: count('open'),
         lost,
+        overdue,
       },
       attention: attention.map((t) => this.taskView(t)),
       mentions,
       agents_online: this.listAgents(project).filter((a) => a.online).length,
     };
   }
+}
+
+const DUE_SOON_MS = 2 * 3600_000;
+const LIVE_SQL = "'open','assigned','working','input_required'";
+
+/** 截止时间统一存成 ISO；空串表示清除。 */
+function normalizeDue(v: string | null | undefined): string | null {
+  if (v == null || v.trim() === '') return null;
+  const ms = Date.parse(v);
+  if (Number.isNaN(ms)) throw invalid(`截止时间格式不对：${v}，请用 ISO 格式，如 2026-11-01T18:00:00+08:00`);
+  return new Date(ms).toISOString();
 }
 
 function excerpt(text: string, n = 60) {

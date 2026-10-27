@@ -31,12 +31,13 @@ const TITLES: Partial<Record<string, string>> = {
   'message.direct': '收到私信',
   'task.lease_expiring': '任务可能失联',
   'agent.offline': 'Agent 下线了',
+  'task.overdue': '任务逾期',
 };
 
 /** 需要负责人处理或知晓的事件才弹通知。 */
 export function notificationTitle(e: HubEvent): string | null {
   if ((e.type === 'mention' || e.type === 'message.direct') && e.audience?.length === 0) return TITLES[e.type]!;
-  if (e.type === 'task.lease_expiring' || e.type === 'agent.offline') return TITLES[e.type]!;
+  if (e.type === 'task.lease_expiring' || e.type === 'agent.offline' || e.type === 'task.overdue') return TITLES[e.type]!;
   if (e.type === 'task.status_changed') {
     if (e.data.to === 'review') return '有任务待验收';
     if (e.data.to === 'input_required') return '有任务被阻塞';
