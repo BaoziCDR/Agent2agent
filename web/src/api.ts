@@ -31,8 +31,29 @@ export interface Agent {
   daemon_paused: boolean;
   resident: boolean;
   can_invite: boolean;
+  /** 当前有效的连接（授权 ID）；不在线时为 null */
+  connection: Connection | null;
+  /** 还没用身份码连接过 */
+  pending: boolean;
   projects: { id: string; name: string; tags: string[] }[];
   active_tasks: string[];
+}
+
+/** 一次连接：用身份码换来的授权 ID */
+export interface Connection {
+  /** 授权 ID 的前几位 */
+  id: string;
+  client: string;
+  client_label: string;
+  host: string;
+  cwd: string;
+  ip: string;
+  created_at: string;
+  last_seen_at: string;
+  ended_at: string | null;
+  /** released 交还；expired 超时；replaced 被顶掉；revoked 强制下线 */
+  end_reason: 'released' | 'expired' | 'replaced' | 'revoked' | null;
+  end_note: string;
 }
 
 export interface Task {

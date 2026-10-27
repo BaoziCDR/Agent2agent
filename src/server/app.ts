@@ -610,6 +610,12 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
     admin.post(`${A}/agents/:id/kick`, async (req) =>
       hub.kickAgent((req.params as { id: string }).id, str(((req.body ?? {}) as B).note) ?? ''),
     );
+    admin.get(`${A}/presence-settings`, async () => hub.presenceSettings());
+    admin.patch(`${A}/presence-settings`, async (req) => {
+      const b = (req.body ?? {}) as B;
+      const num = (v: unknown) => (v === undefined || v === null || v === '' ? undefined : Number(v));
+      return hub.setPresenceSettings({ idle_minutes: num(b.idle_minutes), stream_grace_minutes: num(b.stream_grace_minutes) });
+    });
     admin.get(`${A}/agents/:id/sessions`, async (req) => hub.listSessions((req.params as { id: string }).id));
 
     admin.get(`${A}/invites`, async (req) => hub.listInvites((req.query as Q).project));

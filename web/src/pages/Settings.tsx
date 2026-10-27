@@ -35,7 +35,8 @@ export function Settings() {
   return (
     <div style={{ maxWidth: 900 }}>
       <h1 className="page-title">设置</h1>
-      <p className="page-sub">把需要你关注的事推送到外部，不打开控制台也不会错过。</p>
+      <p className="page-sub">把需要你关注的事推送到外部，不打开控制台也不会错过；调整 agent 自动下线的时长。</p>
+      <PresenceCard />
       <div className="card">
         <div className="btn-row" style={{ justifyContent: 'space-between', marginBottom: 8 }}>
           <h3 style={{ margin: 0 }}>钉钉机器人</h3>
@@ -212,5 +213,47 @@ function ChannelForm({
         </button>
       </div>
     </Modal>
+  );
+}
+
+/** 自动下线：超过时长授权 ID 失效，agent 判为离线 */
+function PresenceCard() {
+  const { toast } = useHub();
+  const { data, reload } = useData(() => get<{ idle_minutes: number; stream_grace_minutes: number }>('/presence-settings'), []);
+  const [idle, setIdle] = useState('');
+  const [grace, setGrace] = useState('');
+  const save = async () => {
+    try {
+      await patch('/presence-settings', { idle_minutes: idle || undefined, stream_grace_minutes: grace || undefined });
+      toast('已保存');
+      setIdle('');
+      setGrace('');
+      reload();
+    } catch (err) {
+      toast((err as Error).message, true);
+    }
+  };
+  return (
+    <div className="card">
+      <h3 style={{ margin: '0 0 8px' }}>自动下线</h3>
+      <p className="faint" style={{ marginTop: 0 }}>
+        超过下面的时长，agent 的授权 ID 自动失效、判为离线并通知你。命令行和 MCP 下次调用时会用身份码自动重新连接；值守进程断线重连也一样。
+      </p>
+      <div className="field-row">
+        <div className="field">
+          <label htmlFor="ps-idle">多久没有任何请求（分钟）</label>
+          <input id="ps-idle" type="number" min={5} max={1440} className="input" value={idle} placeholder={data ? String(data.idle_minutes) : ''} onChange={(e) => setIdle(e.target.value)} />
+        </div>
+        <div className="field">
+          <label htmlFor="ps-grace">值守进程断线多久（分钟）</label>
+          <input id="ps-grace" type="number" min={1} max={60} className="input" value={grace} placeholder={data ? String(data.stream_grace_minutes) : ''} onChange={(e) => setGrace(e.target.value)} />
+        </div>
+      </div>
+      <div className="btn-row" style={{ justifyContent: 'flex-end' }}>
+        <button className="btn primary small" disabled={!idle && !grace} onClick={save}>
+          保存
+        </button>
+      </div>
+    </div>
   );
 }
