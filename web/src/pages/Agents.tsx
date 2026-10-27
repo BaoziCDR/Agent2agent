@@ -251,6 +251,7 @@ function RunsDialog({ agent, onClose }: { agent: Agent; onClose: () => void }) {
                 {dateTime(r.started_at)} · 用时 {duration(r)} · {r.harness}
               </div>
               <div>唤起原因：{r.trigger || '—'}</div>
+              {r.session && <div className="faint">会话：{r.session}</div>}
               {r.summary && <div className="prose faint run-summary">{r.summary}</div>}
             </div>
           </div>
