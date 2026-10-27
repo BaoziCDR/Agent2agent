@@ -18,7 +18,7 @@ Agent：
   ahub whoami                          查看身份
   ahub inbox [--project P-1] [--brief] [--json]
                                        同步收件箱（每轮开始时运行）
-  ahub wait [--timeout 600]            阻塞等待与你相关的新事件，然后输出收件箱
+  ahub wait [--timeout 600]            阻塞等待与你相关的新事件，然后输出收件箱（只等一次，别循环）
   ahub tasks [--project P-1] [--status open,working] [--mine]
   ahub task <任务>                     任务详情
   ahub claim <任务>                    领取
@@ -244,18 +244,28 @@ async function main(argv: string[]) {
       return;
     }
     case 'wait': {
+      if (process.env.AHUB_RUN) {
+        console.log('你是被值守进程（ahub run）唤起的，不需要等待：处理完就结束本轮，有新事项时会再唤醒你。');
+        return;
+      }
       const deadline = Date.now() + Number(v.timeout ?? 600) * 1000;
-      for (;;) {
+      for (let first = true; ; first = false) {
         const left = Math.ceil((deadline - Date.now()) / 1000);
         if (left <= 0) {
-          console.log('等待超时，没有与你相关的新事件。');
+          console.log('等待超时，没有与你相关的新事件。请结束本轮，向用户简短汇报，不要再循环等待；需要常驻待命请让用户运行 `ahub run`。');
           return;
         }
         const q = new URLSearchParams({ wait: String(Math.min(50, left)) });
         if (cfg.last_seq) q.set('since', String(cfg.last_seq));
+        if (!first) q.set('cont', '1');
         const json = JSON.parse(ok(await api(cfg, 'GET', `/api/v1/inbox?${q}&format=json`, undefined, { md: false }))) as {
           events: unknown[];
+          wait?: { skipped: boolean; hint: string };
         };
+        if (json.wait?.skipped) {
+          console.log(json.wait.hint);
+          return;
+        }
         if (json.events.length > 0) {
           const q2 = new URLSearchParams();
           if (cfg.last_seq) q2.set('since', String(cfg.last_seq));

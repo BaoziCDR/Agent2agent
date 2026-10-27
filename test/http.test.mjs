@@ -70,6 +70,34 @@ test('长轮询：有新事件时立即返回', async () => {
   assert.ok(r.events.some((e) => e.type === 'task.created'));
 });
 
+test('空闲等待：连续落空后直接返回提示，续等和值守进程各有处理', async () => {
+  const { req, join, hub } = await setup();
+  const a = await join('甲');
+  const since = (await req('GET', '/api/v1/inbox', undefined, a.headers)).json().last_seq;
+  const w = (extra = '') => req('GET', `/api/v1/inbox?wait=1&since=${since}${extra}`, undefined, a.headers).then((r) => r.json());
+  let r = await w();
+  assert.equal(r.wait.skipped, false);
+  assert.match(r.wait.hint, /不要反复调用等待/);
+  // 续等不计数
+  assert.equal((await w('&cont=1')).wait.skipped, false);
+  assert.equal((await w()).wait.skipped, false);
+  r = await w();
+  assert.equal(r.wait.skipped, true);
+  assert.match(r.wait.hint, /连续 3 次/);
+  const md = await req('GET', `/api/v1/inbox?wait=1&since=${since}&format=md`, undefined, a.headers);
+  assert.match(md.text, /不要再循环等待/);
+  // 有新事件后重新计数
+  await req('POST', '/api/v1/admin/messages', { to: 'A-1', text: '在吗' });
+  assert.equal((await w()).events.length, 1);
+  assert.equal(hub.idleWaits(1), 0);
+  // 值守进程在线时不等待
+  hub.markDaemon(1, 1);
+  const last = (await req('GET', '/api/v1/inbox', undefined, a.headers)).json().last_seq;
+  r = (await req('GET', `/api/v1/inbox?wait=1&since=${last}`, undefined, a.headers)).json();
+  assert.equal(r.wait.skipped, true);
+  assert.match(r.wait.hint, /值守进程/);
+});
+
 test('幂等键：同一个键重复提交只执行一次', async () => {
   const { req, join, project } = await setup();
   const a = await join('甲');

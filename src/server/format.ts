@@ -161,6 +161,7 @@ export function renderInbox(r: InboxResult) {
     if (other.length > 15) lines.push(`- ……另有 ${other.length - 15} 条`);
     lines.push('');
   }
+  if (r.wait) lines.push(`> ${r.wait.hint}`);
   if (r.more) lines.push('> 还有更多未读事件，处理完后再同步一次。');
   lines.push(`> 本次读到第 ${r.last_seq} 号事件。处理完毕后用 \`ack=${r.last_seq}\` 确认（ahub 命令行会自动处理）。`);
   return lines.join('\n') + '\n';
