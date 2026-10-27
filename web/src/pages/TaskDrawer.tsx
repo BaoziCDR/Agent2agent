@@ -24,7 +24,7 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
     if (t) markOwnerRead({ task: id }).then((n) => n && refresh());
   }, [t, id, refresh]);
   const [comment, setComment] = useState('');
-  const [dialog, setDialog] = useState<null | 'reject' | 'cancel' | 'edit'>(null);
+  const [dialog, setDialog] = useState<null | 'reject' | 'cancel' | 'edit' | 'subtask'>(null);
   const [reason, setReason] = useState('');
   const [files, setFiles] = useState<Uploaded[]>([]);
   const [uploading, setUploading] = useState(0);
@@ -427,9 +427,17 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
                   </div>
                 )}
               </div>
-              {t.subtasks.length > 0 && (
+              {(t.subtasks.length > 0 || !closed) && (
                 <div className="section">
-                  <h4>子任务</h4>
+                  <div className="btn-row" style={{ justifyContent: 'space-between' }}>
+                    <h4>子任务</h4>
+                    {!closed && (
+                      <button className="btn small" onClick={() => setDialog('subtask')}>
+                        新建子任务
+                      </button>
+                    )}
+                  </div>
+                  {t.subtasks.length === 0 && <div className="faint">还没有子任务</div>}
                   <div className="list">
                     {t.subtasks.map((s) => (
                       <div key={s.id} className="list-item clickable" onClick={() => openTask(s.id)}>
@@ -552,6 +560,17 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
           </div>
         </Modal>
       )}
+      {dialog === 'subtask' && t && (
+        <NewSubtask
+          parent={t}
+          onClose={() => setDialog(null)}
+          onCreated={() => {
+            setDialog(null);
+            reload();
+            refresh();
+          }}
+        />
+      )}
       {dialog === 'edit' && t && (
         <EditTask
           task={t}
@@ -564,6 +583,89 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
         />
       )}
     </>
+  );
+}
+
+/** 负责人在已有任务下拆子任务：直接发布，可以指派，不指派就进任务池 */
+function NewSubtask({ parent, onClose, onCreated }: { parent: TaskDetail; onClose: () => void; onCreated: () => void }) {
+  const { agents, toast } = useHub();
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [acceptance, setAcceptance] = useState('');
+  const [priority, setPriority] = useState(parent.priority);
+  const [assignee, setAssignee] = useState('');
+  const [tags, setTags] = useState(parent.required_tags.join(', '));
+  const [busy, setBusy] = useState(false);
+  const members = agents.filter((a) => a.status === 'active' && a.projects.some((p) => p.id === parent.project));
+  const create = async () => {
+    setBusy(true);
+    try {
+      const sub = await post<{ id: string }>('/tasks', {
+        project: parent.project,
+        parent: parent.id,
+        title,
+        description,
+        acceptance: acceptance.split('\n').map((x) => x.trim()).filter(Boolean),
+        priority,
+        assignee: assignee || null,
+        required_tags: splitList(tags),
+      });
+      toast(`已发布子任务 ${sub.id}`);
+      onCreated();
+    } catch (err) {
+      toast((err as Error).message, true);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal title={`在 ${parent.id} 下新建子任务`} onClose={onClose}>
+      <div className="field">
+        <label htmlFor="st-title">标题</label>
+        <input id="st-title" className="input" value={title} onChange={(e) => setTitle(e.target.value)} autoFocus />
+      </div>
+      <div className="field">
+        <label htmlFor="st-desc">描述</label>
+        <textarea id="st-desc" className="textarea" value={description} onChange={(e) => setDescription(e.target.value)} />
+      </div>
+      <div className="field">
+        <label htmlFor="st-acc">验收标准（每行一条）</label>
+        <textarea id="st-acc" className="textarea" style={{ minHeight: 64 }} value={acceptance} onChange={(e) => setAcceptance(e.target.value)} />
+      </div>
+      <div className="field-row">
+        <div className="field">
+          <label htmlFor="st-assignee">指派给</label>
+          <select id="st-assignee" className="select" value={assignee} onChange={(e) => setAssignee(e.target.value)}>
+            <option value="">不指派（进入任务池）</option>
+            {members.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name || a.id}（{a.id}）
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label htmlFor="st-pri">优先级</label>
+          <select id="st-pri" className="select" value={priority} onChange={(e) => setPriority(e.target.value as typeof priority)}>
+            {['P0', 'P1', 'P2', 'P3'].map((p) => (
+              <option key={p}>{p}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+      <div className="field">
+        <label htmlFor="st-tags">所需能力</label>
+        <TagPicker id="st-tags" value={tags} onChange={setTags} />
+      </div>
+      <div className="btn-row">
+        <button className="btn primary" disabled={!title.trim() || busy} onClick={create}>
+          发布子任务
+        </button>
+        <button className="btn" onClick={onClose}>
+          取消
+        </button>
+      </div>
+    </Modal>
   );
 }
 
