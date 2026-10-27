@@ -1352,7 +1352,6 @@ export class Hub {
         lease: this.lease(agent),
         summary: `${agent.name}（${me}）领取了 ${code}「${t.title}」`,
       });
-      this.emit('task.claimed', me, { task: updated, audience: [], data: { assignee: me }, summary: `${agent.name}领取了 ${code}` });
       return this.taskView(updated);
     });
   }

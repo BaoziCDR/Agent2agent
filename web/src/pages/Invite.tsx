@@ -159,6 +159,7 @@ export function Invite() {
         <h3>邀请码记录</h3>
         {invites && invites.length === 0 && <div className="empty">还没有邀请码</div>}
         {invites && invites.length > 0 && (
+          <div className="table-wrap">
           <table className="table">
             <thead>
               <tr>
@@ -201,6 +202,7 @@ export function Invite() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </div>

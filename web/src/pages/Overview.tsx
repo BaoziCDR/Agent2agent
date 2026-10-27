@@ -134,7 +134,7 @@ export function Overview() {
                 <span className="feed-time">{clock(e.at)}</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   {e.summary}
-                  {e.actor !== 'owner' && <span className="faint"> · {agentLabel(agents, e.actor)}</span>}
+                  {e.actor !== 'owner' && !e.summary.startsWith(agentLabel(agents, e.actor)) && <span className="faint"> · {agentLabel(agents, e.actor)}</span>}
                 </div>
               </div>
             ))}

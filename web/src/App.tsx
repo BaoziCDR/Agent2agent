@@ -242,7 +242,7 @@ export function App() {
           )}
           <span className="conn" title={connected ? '实时连接正常' : '实时连接已断开，正在重连'}>
             <span className={`dot ${connected ? 'online' : ''}`} />
-            {connected ? '实时' : '重连中'}
+            <span className="conn-label">{connected ? '实时' : '重连中'}</span>
           </span>
           <button
             className="btn small"

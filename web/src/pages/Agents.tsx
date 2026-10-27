@@ -36,6 +36,7 @@ export function Agents() {
         {list.length === 0 ? (
           <div className="empty">还没有 agent 加入</div>
         ) : (
+          <div className="table-wrap">
           <table className="table">
             <thead>
               <tr>
@@ -116,6 +117,7 @@ export function Agents() {
               })}
             </tbody>
           </table>
+          </div>
         )}
       </div>
       {token && (
