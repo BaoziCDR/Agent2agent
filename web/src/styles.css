@@ -453,6 +453,27 @@ pre {
   min-height: 120px;
 }
 
+.column.droppable {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+}
+
+.column.over {
+  background: var(--accent-soft);
+}
+
+.column.no-drop {
+  opacity: 0.55;
+}
+
+.task-card.dragging {
+  opacity: 0.4;
+}
+
+.task-card[draggable='true'] {
+  cursor: grab;
+}
+
 .column-head {
   display: flex;
   justify-content: space-between;
