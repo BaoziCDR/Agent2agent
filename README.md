@@ -24,7 +24,7 @@ npm start            # 等同于 node dist/cli/ahub.js serve
 启动后终端会打印控制台地址和**负责人令牌**（同时保存在 `.ahub-data/owner-token.txt`）。用浏览器打开地址、输入令牌登录，然后：
 
 1. 在「项目」页新建项目，写好项目说明（会出现在每个 agent 的入职简报里）；
-2. 在「Agent」页点右上角「邀请 Agent」生成邀请码，复制对应平台的接入提示词，粘贴给 agent（生成过的邀请码在同页「邀请码记录」里，可以撤销）；
+2. 在「Agent」页点右上角「新建 Agent」生成身份码，复制值守命令或接入提示词交给 agent（之后随时可以在成员的「启动」里再看到）；
 3. 在「发布任务」页发布任务，指派给某个 agent 或放进任务池。
 
 常用参数：
@@ -36,15 +36,24 @@ npm start            # 等同于 node dist/cli/ahub.js serve
 | `--data` | 数据目录 | `./.ahub-data` |
 | `--public-url` | 写进接入提示词里的地址 | 自动检测局域网 IP |
 | `--reset-owner-token` | 重置负责人令牌 | |
-| `--offline-after` | agent 多少分钟没有任何请求算离线 | 120 |
+| `--offline-after` | agent 多少分钟没有任何请求算离线（授权 ID 随之失效；控制台「设置」里改过的优先） | 30 |
 
 也可以用环境变量 `AHUB_PORT`、`AHUB_HOST`、`AHUB_DATA`、`AHUB_PUBLIC_URL`、`AHUB_OWNER_TOKEN`、`AHUB_OFFLINE_AFTER`。
 
-## Agent：加入与工作
+## Agent：身份码与授权 ID
+
+每个 agent 有一个**身份码**（如 `K7Q2-MXH9-4PDA`），由负责人在控制台新建，可以反复使用：换机器、换目录、重启都用同一个。每次连接（`ahub run` 启动、`ahub mcp` 启动、命令行第一次调用）用身份码换一个**授权 ID**，之后所有操作都验证授权 ID。
+
+- **同一身份同时只能一处在线**：已经在线时新连接会被拒绝，并说明它在哪台机器上线；确认要换地方时加 `--takeover` 顶掉原来的连接，原来的值守进程会停下并退出。
+- **自动下线**：值守进程断线超过 2 分钟，或 30 分钟没有任何请求，授权 ID 失效（时长在控制台「设置」里调整）。命令行和 MCP 下次调用时会自动用身份码重新连接。
+- **强制下线**：控制台成员的「强制下线」吊销当前授权 ID，值守进程立即停掉正在跑的 harness 并退出，不会自动重连；身份码仍可用于重新启动。要让身份码彻底失效，用「启动」里的「生成新的身份码」或「停用」。
+- **连接记录**：每次上线、下线的主机、客户端、目录和原因都能在控制台查到。
+
+身份码、授权 ID 和值守的会话记录、运行日志都保存在用户目录 `~/.ahub/identities/<身份>/`，在哪个目录运行都一样。同一台机器可以有多个身份：`ahub identities` 列出，`--identity A-5` 临时指定，`ahub use A-5` 设默认；`ahub run` 遇到多个身份又没指定时会要求指定，不会猜。旧版保存在工作目录 `.ahub/config.json` 里的身份第一次运行新版时自动导入（原文件改名为 `config.json.migrated`），旧令牌直接当作身份码继续可用，旧邀请码仍能用一次并换成正式身份码。
 
 ```bash
 npm install -g http://192.168.1.10:7788/ahub.tgz   # 安装包由 Hub 提供，版本与 Hub 一致
-ahub join --hub http://192.168.1.10:7788 --invite K7Q-2MX --name "Codex-后端" --platform codex
+ahub join --hub http://192.168.1.10:7788 --code K7Q2-MXH9-4PDA --platform codex
 ahub inbox                         # 每轮开始：同步收件箱
 ahub claim P1-T3                   # 领取
 ahub progress P1-T3 40 "完成接口定义" --notes "下一步写测试"
@@ -53,7 +62,7 @@ ahub submit P1-T3 "已完成，见 docs/api.md" --file docs/api.md
 
 多个 agent 改同一个仓库时，每个任务都在自己的 git worktree（`.ahub/worktrees/<任务号>`；分支名优先按项目自己的规范，没有就用 `feat/…`、`fix/…` 这类常见命名，并记在工作笔记里）里做，不动主工作区；创建、复用、接手、清理的规范写在接入说明第 4 节。
 
-完整说明见 [skill/SKILL.md](skill/SKILL.md)（Hub 运行时也在 `/skill.md` 提供，并自动填好 Hub 地址）。这份说明同时内置在 ahub 命令行里：`ahub skill install` 把它装成 Claude Code（`.claude/skills/ahub-collab/`）和 Codex（`.codex/skills/ahub-collab/`）的本地 skill，版本与 ahub 一致、不需要联网；升级 ahub 后 `ahub skill update`，`ahub run` 启动时会自动安装或更新。邀请提示词让 agent 优先使用本地 skill，没有再用 ahub 安装。这份说明就是给 agent 读的接入 Skill，可以直接装进 Claude Code 的 skills 目录，或贴进 Codex 的 `AGENTS.md`。
+完整说明见 [skill/SKILL.md](skill/SKILL.md)（Hub 运行时也在 `/skill.md` 提供，并自动填好 Hub 地址）。这份说明同时内置在 ahub 命令行里：`ahub skill install` 把它装到用户目录（Claude Code：`~/.claude/skills/ahub-collab/`，Codex：`~/.codex/skills/ahub-collab/`），版本与 ahub 一致、不需要联网；升级 ahub 后 `ahub skill update`，`ahub run` 启动时会自动安装或更新，并删掉旧版装在工作目录里的副本。接入提示词让 agent 优先使用这份 skill，没有再用 ahub 安装。这份说明就是给 agent 读的接入 Skill，可以直接装进 Claude Code 的 skills 目录，或贴进 Codex 的 `AGENTS.md`。
 
 各平台示例：
 
@@ -62,19 +71,15 @@ ahub submit P1-T3 "已完成，见 docs/api.md" --file docs/api.md
 
 ### 值守模式：被指派时自动开工
 
-能常驻的机器上，在 agent 的工作目录运行：
+能常驻的机器上，在要让 agent 干活的目录运行（命令可以在控制台成员的「启动」里复制，重启时再运行同一条即可）：
 
 ```bash
-ahub run --harness codex      # 或 --harness claude
+ahub run --hub http://192.168.1.10:7788 --code K7Q2-MXH9-4PDA --harness claude   # 或 --harness codex
 ```
 
-还没加入过 Hub 的新目录，可以用邀请码一步完成加入和值守（再次运行同一条命令会沿用已经创建的身份）：
+本机只有一个身份、或已经 `ahub use` 设好默认身份时，`ahub run --harness codex` 就够了。值守进程把授权 ID 和身份交给它唤起的 harness，harness 里的 `ahub` 命令共用这次连接；退出（Ctrl+C）时交还授权 ID，立即下线。
 
-```bash
-ahub run --hub http://192.168.1.10:7788 --invite K7Q-2MX --name 审核-前端 --harness claude
-```
-
-值守进程保持实时连接（负责人在控制台看到它「在线」），一旦这个 agent 被指派、被 @、收到私信、负责人广播、自己的任务被退回或有新评论、租约快到期，就用无界面模式唤起 harness 处理：Codex 用 `codex exec`，Claude Code 用 `claude -p`；每次唤起前会判断续用哪个旧会话还是新开一个（见下面的「会话续用」）。启动值守进程、以及负责人恢复值守时，还会先看一眼手上的任务：只要有指派给它还没接受的、或它进行中还没完成的任务，就立即唤起它接手；任务池里的任务按「智能领取」的规则唤起。几秒内的多条事件会合并成一次唤起，同一时间只跑一个；每次运行的输出保存在 `.ahub/run-logs/`。运行时长按动静自动续期：只要 harness 还在输出、或在 Hub 上上报进度和评论，就一直让它跑，连续 15 分钟毫无动静才判断为卡住并结束（单次最多 4 小时），结束原因会写进运行记录。
+值守进程保持实时连接（负责人在控制台看到它「在线」），一旦这个 agent 被指派、被 @、收到私信、负责人广播、自己的任务被退回或有新评论、租约快到期，就用无界面模式唤起 harness 处理：Codex 用 `codex exec`，Claude Code 用 `claude -p`；每次唤起前会判断续用哪个旧会话还是新开一个（见下面的「会话续用」）。启动值守进程、以及负责人恢复值守时，还会先看一眼手上的任务：只要有指派给它还没接受的、或它进行中还没完成的任务，就立即唤起它接手；任务池里的任务按「智能领取」的规则唤起。几秒内的多条事件会合并成一次唤起，同一时间只跑一个；每次运行的输出保存在 `~/.ahub/identities/<身份>/run-logs/`。运行时长按动静自动续期：只要 harness 还在输出、或在 Hub 上上报进度和评论，就一直让它跑，连续 15 分钟毫无动静才判断为卡住并结束（单次最多 4 小时），结束原因会写进运行记录。
 
 **运行中插话**：harness 正在跑的时候来了新评论、@、私信，不用等这一轮结束：值守进程把它们写进本机的待投递文件，harness 每调用完一次工具，PostToolUse 钩子（`ahub hook`）就把新事项作为附加上下文交给模型，送到的事项会打上 👌、这一轮跑完一起变 ✅，不会再为它们另外唤起；harness 想结束时还有没送到的，Claude Code 的 Stop 钩子会让它先处理再结束。Claude Code 通过 `--settings` 装钩子；Codex 需要支持钩子的版本（`codex exec --help` 里有 `--dangerously-bypass-hook-trust`），值守进程用内联配置装钩子并只对这次运行跳过钩子信任，版本太旧或在 Windows 上时退回到等这一轮结束再唤起。不想要可以加 `--no-interject`。
 
@@ -118,7 +123,7 @@ ahub run --hub http://192.168.1.10:7788 --invite K7Q-2MX --name 审核-前端 --
 
 #### 会话续用
 
-值守进程在本机记下每个会话（`.ahub/run-state.json`）：处理过哪些任务、开了多久、跑了几次、当前上下文多大、最近是否正常结束。每次唤起前按下面的顺序决定（Claude Code 和 Codex 都适用，Codex 用 `codex exec resume <会话号>` 续用）：
+值守进程在本机记下每个会话（`~/.ahub/identities/<身份>/run-state.json`）：处理过哪些任务、开了多久、跑了几次、当前上下文多大、最近是否正常结束。每次唤起前按下面的顺序决定（Claude Code 和 Codex 都适用，Codex 用 `codex exec resume <会话号>` 续用）：
 
 1. **不涉及任务的唤起**（私信、广播）直接新开。候选会话只看同一种 harness、处理过本次任务或其亲属任务（父子任务、引用、依赖）的会话；一次涉及多个任务时，只有覆盖全部任务的会话才能续用。读不到 Hub 时只按同一任务匹配。
 2. **硬性新开**：上下文用到窗口的 60% 以上；会话超过 72 小时或已跑满 30 次；最近两次都没有正常结束；上次续用失败；会话里的任务都已完成或取消、这次是新任务。
@@ -130,12 +135,12 @@ ahub run --hub http://192.168.1.10:7788 --invite K7Q-2MX --name 审核-前端 --
 
 ### 在线状态与提醒
 
-- 在线：保持着实时连接（如值守进程）；活跃：10 分钟内有请求；空闲：2 小时内出现过；离线：更久没出现，或值守进程断线超过 2 分钟。
+- 在线：保持着实时连接（如值守进程）；活跃：10 分钟内有请求；空闲：还没超时；离线：没有有效的授权 ID（超时、值守进程断线超过 2 分钟、正常退出或被强制下线）。
 - agent 下线、重新上线时，控制台「实时动态」里会出现提醒；打开顶栏的「通知」后，控制台在后台时还会弹出系统通知（待验收、阻塞、@你、私信、agent 下线、任务可能失联）。
-- 离线阈值可以用 `ahub serve --offline-after <分钟>` 调整。
+- 离线阈值在控制台「设置 → 自动下线」里调整，也可以用 `ahub serve --offline-after <分钟>` 设初始值。
 - 钉钉群机器人：在控制台「设置」里添加自定义机器人的 Webhook（建议安全设置选「加签」并填密钥），选择要推送的事件（待验收、阻塞、@负责人与私信、逾期、可能失联、agent 下线、验收通过）和项目。几秒内的多条动态合并成一条 Markdown 消息，带回控制台的链接；可以先点「测试」确认。
 - 讨论支持 Markdown：任务描述、工作笔记、评论、交付说明和私信都会按 Markdown 显示（标题、列表、任务清单、代码块、表格、链接）。评论可以带附件：控制台里点「添加附件」、直接粘贴截图或拖入文件；在任务详情里划选交付物的文字，点「引用到评论」就能带着出处引用到评论里；agent 用 `ahub comment <任务> <内容> --file 路径`。
-- 授权 agent 邀请新 agent：在「Agent」页给协调者之类的 agent 点「允许邀请」。它在项目里找不到合适的人时，可以 `ahub invite "用途" --task P1-T3 --name 名字`（或 MCP `hub_create_invite`）创建一次性邀请（24 小时有效），并在任务下 @负责人 附上启动命令；由你在合适的目录运行该命令拉起新 agent。
+- 授权 agent 新建 agent：在「Agent」页给协调者之类的 agent 点「允许邀请」。它在项目里找不到合适的人时，可以 `ahub invite "用途" --task P1-T3 --name 名字`（或 MCP `hub_create_invite`）新建一个待启动的身份，并在任务下 @负责人；身份码不会出现在评论里，由你在控制台成员的「启动」里复制命令，在合适的目录运行拉起新 agent。
 - 原地打转检测：进行中的任务如果进度百分比停在同一个值超过 2 小时，期间又上报了至少 2 次进度（或值守进程为它唤起了 3 次以上），会提醒负责人一次（控制台总览、看板卡片、浏览器通知和钉钉），进度一变化就清除。
 - 阻塞提问：agent 卡住时用 `ahub block <任务> "问题" --option A --option B` 提问，总览「需要你处理」和任务详情里直接点选答案（或自己写），答案会作为评论留下，任务自动解除阻塞，agent 的值守进程被唤起继续做。
 - 引用历史任务：发布或编辑任务时可以引用同项目的任意任务（不限状态、可多选），任务详情里列出引用和被引用，指派提醒和值守唤醒的提示词里会带上「参考任务」；agent 用 `ahub task` 读取。即使没被引用，agent 也能查看同项目的任何任务（`ahub tasks --status completed,canceled`）。
@@ -151,7 +156,7 @@ ahub run --hub http://192.168.1.10:7788 --invite K7Q-2MX --name 审核-前端 --
 
 ### MCP
 
-`ahub mcp` 以 stdio 方式提供 `hub_sync`、`hub_wait`、`hub_claim`、`hub_progress`、`hub_submit`、`hub_comment`、`hub_artifact_update`、`hub_create_subtask` 等工具；Hub 本身也在 `/mcp` 提供 Streamable HTTP 接口（`Authorization: Bearer <agent 令牌>`）。
+`ahub mcp` 以 stdio 方式提供 `hub_sync`、`hub_wait`、`hub_claim`、`hub_progress`、`hub_submit`、`hub_comment`、`hub_artifact_update`、`hub_create_subtask` 等工具；Hub 本身也在 `/mcp` 提供 Streamable HTTP 接口（`Authorization: Bearer <授权 ID>`，授权 ID 用 `POST /api/v1/sessions` 拿身份码换）。推荐 `ahub mcp --hub <地址> --code <身份码>`，它自己换授权 ID 并和命令行共用连接。
 
 ## 任务状态
 

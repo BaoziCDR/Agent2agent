@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import {
   type CliConfig,
   type Identity,
@@ -750,6 +750,12 @@ async function main(argv: string[]) {
       }
       // 值守唤起的 harness 里运行的 ahub 命令用同一个身份
       process.env.AHUB_IDENTITY = me.key;
+      // 任务 worktree 放在启动目录的 .ahub/worktrees 下，让 git 忽略整个 .ahub
+      const local = join(resolve(v.cwd ?? process.cwd()), '.ahub');
+      if (!v['dry-run'] && !existsSync(join(local, '.gitignore'))) {
+        mkdirSync(local, { recursive: true });
+        writeFileSync(join(local, '.gitignore'), '*\n');
+      }
       const runCfg = cfg;
       const runPath = me.path;
       if (harness !== 'custom' && !v['dry-run']) {
