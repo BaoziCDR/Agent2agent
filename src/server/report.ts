@@ -12,6 +12,12 @@ const oneLine = (s: string, n = 80) => {
   const t = s.replace(/\s+/g, ' ').trim();
   return t.length > n ? `${t.slice(0, n)}…` : t;
 };
+/** 表格软件里看本地时间：2026-10-27 11:03 */
+const localTime = (iso: string | null) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return `${day(d)} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
 const cell = (s: string) => s.replace(/\|/g, '\\|');
 
 export function renderReport(hub: Hub, opts: { project?: string; days: number; now?: Date }) {
@@ -105,9 +111,9 @@ export function tasksCsv(hub: Hub, project?: string) {
     ['能力标签', (t) => t.required_tags],
     ['父任务', (t) => t.parent],
     ['前置任务', (t) => t.depends_on],
-    ['截止时间', (t) => t.due_at],
-    ['创建时间', (t) => t.created_at],
-    ['更新时间', (t) => t.updated_at],
+    ['截止时间', (t) => localTime(t.due_at)],
+    ['创建时间', (t) => localTime(t.created_at)],
+    ['更新时间', (t) => localTime(t.updated_at)],
   ];
   const tasks = hub.listTasks({ kind: 'owner' }, { project });
   const lines = [cols.map((c) => c[0]).join(','), ...tasks.map((t) => cols.map(([, f]) => csvCell(f(t))).join(','))];
