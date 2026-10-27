@@ -14,7 +14,7 @@ function sandbox() {
   const home = mkdtempSync(join(tmpdir(), 'ahub-home-'));
   const dir = join(home, 'work');
   mkdirSync(join(dir, '.ahub'), { recursive: true });
-  writeFileSync(join(dir, '.ahub', 'config.json'), JSON.stringify({ hub: 'http://10.0.0.5:7788', agent: 'A-1', name: '甲' }));
+  writeFileSync(join(dir, '.ahub', 'config.json'), JSON.stringify({ hub: 'http://10.0.0.5:7788', code: 'AAAA-BBBB-CCCC', agent: 'A-1', name: '甲' }));
   const run = (...args) => execFileSync(process.execPath, [CLI, ...args], { cwd: run.cwd ?? dir, env: { ...process.env, HOME: home, USERPROFILE: home }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   return { home, dir, run };
 }
@@ -27,16 +27,17 @@ test('内置 skill：填好 Hub 地址，版本标记在 frontmatter 之后', ()
   assert.match(text, new RegExp(`\\n---\\n<!-- ahub-skill: ${bundledVersion()} `));
 });
 
-test('ahub skill：安装到项目目录、在子目录里也装到同一处、更新旧版本、不覆盖别人写的', () => {
+test('ahub skill：统一装到用户目录、更新旧版本、不覆盖别人写的', () => {
   const { home, dir, run } = sandbox();
   assert.match(run('skill', 'status'), /未安装/);
   run('skill', 'install');
-  const claude = join(dir, '.claude', 'skills', 'ahub-collab', 'SKILL.md');
-  const codex = join(dir, '.codex', 'skills', 'ahub-collab', 'SKILL.md');
+  const claude = join(home, '.claude', 'skills', 'ahub-collab', 'SKILL.md');
+  const codex = join(home, '.codex', 'skills', 'ahub-collab', 'SKILL.md');
   assert.ok(existsSync(claude) && existsSync(codex));
+  assert.ok(!existsSync(join(dir, '.claude')));
   assert.ok(readFileSync(claude, 'utf8').includes('http://10.0.0.5:7788'));
   assert.match(run('skill', 'install'), /已是最新/);
-  // 在 worktree 等子目录里运行，仍然装在 .ahub 所在的工作目录
+  // 在别的目录运行，仍然是同一份
   run.cwd = join(dir, '.ahub', 'worktrees', 'P1-T3');
   mkdirSync(run.cwd, { recursive: true });
   assert.match(run('skill', 'install'), /已是最新/);
@@ -47,10 +48,6 @@ test('ahub skill：安装到项目目录、在子目录里也装到同一处、�
   assert.match(run('skill', 'status'), /版本 000000000000，可以 ahub skill update/);
   run('skill', 'update');
   assert.ok(readFileSync(claude, 'utf8').includes(bundledVersion()));
-
-  // 用户级
-  run('skill', 'install', '--target', 'claude', '--global');
-  assert.ok(existsSync(join(home, '.claude', 'skills', 'ahub-collab', 'SKILL.md')));
 
   // 别人手写的不覆盖，除非 --force
   writeFileSync(codex, '---\nname: ahub-collab\n---\n自己写的\n');

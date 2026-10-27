@@ -1,12 +1,23 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
-import { type CliConfig, defaultConfigPath, loadConfig, saveConfig } from './config.js';
+import { resolve } from 'node:path';
+import {
+  type CliConfig,
+  type Identity,
+  applyEnv,
+  currentKey,
+  findIdentity,
+  forgetLocal,
+  identityFor,
+  listIdentities,
+  saveConfig,
+  selectIdentity,
+  setCurrent,
+} from './config.js';
 import { fileArtifact, uploadFile } from './files.js';
-import { AuthError, hubFetch, identityCode, isDeadIdentity, looksLikeInvite, openSession } from './auth.js';
-import { SKILL_TARGETS, type SkillTarget, bundledVersion, installSkill, renderSkill, skillPath, skillStates } from './skill.js';
+import { AuthError, hubFetch, identityCode, isDeadIdentity, looksLikeInvite, openSession, releaseSession } from './auth.js';
+import { SKILL_TARGETS, type SkillTarget, bundledVersion, installSkill, projectCopies, removeProjectCopies, renderSkill, skillPath, skillStates } from './skill.js';
 
 const HELP = `ahub —— 多 Agent 协作中枢命令行
 
@@ -16,11 +27,15 @@ const HELP = `ahub —— 多 Agent 协作中枢命令行
                                        启动 Hub（控制台、Agent 接口、MCP 都在这个端口）
 
 Agent：
-  ahub join --hub URL --code 身份码 [--name 名字] [--platform codex] [--skills a,b] [--global] [--takeover]
+  ahub join --hub URL --code 身份码 [--name 名字] [--platform codex] [--skills a,b] [--takeover]
                                        用负责人给的身份码连接 Hub 并保存到本地（身份码可以反复使用；没有预设名称时要写 --name）
                                        每次连接用身份码换一个授权 ID；同一身份同时只能在一处在线，--takeover 顶掉原来的连接
                                        --invite 是旧的一次性邀请码，仍可使用
   ahub whoami                          查看身份
+  ahub identities                      列出本机保存的身份（* 为默认身份）
+  ahub use <A-5|名字>                  设置本机默认身份；所有命令都可以用 --identity A-5 临时指定
+  ahub logout                          交还授权 ID，立即下线（下次运行命令自动重新连接）
+  ahub forget [A-5|名字]               从本机删除一个身份
   ahub inbox [--project P-1] [--brief] [--json]
                                        同步收件箱（每轮开始时运行）
   ahub wait [--timeout 600]            阻塞等待与你相关的新事件，然后输出收件箱（只等一次，别循环）
@@ -50,11 +65,11 @@ Agent：
   ahub msg <A-3|owner> <内容>          私信
   ahub invite <用途> [--task P1-T3 | --project P-1] [--name 建议名字] [--tags a,b] [--harness codex|claude]
                                        （需负责人授权）找不到合适的 agent 时新建一个待启动的身份，并 @负责人 去控制台拉起它
-  ahub use <项目>                      设置当前目录的默认项目
+  ahub use <项目>                      设置当前身份的默认项目（如 ahub use P-2）
   ahub stream                          持续输出实时事件（SSE）
-  ahub skill install [--target claude|codex|all] [--global] [--force]
-                                       把内置的接入说明装成本地 skill（版本与 ahub 一致，无需联网）；
-                                       默认装到当前工作目录，Claude Code 用 .claude/skills，Codex 用 .codex/skills；--global 装到主目录
+  ahub skill install [--target claude|codex|all] [--force]
+                                       把内置的接入说明装成 skill（版本与 ahub 一致，无需联网）；
+                                       统一装在用户目录：~/.claude/skills（Claude Code）、~/.codex/skills（Codex）
   ahub skill update                    把已装的 skill 更新到当前 ahub 的版本（升级 ahub 后运行）
   ahub skill status | show             查看安装位置和版本 | 直接打印接入说明
   ahub mcp [--hub URL]                 以 stdio 方式运行 MCP 服务（供 Codex、Claude Code 等配置）
@@ -69,8 +84,8 @@ Agent：
            [--session-max-age 72] [--session-max-runs 30] [--cache-ttl 分钟]
            [--judge off|gray|always] [--judge-model 模型] [--judge-timeout 60]  灰区交给小模型判断（Claude 默认 haiku，Codex 需指定模型）
 
-配置保存在当前目录的 .ahub/config.json（加 --global 则保存到用户主目录）。
-也可用环境变量 AHUB_URL、AHUB_TOKEN 覆盖。`;
+身份统一保存在用户目录 ~/.ahub/identities，在哪个目录运行都一样；本机有多个身份时用 --identity 或 ahub use 选择。
+环境变量：AHUB_URL 覆盖 Hub 地址，AHUB_CODE 指定身份码，AHUB_IDENTITY 指定身份（值守进程会自动设给 harness）。`;
 
 /** `ahub <命令> --help`：只列出这个命令相关的用法（含续行），找不到就给完整帮助。 */
 function commandHelp(cmd: string) {
@@ -151,10 +166,19 @@ function rejectedToken(cfg: CliConfig, r: { status: number; text: string }): str
   return isDeadIdentity(code) ? errorText(r) : null;
 }
 
-/** 把失效的身份从配置文件里清掉，Hub 地址留着，下次用新邀请码加入时不必再写 --hub。 */
-function forgetIdentity(path: string, cfg: CliConfig) {
-  for (const k of ['code', 'token', 'session', 'agent', 'name', 'project', 'last_seq'] as const) delete cfg[k];
-  if (existsSync(path)) saveConfig(path, cfg);
+/** 把失效的身份从本机删掉 */
+function forgetIdentity(ident: Identity) {
+  forgetLocal(ident.key);
+}
+
+function describe(i: Identity) {
+  const c = i.config;
+  return `${c.name || '（未命名）'}（${c.agent ?? '未连接过'}）· ${c.hub ?? '未知 Hub'}${c.project ? ` · 默认项目 ${c.project}` : ''}`;
+}
+
+function listText(all: Identity[]) {
+  const cur = currentKey();
+  return all.map((i) => `  ${i.key === cur ? '*' : ' '} ${describe(i)}  [--identity ${i.config.agent ?? i.key}]`).join('\n');
 }
 
 function need(v: string | undefined, what: string): string {
@@ -187,6 +211,7 @@ async function main(argv: string[]) {
       hub: { type: 'string' },
       invite: { type: 'string' },
       code: { type: 'string' },
+      identity: { type: 'string' },
       takeover: { type: 'boolean' },
       name: { type: 'string' },
       platform: { type: 'string' },
@@ -274,23 +299,41 @@ async function main(argv: string[]) {
     return;
   }
 
-  const loaded = loadConfig();
-  const cfg = loaded.config;
-  const configPath = loaded.path ?? defaultConfigPath(!!v.global);
-  if (v.hub) cfg.hub = v.hub.replace(/\/+$/, '');
-  const save = () => saveConfig(configPath, cfg);
+  const hubArg = v.hub?.replace(/\/+$/, '');
+  const given = v.code ?? v.invite ?? (cmd === 'join' ? pos[0] : undefined);
+  // 身份统一在用户目录（~/.ahub/identities）：环境变量 AHUB_IDENTITY > --identity > --code > 默认身份
+  const sel = selectIdentity({ identity: v.identity, code: given && !looksLikeInvite(given) ? given : undefined, hub: hubArg });
+  for (const m of sel.migrated) console.error(`已把旧的目录配置里的身份 ${describe(m)} 导入到 ${m.path}`);
+  if (v.identity && !sel.identity) die(`本机没有身份「${v.identity}」。本机的身份：\n${listText(listIdentities()) || '  （没有）'}`);
+  let ident: Identity | null = sel.identity;
+  let cfg: CliConfig = applyEnv(ident?.config ?? {});
+  if (hubArg) cfg.hub = hubArg;
+  const save = () => ident && saveConfig(ident.path, cfg);
   const enc = encodeURIComponent;
-  conn.path = loaded.path;
+  conn.path = ident?.path ?? null;
   conn.takeover = !!v.takeover;
+  /** 换成另一个身份（用身份码或旧邀请码新建的） */
+  const switchTo = (next: Identity) => {
+    ident = next;
+    cfg = applyEnv(next.config);
+    if (hubArg) cfg.hub = hubArg;
+    conn.path = next.path;
+  };
+  const explicit = !!(process.env.AHUB_IDENTITY || v.identity || given);
+  const needIdentity = () => {
+    if (ident) return;
+    if (sel.ambiguous.length) die(`本机有多个身份，请用 --identity 指定，或用 ahub use <身份> 设默认：\n${listText(sel.ambiguous)}`);
+    die('本机还没有身份。请向负责人要身份码，然后运行 ahub join --hub <地址> --code <身份码>');
+  };
+  if (!['join', 'skill', 'identities', 'use', 'forget', 'run', 'mcp'].includes(cmd)) needIdentity();
 
   switch (cmd) {
     case 'join': {
-      const given = need(v.code ?? v.invite ?? pos[0], '--code 身份码');
-      conn.path = configPath;
+      const code = need(given, '--code 身份码');
       const profile = { name: v.name, platform: v.platform ?? 'other', skills: list(v.skills), tags: list(v.tags) };
-      if (looksLikeInvite(given) && identityCode(cfg)) {
+      if (looksLikeInvite(code) && ident) {
         // 旧的邀请码 + 已有身份：只是多加入一个项目
-        const res = await api(cfg, 'POST', '/api/v1/join', { invite: given, ...profile, tier: v.tier ?? 'L1', description: v.description }, { md: false });
+        const res = await api(cfg, 'POST', '/api/v1/join', { invite: code, ...profile, tier: v.tier ?? 'L1', description: v.description }, { md: false });
         const stale = rejectedToken(cfg, res);
         if (!stale) {
           const data = JSON.parse(ok(res)) as { agent: { id: string; name: string }; project: { id: string } };
@@ -300,36 +343,55 @@ async function main(argv: string[]) {
           console.log('\n' + ok(await api(cfg, 'GET', `/api/v1/projects/${enc(data.project.id)}`)));
           return;
         }
-        console.log(`本地的身份 ${cfg.name ?? cfg.agent ?? ''} 已不能使用（${stale}），已从配置中清除，用邀请码创建新身份。`);
-        forgetIdentity(configPath, cfg);
+        console.log(`本地的身份 ${cfg.name ?? cfg.agent ?? ''} 已不能使用（${stale}），已从本机删除，用邀请码创建新身份。`);
+        forgetIdentity(ident);
       }
-      if (given !== identityCode(cfg)) {
-        forgetIdentity(configPath, cfg);
-        cfg.code = given;
-      }
+      if (looksLikeInvite(code)) switchTo(identityFor(code, hubArg ?? cfg.hub));
       if (!cfg.hub) die('第一次连接需要 --hub http://地址:端口');
       try {
-        await openSession(cfg, configPath, { client: 'cli', takeover: !!v.takeover, ...profile });
+        await openSession(cfg, conn.path, { client: 'cli', takeover: !!v.takeover, ...profile });
       } catch (err) {
-        if (err instanceof AuthError && isDeadIdentity(err.code)) forgetIdentity(configPath, cfg);
+        if (err instanceof AuthError && isDeadIdentity(err.code) && ident && existsSync(ident.path)) forgetIdentity(ident);
         die((err as Error).message);
       }
+      setCurrent(ident!.key);
       const project = cfg.project;
-      console.log(`已连接 Hub，身份 ${cfg.name}（${cfg.agent}）。身份码和授权 ID 已保存到 ${configPath}，不要提交到代码仓库（.ahub/ 已自动加入 .gitignore）。`);
+      console.log(`已连接 Hub，身份 ${cfg.name}（${cfg.agent}），已设为本机默认身份。身份码和授权 ID 保存在 ${conn.path}。`);
       if (project) console.log('\n' + ok(await api(cfg, 'GET', `/api/v1/projects/${enc(project)}`)));
       console.log('下一步：运行 ahub inbox 同步收件箱。');
       return;
     }
+    case 'identities': {
+      const all = listIdentities();
+      if (!all.length) return void console.log('本机还没有身份。请向负责人要身份码，然后运行 ahub join --hub <地址> --code <身份码>');
+      console.log(`本机的身份（* 是默认身份，保存在 ~/.ahub/identities）：\n${listText(all)}`);
+      return;
+    }
+    case 'forget': {
+      const target = pos[0] ? findIdentity(pos[0]) : ident;
+      if (!target) die(`本机没有身份「${pos[0] ?? ''}」`);
+      await releaseSession(applyEnv(target.config), target.config.session);
+      forgetLocal(target.key);
+      console.log(`已从本机删除身份 ${describe(target)}。身份码本身仍然有效，负责人可以在控制台重置。`);
+      return;
+    }
+    case 'logout': {
+      await releaseSession(cfg, cfg.session);
+      delete cfg.session;
+      save();
+      console.log(`已交还授权 ID，${cfg.name}（${cfg.agent}）已下线。下次运行 ahub 命令会自动重新连接。`);
+      return;
+    }
     case 'skill': {
-      // 项目级 skill 装在 agent 的工作目录（.ahub 所在目录），在 worktree 里运行也一样
-      const projectDir = loaded.path && dirname(dirname(loaded.path)) !== homedir() ? dirname(dirname(loaded.path)) : process.cwd();
-      const states = skillStates(projectDir);
+      // skill 统一装在用户目录（~/.claude/skills、~/.codex/skills）
+      const states = skillStates();
       const sub = pos[0] ?? 'status';
       if (sub === 'show') return void process.stdout.write(renderSkill(cfg.hub));
       if (sub === 'status') {
         console.log(`内置 skill 版本：${bundledVersion()}`);
         for (const st of states)
-          console.log(`- ${st.target === 'claude' ? 'Claude Code' : 'Codex'}（${st.scope === 'user' ? '用户级' : '项目级'}）${st.path}：${st.version === null ? '未安装' : st.version === 'unknown' ? '不是 ahub 安装的' : st.current ? '已是最新' : `版本 ${st.version}，可以 ahub skill update`}`);
+          console.log(`- ${st.target === 'claude' ? 'Claude Code' : 'Codex'} ${st.path}：${st.version === null ? '未安装' : st.version === 'unknown' ? '不是 ahub 安装的' : st.current ? '已是最新' : `版本 ${st.version}，可以 ahub skill update`}`);
+        for (const st of projectCopies(process.cwd())) console.log(`- 当前目录里还有旧版装的 ${st.path}，会盖住用户目录那份；ahub skill install 会删掉它`);
         return;
       }
       const write = (path: string, verb: string) => {
@@ -339,21 +401,22 @@ async function main(argv: string[]) {
       if (sub === 'install') {
         const t = v.target ?? 'all';
         if (t !== 'all' && !SKILL_TARGETS.includes(t as SkillTarget)) die('--target 只能是 claude、codex 或 all');
-        const scope = v.global ? 'user' : 'project';
         for (const target of t === 'all' ? SKILL_TARGETS : [t as SkillTarget]) {
-          const path = skillPath(target, scope, projectDir);
+          const path = skillPath(target);
           const st = states.find((x) => x.path === path)!;
           if (st.version === 'unknown' && !v.force) console.log(`跳过 ${path}：已有一份不是 ahub 安装的 skill，确认要覆盖请加 --force`);
           else if (st.current) console.log(`已是最新 ${path}`);
           else write(path, st.version ? '已更新' : '已安装');
         }
-        if (!cfg.hub) console.log('提示：还没有加入 Hub，skill 里的 Hub 地址留空了；加入后再运行一次 ahub skill update。');
+        for (const p of removeProjectCopies(process.cwd())) console.log(`已删除旧版装在工作目录里的 ${p}`);
+        if (!cfg.hub) console.log('提示：还没有连接 Hub，skill 里的 Hub 地址留空了；连接后再运行一次 ahub skill update。');
         return;
       }
       if (sub === 'update') {
         const installed = states.filter((st) => st.version && st.version !== 'unknown');
         if (!installed.length) die('还没有安装过 skill，请运行 ahub skill install');
         for (const st of installed) write(st.path, '已更新');
+        for (const p of removeProjectCopies(process.cwd())) console.log(`已删除旧版装在工作目录里的 ${p}`);
         return;
       }
       die('用法：ahub skill install|update|status|show，运行 ahub --help 查看详情');
@@ -362,10 +425,17 @@ async function main(argv: string[]) {
       console.log(ok(await api(cfg, 'GET', '/api/v1/me')));
       return;
     case 'use': {
-      const project = need(pos[0], '项目编号，如 P-1');
-      cfg.project = project.toUpperCase();
-      save();
-      console.log(`当前目录的默认项目已设为 ${cfg.project}`);
+      const what = need(pos[0], '项目编号（如 P-1）或身份（如 A-5、名字）');
+      if (/^P-?\d+$/i.test(what)) {
+        needIdentity();
+        cfg.project = what.toUpperCase().replace(/^P(\d)/, 'P-$1');
+        save();
+        return void console.log(`${cfg.name}（${cfg.agent}）的默认项目已设为 ${cfg.project}`);
+      }
+      const target = findIdentity(what);
+      if (!target) die(`本机没有身份「${what}」。本机的身份：\n${listText(listIdentities()) || '  （没有）'}`);
+      setCurrent(target.key);
+      console.log(`默认身份已设为 ${describe(target)}`);
       return;
     }
     case 'inbox': {
@@ -619,64 +689,53 @@ async function main(argv: string[]) {
       const harness = (v.harness ?? (v.cmd ? 'custom' : '')) as 'codex' | 'claude' | 'custom';
       if (!['codex', 'claude', 'custom'].includes(harness)) die('请用 --harness codex 或 --harness claude 指定要唤起的 agent，或用 --cmd 给出自定义命令');
       if (harness === 'custom' && !v.cmd) die('--harness custom 需要同时给出 --cmd');
-      let runCfg = cfg;
-      let runPath = loaded.path;
-      const given = v.code ?? v.invite;
       const platform = v.platform ?? (harness === 'claude' ? 'claude-code' : harness === 'codex' ? 'codex' : 'other');
-      if (given) {
-        // 带身份码启动：身份只看运行目录自己的 .ahub/config.json，不继承上级目录或主目录的身份
-        const dir = resolve(v.cwd ?? process.cwd());
-        runPath = join(dir, '.ahub', 'config.json');
-        runCfg = existsSync(runPath) ? (JSON.parse(readFileSync(runPath, 'utf8')) as CliConfig) : {};
-        if (v.hub) runCfg.hub = v.hub.replace(/\/+$/, '');
-        else if (!runCfg.hub) runCfg.hub = cfg.hub;
-        if (!runCfg.hub) die('第一次在这个目录运行，需要 --hub http://地址:端口');
-        if (looksLikeInvite(given) && identityCode(runCfg)) {
+      const profile = { name: v.name, platform, skills: list(v.skills), tags: list(v.tags) };
+      if (given && looksLikeInvite(given)) {
+        if (ident) {
           // 旧邀请码 + 已有身份：试着多加入一个项目；邀请码用过了就沿用已有身份
-          conn.path = runPath;
-          const res = await api(runCfg, 'POST', '/api/v1/join', { invite: given, name: v.name, platform, skills: list(v.skills), tags: list(v.tags) }, { md: false });
-          const stale = rejectedToken(runCfg, res);
+          const res = await api(cfg, 'POST', '/api/v1/join', { invite: given, ...profile }, { md: false });
+          const stale = rejectedToken(cfg, res);
           if (stale) {
-            console.log(`这个目录原来的身份 ${runCfg.name ?? runCfg.agent ?? ''} 已不能使用（${stale}），已从配置中清除，用邀请码创建新身份。`);
-            forgetIdentity(runPath, runCfg);
-            runCfg.code = given;
+            console.log(`原来的身份 ${cfg.name ?? cfg.agent ?? ''} 已不能使用（${stale}），已从本机删除，用邀请码创建新身份。`);
+            forgetIdentity(ident);
+            switchTo(identityFor(given, hubArg ?? cfg.hub));
           } else if (res.status < 400) console.log(`已加入项目 ${(JSON.parse(res.text) as { project: { id: string } }).project.id}`);
-        } else if (given !== identityCode(runCfg)) {
-          forgetIdentity(runPath, runCfg);
-          runCfg.code = given;
-        }
-        saveConfig(runPath, runCfg);
+        } else switchTo(identityFor(given, hubArg));
       }
-      if (!runPath || !identityCode(runCfg)) die('这个目录还没有连接过 Hub：用 ahub run --hub 地址 --code 身份码 --harness codex|claude 一步连接并值守');
+      if (!ident) needIdentity();
+      if (!explicit && sel.ambiguous.length > 1)
+        die(`本机有多个身份，值守前请用 --identity 指定是哪一个（或直接用 --code 身份码）：\n${listText(sel.ambiguous)}`);
+      const me = ident!;
+      if (!cfg.hub) die('第一次连接需要 --hub http://地址:端口');
       {
-        // 值守是一次新的连接：用身份码换授权 ID；身份不能用了就清掉本地配置并说明怎么办
+        // 值守是一次新的连接：用身份码换授权 ID；身份不能用了就从本机删掉并说明怎么办
         try {
-          await openSession(runCfg, runPath, { client: 'run', takeover: !!v.takeover, cwd: resolve(v.cwd ?? process.cwd()), name: v.name, platform, skills: list(v.skills), tags: list(v.tags) });
-          console.log(`已连接 Hub，身份 ${runCfg.name}（${runCfg.agent}），配置保存在 ${runPath}`);
+          await openSession(cfg, me.path, { client: 'run', takeover: !!v.takeover, cwd: resolve(v.cwd ?? process.cwd()), ...profile });
+          console.log(`已连接 Hub，身份 ${cfg.name}（${cfg.agent}），配置保存在 ${me.path}`);
+          if (!currentKey()) setCurrent(me.key);
         } catch (err) {
           if (!(err instanceof AuthError) || err.code === 'network') {
             console.log(`暂时连不上 Hub（${(err as Error).message}），值守进程会自动重试`);
           } else if (isDeadIdentity(err.code)) {
-            const who = runCfg.name ?? runCfg.agent ?? '';
-            forgetIdentity(runPath, runCfg);
-            die(`这个目录的身份 ${who} 不能再使用：${err.message}。已从 ${runPath} 中清除它。\n如需继续，请向负责人要身份码，然后运行：ahub run --harness ${harness === 'custom' ? 'codex' : harness} --code <身份码>`);
+            const who = cfg.name ?? cfg.agent ?? '';
+            if (existsSync(me.path)) forgetIdentity(me);
+            die(`身份 ${who} 不能再使用：${err.message}。已从本机删除它。\n如需继续，请向负责人要身份码，然后运行：ahub run --harness ${harness === 'custom' ? 'codex' : harness} --code <身份码>`);
           } else die(err.message);
         }
       }
+      // 值守唤起的 harness 里运行的 ahub 命令用同一个身份
+      process.env.AHUB_IDENTITY = me.key;
+      const runCfg = cfg;
+      const runPath = me.path;
       if (harness !== 'custom' && !v['dry-run']) {
-        // 值守唤起的 harness 优先读本地 skill：没装就装到运行目录，旧版本自动更新到和 ahub 一致
-        const runDir = v.cwd ?? process.cwd();
-        const mine = skillStates(runDir).filter((st) => st.target === harness);
-        const ours = mine.filter((st) => st.version && st.version !== 'unknown');
-        for (const st of ours.filter((x) => !x.current)) {
+        // 值守唤起的 harness 读用户目录的 skill：没装就装上，旧版本自动更新到和 ahub 一致
+        const st = skillStates().find((x) => x.target === harness)!;
+        if (st.version === null || (st.version !== 'unknown' && !st.current)) {
           installSkill(st.path, runCfg.hub);
-          console.log(`已把 skill 更新到当前 ahub 的版本：${st.path}`);
+          console.log(`${st.version ? '已把 skill 更新到当前 ahub 的版本' : '已安装接入说明 skill'}：${st.path}`);
         }
-        if (!mine.some((st) => st.version)) {
-          const path = skillPath(harness, 'project', runDir);
-          installSkill(path, runCfg.hub);
-          console.log(`已安装接入说明 skill：${path}`);
-        }
+        for (const p of removeProjectCopies(v.cwd ?? process.cwd())) console.log(`已删除旧版装在工作目录里的 ${p}（改用用户目录那份）`);
       }
       const policy = v['new-session'] ? 'new' : (v['session-policy'] ?? 'smart');
       if (!['smart', 'task', 'shared', 'new'].includes(policy)) die('--session-policy 只能是 smart、task、shared 或 new');
@@ -720,7 +779,7 @@ async function main(argv: string[]) {
     }
     case 'mcp': {
       const { runStdioBridge } = await import('./mcp-bridge.js');
-      await runStdioBridge(cfg, configPath);
+      await runStdioBridge(cfg, ident?.path ?? null);
       return;
     }
     default:

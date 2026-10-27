@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb } from '../dist/server/db.js';
@@ -30,33 +30,38 @@ async function setup(t) {
   const configPath = join(dir, '.ahub', 'config.json');
   mkdirSync(join(dir, '.ahub'), { recursive: true });
   writeFileSync(configPath, JSON.stringify({ hub: url, token: joined.code, agent: joined.agent.id, name: '旧身份', project: project.id, last_seq: 3 }));
-  const env = { ...process.env, HOME: home, USERPROFILE: home, AHUB_URL: '', AHUB_TOKEN: '' };
-  delete env.AHUB_URL;
-  delete env.AHUB_TOKEN;
+  const env = { ...process.env, HOME: home, USERPROFILE: home };
+  for (const k of ['AHUB_URL', 'AHUB_TOKEN', 'AHUB_CODE', 'AHUB_IDENTITY', 'AHUB_SESSION']) delete env[k];
   const run = (args, timeout = 0) =>
     new Promise((resolve) => {
       execFile(process.execPath, [CLI, ...args], { cwd: dir, env, encoding: 'utf8', timeout, killSignal: 'SIGKILL' }, (err, stdout, stderr) =>
         resolve({ code: err?.code ?? 0, stdout, stderr }),
       );
     });
-  const config = () => JSON.parse(readFileSync(configPath, 'utf8'));
-  return { url, call, invite, joined, run, config };
+  const ids = join(home, '.ahub', 'identities');
+  /** 本机保存的身份（用户目录） */
+  const identities = () => (existsSync(ids) ? readdirSync(ids).map((k) => JSON.parse(readFileSync(join(ids, k, 'config.json'), 'utf8'))) : []);
+  /** 默认身份的配置 */
+  const config = () => JSON.parse(readFileSync(join(ids, readFileSync(join(home, '.ahub', 'current'), 'utf8').trim(), 'config.json'), 'utf8'));
+  return { url, call, invite, joined, run, config, identities, home, dir, configPath };
 }
 
-test('ahub run 续用已停用的身份：报错并给出提示，清掉配置里的身份，保留 Hub 地址', async (t) => {
-  const { url, run, config } = await setup(t);
+test('旧的目录配置自动导入用户目录；续用已停用的身份：报错并给出提示，从本机删掉', async (t) => {
+  const { run, identities, configPath } = await setup(t);
   const r = await run(['run', '--harness', 'codex', '--dry-run']);
   assert.notEqual(r.code, 0);
+  assert.match(r.stderr, /已把旧的目录配置里的身份 旧身份（A-1）.*导入到/);
   assert.match(r.stderr, /身份 旧身份 不能再使用：身份 旧身份（A-1）已被负责人停用/);
   assert.match(r.stderr, /ahub run --harness codex --code <身份码>/);
-  assert.deepEqual(config(), { hub: url });
+  assert.ok(!existsSync(configPath) && existsSync(configPath + '.migrated'));
+  assert.deepEqual(identities(), []);
 });
 
 test('ahub join / run 带旧邀请码：清掉失效身份后以新身份加入，不报错', async (t) => {
-  const { invite, run, config, call, joined } = await setup(t);
+  const { invite, run, config, call, joined, identities } = await setup(t);
   const r = await run(['join', '--invite', await invite(), '--name', '新身份']);
   assert.equal(r.code, 0, r.stderr);
-  assert.match(r.stdout, /已从配置中清除/);
+  assert.match(r.stdout, /已从本机删除/);
   assert.equal(config().name, '新身份');
   assert.equal(config().agent, 'A-2');
 
@@ -69,6 +74,7 @@ test('ahub join / run 带旧邀请码：清掉失效身份后以新身份加入�
   assert.match(out.stdout, /已连接 Hub，身份 第三个（A-3）/);
   assert.equal(config().agent, 'A-3');
   assert.notEqual(config().code, joined.code);
+  assert.deepEqual(identities().map((i) => i.agent), ['A-3']);
   assert.equal(config().token, undefined);
   assert.match(config().session, /^as_/);
 });
@@ -100,4 +106,32 @@ test('ahub 用身份码连接：同一身份只能一处在线，--takeover 顶�
   // 身份码仍然有效：再次运行就重新上线
   assert.equal((await run(['whoami'])).code, 0);
   assert.match(config().session, /^as_/);
+});
+
+test('多个身份：在任何目录都能用，按 --identity / 默认身份选择，值守要求明确指定', async (t) => {
+  const { url, call, run, home, identities } = await setup(t);
+  const a = await call('POST', '/api/v1/admin/agents', { project: 'P-1', name: '甲' });
+  const b = await call('POST', '/api/v1/admin/agents', { project: 'P-1', name: '乙' });
+  assert.equal((await run(['join', '--hub', url, '--code', a.code])).code, 0);
+  assert.equal((await run(['join', '--hub', url, '--code', b.code])).code, 0);
+  // 加上从旧目录配置导入的 A-1，本机共三个身份
+  assert.deepEqual(identities().map((i) => i.agent).sort(), ['A-1', 'A-2', 'A-3']);
+  // 默认身份是最后 join 的乙；--identity 临时切换；换个目录也一样
+  assert.match((await run(['whoami'])).stdout, /乙/);
+  assert.match((await run(['whoami', '--identity', '甲'])).stdout, /甲/);
+  assert.match((await run(['identities'])).stdout, /\* 乙（A-3）/);
+  assert.equal((await run(['use', 'A-2'])).code, 0);
+  assert.match((await run(['whoami'])).stdout, /甲/);
+  // 值守没指定身份时不猜
+  const r = await run(['run', '--harness', 'codex', '--dry-run']);
+  assert.notEqual(r.code, 0);
+  assert.match(r.stderr, /本机有多个身份/);
+  // 旧版装在工作目录里的 skill 会被清掉，改装到用户目录
+  mkdirSync(join(home, 'work', '.claude', 'skills', 'ahub-collab'), { recursive: true });
+  writeFileSync(join(home, 'work', '.claude', 'skills', 'ahub-collab', 'SKILL.md'), '---\nname: ahub-collab\n---\n<!-- ahub-skill: 000000000000 · x -->\n');
+  assert.match((await run(['skill', 'install'])).stdout, /已删除旧版装在工作目录里的/);
+  assert.ok(existsSync(join(home, '.claude', 'skills', 'ahub-collab', 'SKILL.md')));
+  assert.ok(!existsSync(join(home, 'work', '.claude', 'skills', 'ahub-collab')));
+  assert.equal((await run(['forget', '乙'])).code, 0);
+  assert.deepEqual(identities().map((i) => i.agent).sort(), ['A-1', 'A-2']);
 });
