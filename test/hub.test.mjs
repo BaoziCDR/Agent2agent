@@ -141,6 +141,48 @@ test('@提及只发给被提及的成员；@负责人只给负责人', () => {
   assert.equal(ownerMentions.length, 1);
 });
 
+test('负责人读过的 @ 和私信不再留在「需要你处理」里', () => {
+  const { hub, p1, join } = setup();
+  const a = join('甲');
+  const b = join('乙');
+  const t1 = hub.createTask({ kind: 'owner' }, { project: p1.id, title: '一' });
+  const t2 = hub.createTask({ kind: 'owner' }, { project: p1.id, title: '二' });
+  const t3 = hub.createTask({ kind: 'owner' }, { project: p1.id, title: '三' });
+  hub.comment({ kind: 'agent', agent: a.row }, t1.id, '@负责人 第一条');
+  hub.comment({ kind: 'agent', agent: a.row }, t1.id, '@负责人 第二条');
+  hub.comment({ kind: 'agent', agent: a.row }, t2.id, '@负责人 第三条');
+  hub.comment({ kind: 'agent', agent: a.row }, t3.id, '@负责人 第四条');
+  hub.message({ kind: 'agent', agent: a.row }, 'owner', '私信一');
+  hub.message({ kind: 'agent', agent: b.row }, 'owner', '私信二');
+  const pending = () => hub.overview().mentions.map((e) => e.summary.replace(/^.*[：:]/, ''));
+  assert.equal(pending().length, 6);
+
+  // 打开任务详情：该任务下的 @ 都算已读，别的任务不受影响
+  assert.equal(hub.markOwnerRead({ task: t1.id }).count, 2);
+  assert.deepEqual(pending(), ['私信二', '私信一', '@负责人 第四条', '@负责人 第三条']);
+  assert.equal(hub.markOwnerRead({ task: t1.id }).count, 0);
+
+  // 负责人在任务下回复，也算读过
+  hub.comment({ kind: 'owner' }, t2.id, '好的');
+  assert.equal(hub.overview().mentions.some((e) => e.task === t2.id), false);
+
+  // 回复某个 agent 的私信，只清掉它发来的
+  hub.message({ kind: 'owner' }, a.agent.id, '收到');
+  assert.deepEqual(pending(), ['私信二', '@负责人 第四条']);
+
+  // 点单条
+  const seq = hub.overview().mentions.find((e) => e.type === 'message.direct').seq;
+  assert.equal(hub.markOwnerRead({ seqs: [seq] }).count, 1);
+  assert.deepEqual(pending(), ['@负责人 第四条']);
+
+  // 新的 @ 照样出现；全部已读后清空
+  hub.comment({ kind: 'agent', agent: a.row }, t1.id, '@负责人 又来一条');
+  assert.equal(pending().length, 2);
+  assert.equal(hub.markOwnerRead({ project: p1.id }).count, 2);
+  assert.deepEqual(hub.overview().mentions, []);
+  assert.throws(() => hub.markOwnerRead({ type: 'bogus' }), /未知的类型/);
+});
+
 test('@完整名字 也能提及，长名字优先匹配，非成员不算', () => {
   const { hub, p1, join } = setup();
   const a = join('Codex');

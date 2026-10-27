@@ -245,6 +245,8 @@ function migrate(db: Db) {
       db.prepare('UPDATE artifacts SET round = ? WHERE id = ?').run(Math.max(round, 1), r.id);
     }
   }
+  // 负责人是否已读过发给他的 @ 和私信；读过的不再出现在总览「需要你处理」里
+  if (!has('events', 'owner_read')) db.exec('ALTER TABLE events ADD COLUMN owner_read INTEGER NOT NULL DEFAULT 0');
   db.exec(`CREATE TABLE IF NOT EXISTS artifact_revisions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     artifact_id INTEGER NOT NULL REFERENCES artifacts(id),

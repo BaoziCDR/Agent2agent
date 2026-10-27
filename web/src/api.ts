@@ -224,6 +224,10 @@ export const patch = <T>(path: string, body: unknown) => api<T>('PATCH', path, b
 export const put = <T>(path: string, body: unknown) => api<T>('PUT', path, body);
 export const del = <T>(path: string) => api<T>('DELETE', path);
 
+/** 把发给负责人的 @ / 私信标为已读；返回新标记的条数 */
+export const markOwnerRead = (body: { seqs?: number[]; task?: string; from?: string; type?: 'mention' | 'message.direct'; project?: string }) =>
+  post<{ count: number }>('/owner-inbox/read', body).then((r) => r.count, () => 0);
+
 /** 带令牌下载文件（导出报告、CSV 等），浏览器里另存为 filename。 */
 export async function download(path: string, filename: string) {
   const res = await fetch(`/api/v1/admin${path}`, { headers: { authorization: `Bearer ${getToken() ?? ''}` } });

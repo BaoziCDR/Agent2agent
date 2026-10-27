@@ -1,10 +1,10 @@
-import { get, type Overview as OverviewData } from '../api';
+import { get, markOwnerRead, type Overview as OverviewData } from '../api';
 import { AnswerBox } from '../answer';
 import { StatusBadge, clock, dueInfo, presence, PRESENCE_LABEL, timeAgo, useData, useHub, agentLabel } from '../ui';
 
 export function Overview() {
-  const { project, projects, agents, events, openTask, go } = useHub();
-  const { data } = useData(() => get<OverviewData>(`/overview${project ? `?project=${project}` : ''}`), [project]);
+  const { project, projects, agents, events, openTask, go, refresh } = useHub();
+  const { data, reload } = useData(() => get<OverviewData>(`/overview${project ? `?project=${project}` : ''}`), [project]);
   const scopeName = project ? projects.find((p) => p.id === project)?.name : '全部项目';
   const scopedAgents = project ? agents.filter((a) => a.projects.some((p) => p.id === project)) : agents;
   // 只看面向全体或负责人的事件；发给某个 agent 的定向事件（如「指派给了你」）在实时动态页里看
@@ -71,7 +71,14 @@ export function Overview() {
       <div className="grid two-col">
         <div className="grid" style={{ alignContent: 'start' }}>
           <div className="card">
-            <h3>需要你处理</h3>
+            <div className="btn-row" style={{ justifyContent: 'space-between', marginBottom: 8 }}>
+              <h3 style={{ margin: 0 }}>需要你处理</h3>
+              {data && data.mentions.length > 0 && (
+                <button className="btn small" onClick={() => markOwnerRead({ project: project ?? undefined }).then(reload)}>
+                  @ 和私信全部已读
+                </button>
+              )}
+            </div>
             {data && data.attention.length === 0 && data.mentions.length === 0 && <div className="empty">暂时没有需要你处理的事</div>}
             <div className="list">
               {data?.attention.map((t) => (
@@ -97,7 +104,12 @@ export function Overview() {
                 </div>
               ))}
               {data?.mentions.map((e) => (
-                <div key={e.seq} className="list-item clickable" onClick={() => (e.task ? openTask(e.task) : go('messages'))}>
+                <div key={e.seq} className="list-item clickable" onClick={() => {
+                    // 点开就算读过；打开任务详情时也会把该任务下的 @ 一并标为已读
+                    markOwnerRead({ seqs: [e.seq] }).then((n) => n && refresh());
+                    if (e.task) openTask(e.task);
+                    else go('messages');
+                  }}>
                   <span className="badge accent">{e.type === 'mention' ? '@你' : '私信'}</span>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div>{e.summary}</div>
