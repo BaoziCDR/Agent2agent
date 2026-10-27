@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { get, patch, post, uploadFile, type Part, type TaskDetail, type Uploaded } from '../api';
+import { get, markOwnerRead, patch, post, uploadFile, type Part, type TaskDetail, type Uploaded } from '../api';
 import { Modal, StatusBadge, clock, dateTime, dueInfo, splitList, timeAgo, toLocalInput, useData, useHub } from '../ui';
 import { MentionTextarea, agentCandidates } from '../mention';
 import { Markdown } from '../markdown';
@@ -19,6 +19,10 @@ const partText = (parts: Part[]) =>
 export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void }) {
   const { agents, toast, refresh, openTask } = useHub();
   const { data: t, error, reload } = useData(() => get<TaskDetail>(`/tasks/${id}`), [id]);
+  // 打开任务、看到评论，就当读过这个任务里 @负责人 的话；没有新标记的就不刷新，避免来回请求
+  useEffect(() => {
+    if (t) markOwnerRead({ task: id }).then((n) => n && refresh());
+  }, [t, id, refresh]);
   const [comment, setComment] = useState('');
   const [dialog, setDialog] = useState<null | 'reject' | 'cancel' | 'edit'>(null);
   const [reason, setReason] = useState('');
