@@ -8,6 +8,7 @@ import { NewTask } from './pages/NewTask';
 import { Agents } from './pages/Agents';
 import { Invite } from './pages/Invite';
 import { Messages } from './pages/Messages';
+import { GlobalSearch } from './search';
 import { Feed } from './pages/Feed';
 import { Projects } from './pages/Projects';
 import { TaskDrawer } from './pages/TaskDrawer';
@@ -209,7 +210,7 @@ export function App() {
         <header className="topbar">
           <div className="brand">
             <span className="brand-dot" />
-            协作中枢
+            <span className="brand-name">协作中枢</span>
           </div>
           <select
             className="select"
@@ -227,6 +228,7 @@ export function App() {
             ))}
           </select>
           <div className="spacer" />
+          <GlobalSearch />
           {notifySupported() && (
             <button
               className="btn small"
