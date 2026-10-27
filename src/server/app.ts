@@ -206,6 +206,7 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
         trigger: str(b.trigger),
         summary: str(b.summary),
         harness: str(b.harness),
+        session: str(b.session),
       });
     });
 
