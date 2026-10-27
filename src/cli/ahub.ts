@@ -77,7 +77,7 @@ Agent：
   ahub run --harness codex|claude      值守模式：保持在线，收到指派、@、私信、退回时自动唤起 harness 处理
            [--hub URL --code 身份码 [--name 名字]]  用身份码连接并开始值守（可反复运行同一条命令）
            [--takeover]                 这个身份已在别处在线时，顶掉原来的连接
-           [--cwd 目录] [--max-runs 10] [--idle-timeout 15] [--run-timeout 240] [--new-session]
+           [--cwd 目录] [--max-runs 50] [--idle-timeout 15] [--run-timeout 240] [--new-session]
            [--harness-arg 参数 ...] [--cmd "自定义命令"] [--dry-run]
            [--claim smart|always|off] [--max-active 2] [--claim-min-score 30] [--claim-stagger 10]
                                          任务池领取：smart 按 Hub 给的匹配度和名次错峰唤起（默认）；always 一有就唤起；off 不为任务池唤起
@@ -790,7 +790,7 @@ async function main(argv: string[]) {
         cmd: v.cmd,
         harnessArgs: v['harness-arg']?.length ? v['harness-arg'] : undefined,
         cwd: v.cwd ?? process.cwd(),
-        maxRunsPerHour: Number(v['max-runs'] ?? 10) || 10,
+        maxRunsPerHour: Math.floor(num('max-runs', 50)),
         timeoutMinutes: Number(v['run-timeout'] ?? 240) || 240,
         idleMinutes: Number(v['idle-timeout'] ?? 15) || 15,
         debounceSeconds: Number(v.debounce ?? 5) || 5,
