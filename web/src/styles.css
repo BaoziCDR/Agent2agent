@@ -2308,3 +2308,25 @@ table.table {
     width: 40vw;
   }
 }
+
+/* 手机上筛选栏默认折叠，点「筛选」展开；桌面端一直显示 */
+.filter-toggle {
+  display: none;
+  align-items: center;
+  gap: 6px;
+}
+
+.filter-toggle.on {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+@media (max-width: 600px) {
+  .filter-toggle {
+    display: inline-flex;
+  }
+  .filter-bar.collapsed {
+    display: none;
+  }
+}
