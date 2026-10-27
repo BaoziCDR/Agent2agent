@@ -127,6 +127,24 @@ test('搜索：任务、评论、私信；agent 只能搜自己的项目', async
   assert.match(md.text, /## 评论（1）/);
 });
 
+test('任务模板：保存、同名覆盖、改名冲突、删除', async () => {
+  const { req } = await setup();
+  const a = (await req('POST', '/api/v1/admin/templates', { name: '发版', title: '发布 v{版本}', priority: 'p1', subtasks: ['打包', ' ', '冒烟测试'], chain: true })).json();
+  assert.equal(a.priority, 'P1');
+  assert.deepEqual(a.subtasks, ['打包', '冒烟测试']);
+  assert.equal(a.chain, true);
+  const b = (await req('POST', '/api/v1/admin/templates', { name: '发版', title: '发布新版本' })).json();
+  assert.equal(b.id, a.id);
+  assert.equal(b.title, '发布新版本');
+  const c = (await req('POST', '/api/v1/admin/templates', { name: '周报' })).json();
+  assert.equal((await req('PUT', `/api/v1/admin/templates/${c.id}`, { name: '发版' })).status, 409);
+  assert.equal((await req('POST', '/api/v1/admin/templates', { name: ' ' })).status, 400);
+  assert.equal((await req('GET', '/api/v1/admin/templates')).json().length, 2);
+  await req('DELETE', `/api/v1/admin/templates/${c.id}`);
+  assert.equal((await req('DELETE', `/api/v1/admin/templates/${c.id}`)).status, 404);
+  assert.deepEqual((await req('GET', '/api/v1/admin/templates')).json().map((t) => t.name), ['发版']);
+});
+
 test('幂等键：同一个键重复提交只执行一次', async () => {
   const { req, join, project } = await setup();
   const a = await join('甲');
