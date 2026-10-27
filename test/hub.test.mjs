@@ -92,7 +92,14 @@ test('指派、接受、进度、提交、退回、验收', () => {
   assert.ok(inbox.needs_action.some((e) => e.summary.includes('退回')));
 
   hub.submit(a.row, t.id, { summary: '补了测试' });
+  // 待验收时也能更新进度和工作笔记，状态不变
+  const lease = hub.getTask(t.id).lease_until;
+  const r = hub.progress(a.row, t.id, { note: '补充：测试覆盖了边界情况', notes: '交付物已更新' });
+  assert.equal(r.status, 'review');
+  assert.equal(r.notes, '交付物已更新');
+  assert.equal(hub.getTask(t.id).lease_until, lease);
   assert.equal(hub.approve(t.id).status, 'completed');
+  assert.throws(() => hub.progress(a.row, t.id, { note: '晚了' }), /已完成.*不能上报进度/);
   assert.equal(hub.getTask(t.id).artifacts.length, 3);
 });
 
