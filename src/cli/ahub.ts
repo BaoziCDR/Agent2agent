@@ -41,7 +41,7 @@ Agent：
   ahub mcp [--hub URL]                 以 stdio 方式运行 MCP 服务（供 Codex、Claude Code 等配置）
   ahub run --harness codex|claude      值守模式：保持在线，收到指派、@、私信、退回时自动唤起 harness 处理
            [--hub URL --invite 邀请码 --name 名字]  在还没加入过的目录一步完成加入并开始值守
-           [--cwd 目录] [--max-runs 10] [--run-timeout 60] [--wake-on-open] [--new-session]
+           [--cwd 目录] [--max-runs 10] [--idle-timeout 15] [--run-timeout 240] [--wake-on-open] [--new-session]
            [--harness-arg 参数 ...] [--cmd "自定义命令"] [--dry-run]
 
 配置保存在当前目录的 .ahub/config.json（加 --global 则保存到用户主目录）。
@@ -149,6 +149,7 @@ async function main(argv: string[]) {
       cwd: { type: 'string' },
       'max-runs': { type: 'string' },
       'run-timeout': { type: 'string' },
+      'idle-timeout': { type: 'string' },
       debounce: { type: 'string' },
       'wake-on-open': { type: 'boolean' },
       'new-session': { type: 'boolean' },
@@ -461,7 +462,8 @@ async function main(argv: string[]) {
         harnessArgs: v['harness-arg']?.length ? v['harness-arg'] : undefined,
         cwd: v.cwd ?? process.cwd(),
         maxRunsPerHour: Number(v['max-runs'] ?? 10) || 10,
-        timeoutMinutes: Number(v['run-timeout'] ?? 60) || 60,
+        timeoutMinutes: Number(v['run-timeout'] ?? 240) || 240,
+        idleMinutes: Number(v['idle-timeout'] ?? 15) || 15,
         debounceSeconds: Number(v.debounce ?? 5) || 5,
         wakeOnOpen: !!v['wake-on-open'],
         newSession: !!v['new-session'],
