@@ -35,7 +35,7 @@ test('钉钉通知：按类别和项目过滤、合并发送、记录失败', as
 
   const inv = hub.createInvite({ project: p1.id });
   const a = hub.join({ invite: inv.code, name: '甲' }, null);
-  const row = hub.authAgent(a.token);
+  const row = hub.agentByCode(a.code);
   const t = hub.createTask({ kind: 'owner' }, { project: p1.id, title: '写接口' });
   hub.claim(row, t.id);
   hub.block(row, t.id, '缺少设计稿');

@@ -3,6 +3,7 @@ import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, wr
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import type { CliConfig } from './config.js';
+import { AuthError, identityCode, isDeadIdentity, isFinal, openSession, releaseSession } from './auth.js';
 import { type JudgeMode, applyVerdict, judgePrompt, runJudge, shouldJudge } from './judge.js';
 import {
   type SessionDecision,
@@ -176,8 +177,46 @@ export function buildPrompt(cfg: CliConfig, reasons: HubEvent[], open: OpenTask[
 }
 
 export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOptions) {
-  if (!cfg.hub || !cfg.token) throw new Error('请先在这个目录运行 ahub join 加入 Hub');
-  const headers = { authorization: `Bearer ${cfg.token}` };
+  if (!cfg.hub || !identityCode(cfg)) throw new Error('请先用身份码连接 Hub：ahub run --hub 地址 --code 身份码');
+  const cwd = resolve(opts.cwd);
+  // 授权 ID：值守进程和它唤起的 harness 共用（通过环境变量 AHUB_SESSION 传给 harness 里的 ahub 命令）
+  let session = cfg.session;
+  const useSession = (s: string | undefined) => {
+    session = s;
+    if (s) process.env.AHUB_SESSION = s;
+    else delete process.env.AHUB_SESSION;
+  };
+  useSession(session);
+  const headers = () => ({ authorization: `Bearer ${session ?? ''}` });
+  /** 被顶掉、被强制下线、身份失效：停掉正在跑的 harness 并退出，不自动重连 */
+  const fatal = (msg: string): never => {
+    log(msg);
+    stopChild();
+    process.exit(1);
+  };
+  /** 授权 ID 过期（比如断网太久）：用身份码重新换一个；这时如果别处已经上线，就让给它 */
+  const relogin = async () => {
+    try {
+      useSession(await openSession(cfg, configPath, { client: 'run', cwd }));
+      log('授权 ID 已过期，已用身份码重新连接');
+    } catch (err) {
+      if (err instanceof AuthError && err.code !== 'network') fatal(`无法重新连接：${err.message}`);
+      throw err;
+    }
+  };
+  /** 读出 401 的原因；可以重连时重连并返回 true */
+  const onUnauthorized = async (text: string): Promise<void> => {
+    let code = '';
+    let message = text.slice(0, 200);
+    try {
+      const e = JSON.parse(text).error as { code: string; message: string };
+      [code, message] = [e.code, e.message];
+    } catch {
+      // 不是 JSON
+    }
+    if (isFinal(code) || isDeadIdentity(code) || code === 'session_required') fatal(`值守结束：${message}`);
+    await relogin();
+  };
   const stateDir = dirname(configPath);
   const statePath = join(stateDir, 'run-state.json');
   const logDir = join(stateDir, 'run-logs');
@@ -192,7 +231,6 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
     ];
   }
   const sessions = () => (state.sessions ??= []);
-  const cwd = resolve(opts.cwd);
 
   let handled = 0; // 已经为之唤起过的最大事件号，避免 harness 没确认时反复唤起
   let running = false;
@@ -206,11 +244,18 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
   let touch: () => void = () => {}; // 运行中的 harness 有动静时调用，推迟空闲超时
 
   const api = async (method: string, path: string, body?: unknown) => {
-    const res = await fetch(cfg.hub + path, {
-      method,
-      headers: { ...headers, ...(body ? { 'content-type': 'application/json' } : {}) },
-      body: body ? JSON.stringify(body) : undefined,
-    });
+    const send = () =>
+      fetch(cfg.hub + path, {
+        method,
+        headers: { ...headers(), ...(body ? { 'content-type': 'application/json' } : {}) },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+    if (!session) await relogin();
+    let res = await send();
+    if (res.status === 401) {
+      await onUnauthorized(await res.text());
+      res = await send();
+    }
     if (!res.ok) throw new Error(`HTTP ${res.status}：${(await res.text()).slice(0, 200)}`);
     return res.json();
   };
@@ -520,8 +565,12 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
     while (!stopping) {
       try {
         const since = lastId || handled;
-        const res = await fetch(`${cfg.hub}/api/v1/stream?daemon=1${since ? `&since=${since}` : ''}`, { headers });
-        if (res.status === 401) throw Object.assign(new Error('令牌无效或已被停用'), { fatal: true });
+        if (!session) await relogin();
+        const res = await fetch(`${cfg.hub}/api/v1/stream?daemon=1${since ? `&since=${since}` : ''}`, { headers: headers() });
+        if (res.status === 401) {
+          await onUnauthorized(await res.text());
+          continue;
+        }
         if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
         log('已连接 Hub，等待新事项');
         backoff = 1;
@@ -538,7 +587,13 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
             if (id) lastId = Number(id.slice(4)) || lastId;
             const data = lines.find((l) => l.startsWith('data: '));
             if (!data) continue;
-            if (lines.includes('event: agent.control')) control(data.slice(6));
+            if (lines.includes('event: session.ended')) {
+              // 授权 ID 在 Hub 上结束了：被顶掉或强制下线就退出，过期就重新连接
+              const e = JSON.parse(data.slice(6)) as { reason: string; note: string };
+              if (e.reason === 'revoked') fatal(`负责人强制下线${e.note ? `：${e.note}` : ''}，值守结束`);
+              if (e.reason === 'replaced') fatal(`这个身份已在别处上线（${e.note || '另一处'}），这里的值守结束`);
+              useSession(undefined);
+            } else if (lines.includes('event: agent.control')) control(data.slice(6));
             else {
               touch(); // harness 在 Hub 上上报进度、评论等也算有动静
               schedule();
@@ -547,7 +602,6 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
         }
         log('连接断开，准备重连');
       } catch (err) {
-        if ((err as { fatal?: boolean }).fatal) throw err;
         log(`连接 Hub 失败：${(err as Error).message}，${backoff} 秒后重试`);
       }
       await new Promise((r) => setTimeout(r, backoff * 1000));
@@ -560,7 +614,10 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
     stopping = true;
     stopChild();
     log('正在退出（再按一次 Ctrl+C 强制退出）');
-    void report('stopped', '').finally(() => process.exit(0));
+    // 交还授权 ID：立即下线，下次启动不会撞上「已经在线」
+    void report('stopped', '')
+      .then(() => releaseSession(cfg, session))
+      .finally(() => process.exit(0));
   };
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);

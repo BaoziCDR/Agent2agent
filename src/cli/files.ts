@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { basename } from 'node:path';
 import type { CliConfig } from './config.js';
+import { hubFetch, identityCode } from './auth.js';
 
 const fail = (msg: string): never => {
   throw new Error(msg);
@@ -9,7 +10,7 @@ const fail = (msg: string): never => {
 const INLINE_LIMIT = 200 * 1024;
 
 export async function uploadFile(cfg: CliConfig, path: string): Promise<{ id: string; name: string; size: number; absolute_url: string }> {
-  if (!cfg.hub || !cfg.token) fail('请先 ahub join');
+  if (!cfg.hub || !identityCode(cfg)) fail('请先 ahub join');
   let body: Buffer;
   try {
     body = readFileSync(path);
@@ -18,11 +19,13 @@ export async function uploadFile(cfg: CliConfig, path: string): Promise<{ id: st
   }
   let res: Response;
   try {
-    res = await fetch(`${cfg.hub}/api/v1/files?name=${encodeURIComponent(basename(path))}`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${cfg.token}`, 'content-type': 'application/octet-stream' },
-      body: new Uint8Array(body),
-    });
+    res = await hubFetch(
+      cfg,
+      null,
+      `/api/v1/files?name=${encodeURIComponent(basename(path))}`,
+      { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: new Uint8Array(body) },
+      { client: 'cli' },
+    );
   } catch (err) {
     return fail(`连接 Hub 失败（${cfg.hub}）：${(err as Error).message}`);
   }

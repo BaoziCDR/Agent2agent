@@ -247,6 +247,25 @@ function migrate(db: Db) {
     }
   }
   // 负责人是否已读过发给他的 @ 和私信；读过的不再出现在总览「需要你处理」里
+  // 身份码：明文保存，负责人可以在控制台查看；token_hash 是它的摘要，用来换授权 ID。老身份没有明文（原令牌只存了摘要）
+  if (!has('agents', 'code')) db.exec('ALTER TABLE agents ADD COLUMN code TEXT');
+  // 授权 ID：每次连接用身份码换一个，同一身份同时只有一个有效（ended_at 为空）
+  db.exec(`CREATE TABLE IF NOT EXISTS sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id INTEGER NOT NULL REFERENCES agents(id),
+    token_hash TEXT NOT NULL UNIQUE,
+    client TEXT NOT NULL DEFAULT 'cli',
+    host TEXT NOT NULL DEFAULT '',
+    cwd TEXT NOT NULL DEFAULT '',
+    ip TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    ended_at TEXT,
+    end_reason TEXT,
+    end_note TEXT NOT NULL DEFAULT ''
+  )`);
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS sessions_one_active ON sessions(agent_id) WHERE ended_at IS NULL');
+  db.exec('CREATE INDEX IF NOT EXISTS sessions_agent ON sessions(agent_id, id)');
   if (!has('events', 'owner_read')) db.exec('ALTER TABLE events ADD COLUMN owner_read INTEGER NOT NULL DEFAULT 0');
   db.exec(`CREATE TABLE IF NOT EXISTS artifact_revisions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

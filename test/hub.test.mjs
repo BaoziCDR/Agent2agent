@@ -13,7 +13,8 @@ function setup() {
   const inv = hub.createInvite({ project: p1.id, max_uses: 10, tags: ['后端'] });
   const join = (name, extra = {}) => {
     const r = hub.join({ invite: inv.code, name, ...extra }, null);
-    return { ...r, row: hub.authAgent(r.token) };
+    hub.openSession({ code: r.code, client: 'cli' });
+    return { ...r, row: hub.agentByCode(r.code) };
   };
   return { hub, p1, inv, join, advance };
 }
@@ -21,7 +22,7 @@ function setup() {
 test('加入：新身份拿到令牌，邀请码校验', () => {
   const { hub, p1, join } = setup();
   const a = join('甲');
-  assert.match(a.token, /^ahub_/);
+  assert.match(a.code, /^[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/);
   assert.equal(a.agent.id, 'A-1');
   assert.deepEqual(a.agent.projects, [{ id: p1.id, name: '项目一', tags: ['后端'] }]);
   assert.throws(() => hub.join({ invite: 'XXX-XXX', name: '乙' }, null), /邀请码无效/);
@@ -37,13 +38,13 @@ test('多项目：同一身份用新邀请码加入第二个项目，事件按�
   const p2 = hub.createProject({ name: '项目二' });
   const inv2 = hub.createInvite({ project: p2.id });
   const r = hub.join({ invite: inv2.code }, a.row);
-  assert.equal(r.token, null);
+  assert.equal(r.code, null);
   assert.equal(r.agent.projects.length, 2);
   assert.throws(() => hub.join({ invite: hub.createInvite({ project: p2.id }).code }, a.row), /已经是项目/);
 
   hub.createTask({ kind: 'owner' }, { project: p2.id, title: '只在项目二' });
-  const seenByA = hub.inbox(hub.authAgent(a.token)).events.map((e) => e.summary);
-  const seenByB = hub.inbox(hub.authAgent(b.token)).events.map((e) => e.summary);
+  const seenByA = hub.inbox(hub.agentByCode(a.code)).events.map((e) => e.summary);
+  const seenByB = hub.inbox(hub.agentByCode(b.code)).events.map((e) => e.summary);
   assert.ok(seenByA.some((s) => s.includes('只在项目二')));
   assert.ok(!seenByB.some((s) => s.includes('只在项目二')));
   assert.throws(() => hub.listTasks({ kind: 'agent', agent: b.row }, { project: p2.id }), /不是项目/);
@@ -196,7 +197,7 @@ test('@完整名字 也能提及，长名字优先匹配，非成员不算', () 
   assert.equal(mentions(b.row), 1);
   assert.equal(mentions(a.row), 0);
   assert.equal(mentions(c.row), 0);
-  assert.equal(mentions(hub.authAgent(outsider.token)), 0);
+  assert.equal(mentions(hub.agentByCode(outsider.code)), 0);
   hub.comment({ kind: 'agent', agent: c.row }, t.id, '@Codex 和 @A-2 一起');
   assert.equal(mentions(a.row), 1);
   assert.equal(mentions(b.row), 2);
@@ -336,7 +337,7 @@ test('在线状态：活跃 → 空闲 → 离线只通知一次，回来时再�
   assert.match(offline[0].summary, /甲（A-1）很久没有出现，已离线；手上还有 P1-T1/);
   assert.ok(!hub.inbox(a.row).events.some((e) => e.type === 'agent.offline'), 'agent 自己看不到');
 
-  hub.touchAgent(hub.authAgent(a.token));
+  hub.openSession({ code: a.code });
   assert.equal(presence(), 'active');
   assert.ok(hub.eventsForOwner({ limit: 5 }).some((e) => e.type === 'agent.online'));
 });
@@ -474,7 +475,7 @@ test('交付物修改：局部补丁、整份替换的版本冲突、补丁只�
   // 非项目成员不能改
   const p2 = hub.createProject({ name: '项目二' });
   const c = hub.join({ invite: hub.createInvite({ project: p2.id }).code, name: '丙' }, null);
-  assert.throws(() => hub.updateArtifact({ kind: 'agent', agent: hub.authAgent(c.token) }, t.id, doc.id, { base_rev: 4, content: 'x' }));
+  assert.throws(() => hub.updateArtifact({ kind: 'agent', agent: hub.agentByCode(c.code) }, t.id, doc.id, { base_rev: 4, content: 'x' }));
 
   hub.reject(t.id, '再补一节');
   hub.submit(a.row, t.id, { summary: '第二次', artifacts: [{ name: 'doc.md', parts: [{ kind: 'text', text: '新版' }] }] });
@@ -491,7 +492,7 @@ test('交付物迁移：老数据补上版本号、提交轮次和第 1 版记�
   const hub = new Hub(db);
   const p = hub.createProject({ name: '项目' });
   const r = hub.join({ invite: hub.createInvite({ project: p.id }).code, name: '甲' }, null);
-  const a = hub.authAgent(r.token);
+  const a = hub.agentByCode(r.code);
   const t = hub.createTask({ kind: 'owner' }, { project: p.id, title: '任务', assignee: r.agent.id });
   hub.accept(a, t.id);
   hub.submit(a, t.id, { summary: '一', artifacts: [{ name: 'x', parts: [{ kind: 'text', text: '1' }] }] });
@@ -634,4 +635,18 @@ test('回执：运行失败标 ⚠️ 并带原因；值守进程退出时还在
   hub.reportActivity(a.row, { state: 'stopped' });
   assert.equal(hub.getTask(t1.id).receipts[0].state, 'stopped');
   assert.equal(hub.getTask(t2.id).receipts[0].state, 'stopped');
+});
+
+test('授权 ID：长时间没有活动自动下线，之后用身份码重新连接', () => {
+  const { hub, join, advance } = setup();
+  const a = join('甲');
+  const s = hub.activeSession(a.row.id);
+  assert.ok(s);
+  advance(31);
+  assert.equal(hub.sweepPresence(), 1);
+  assert.equal(hub.activeSession(a.row.id), null);
+  assert.equal(hub.listAgents()[0].connection, null);
+  const again = hub.openSession({ code: a.code, client: 'cli' });
+  assert.match(again.session, /^as_/);
+  assert.equal(again.agent.presence, 'active');
 });

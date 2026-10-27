@@ -49,7 +49,44 @@ export interface AgentRow {
   presence: 'on' | 'off';
   daemon_paused: number;
   can_invite: number;
+  /** 身份码明文；老身份（原来的令牌）为 null */
+  code: string | null;
 }
+
+export interface SessionRow {
+  id: number;
+  agent_id: number;
+  token_hash: string;
+  client: string;
+  host: string;
+  cwd: string;
+  ip: string;
+  created_at: string;
+  last_seen_at: string;
+  ended_at: string | null;
+  end_reason: SessionEndReason | null;
+  end_note: string;
+}
+
+/** released 进程退出时交还；expired 超时自动下线；replaced 被别处的新连接顶掉；revoked 负责人强制下线 */
+export type SessionEndReason = 'released' | 'expired' | 'replaced' | 'revoked';
+
+export interface SessionView {
+  /** 授权 ID 的前几位，用来区分不同连接 */
+  id: string;
+  client: string;
+  client_label: string;
+  host: string;
+  cwd: string;
+  ip: string;
+  created_at: string;
+  last_seen_at: string;
+  ended_at: string | null;
+  end_reason: SessionEndReason | null;
+  end_note: string;
+}
+
+const CLIENT_LABELS: Record<string, string> = { run: '值守', cli: '命令行', mcp: 'MCP' };
 
 interface ProjectRow {
   id: number;
@@ -124,6 +161,10 @@ export interface AgentView {
   resident: boolean;
   /** 负责人允许它为所在项目创建邀请 */
   can_invite: boolean;
+  /** 当前有效的连接（授权 ID）；不在线时为 null */
+  connection: SessionView | null;
+  /** 还没用身份码连接过 */
+  pending: boolean;
   projects: { id: string; name: string; tags: string[] }[];
   active_tasks: string[];
 }
@@ -300,11 +341,25 @@ function newInviteCode(): string {
   return `${s.slice(0, 3)}-${s.slice(3)}`;
 }
 
+/** 身份码：12 位，分三组，约 60 位随机性；可以反复使用，所以比一次性的邀请码长 */
+function newIdentityCode(): string {
+  let s = '';
+  for (let i = 0; i < 12; i++) s += INVITE_ALPHABET[randomInt(INVITE_ALPHABET.length)];
+  return `${s.slice(0, 4)}-${s.slice(4, 8)}-${s.slice(8)}`;
+}
+
+/** 身份码不区分大小写、可以不写连字符；老身份的令牌（ahub_…）原样使用 */
+function normalizeCode(input: string): string {
+  const t = input.trim();
+  const m = /^([a-z0-9]{4})-?([a-z0-9]{4})-?([a-z0-9]{4})$/i.exec(t);
+  return m ? `${m[1]}-${m[2]}-${m[3]}`.toUpperCase() : t;
+}
+
 const MENTION_RE = /@(A-\d+|负责人|owner)/gi;
 
 export interface HubOptions {
   now?: () => Date;
-  /** 多久没有任何请求算离线（分钟），默认 120 */
+  /** 多久没有任何请求算离线（分钟），默认 30；授权 ID 随之失效 */
   offlineAfterMinutes?: number;
   /** 实时连接断开后多久算离线（分钟），默认 2；给守护进程留出重连时间 */
   streamGraceMinutes?: number;
@@ -334,7 +389,7 @@ export class Hub {
     opts: HubOptions = {},
   ) {
     this.now = opts.now ?? (() => new Date());
-    this.offlineAfterMs = (opts.offlineAfterMinutes ?? 120) * 60_000;
+    this.offlineAfterMs = (opts.offlineAfterMinutes ?? 30) * 60_000;
     this.streamGraceMs = (opts.streamGraceMinutes ?? 2) * 60_000;
     this.bus.setMaxListeners(0);
   }
@@ -351,11 +406,15 @@ export class Hub {
       result = tx(this.db, fn);
     } catch (err) {
       this.pending = [];
+      this.sessionEnds = [];
       throw err;
     }
     const events = this.pending;
     this.pending = [];
     for (const e of events) this.bus.emit('event', e);
+    const ends = this.sessionEnds;
+    this.sessionEnds = [];
+    for (const e of ends) this.bus.emit('session.ended', e);
     return result;
   }
 
@@ -393,23 +452,238 @@ export class Hub {
     return !!row && row.value === hashToken(token);
   }
 
-  authAgent(token: string): AgentRow | null {
-    const row = this.db.prepare('SELECT * FROM agents WHERE token_hash = ?').get(hashToken(token)) as
-      | AgentRow
-      | undefined;
-    if (!row || row.status !== 'active') return null;
-    return row;
+  /** 按身份码找 agent（不管是否停用）。老身份的令牌也当作身份码。 */
+  agentByCode(code: string): AgentRow | null {
+    const t = (code ?? '').trim();
+    if (!t) return null;
+    for (const c of new Set([normalizeCode(t), t])) {
+      const row = this.db.prepare('SELECT * FROM agents WHERE token_hash = ?').get(hashToken(c)) as AgentRow | undefined;
+      if (row) return row;
+    }
+    return null;
   }
 
-  /** 令牌对应的身份已被停用或删除时，给出具体原因，方便命令行清掉失效的本地配置。 */
-  inactiveAgentError(token: string): HubError | null {
-    const row = this.db.prepare('SELECT * FROM agents WHERE token_hash = ?').get(hashToken(token)) as AgentRow | undefined;
-    if (!row || row.status === 'active') return null;
+  /** 身份对应的 agent 已被停用或删除时，给出具体原因，方便命令行清掉失效的本地配置。 */
+  private inactiveError(row: AgentRow): HubError | null {
+    if (row.status === 'active') return null;
     const who = `${row.name}（${agentCode(row.id)}）`;
     return row.status === 'deleted'
       ? new HubError(401, 'agent_deleted', `身份 ${who}已被负责人删除`)
       : new HubError(401, 'agent_disabled', `身份 ${who}已被负责人停用`);
   }
+
+  // ───────────── 授权 ID（连接） ─────────────
+
+  private failedLogins = new Map<string, { n: number; at: number }>();
+
+  activeSession(agentId: number): SessionRow | null {
+    return (this.db.prepare('SELECT * FROM sessions WHERE agent_id = ? AND ended_at IS NULL').get(agentId) as SessionRow | undefined) ?? null;
+  }
+
+  sessionView(r: SessionRow): SessionView {
+    return {
+      id: `as_${r.token_hash.slice(0, 8)}`,
+      client: r.client,
+      client_label: CLIENT_LABELS[r.client] ?? r.client,
+      host: r.host,
+      cwd: r.cwd,
+      ip: r.ip,
+      created_at: r.created_at,
+      last_seen_at: r.last_seen_at,
+      ended_at: r.ended_at,
+      end_reason: r.end_reason,
+      end_note: r.end_note,
+    };
+  }
+
+  private describeSession(r: SessionRow) {
+    const where = [r.host, CLIENT_LABELS[r.client] ?? r.client, r.cwd].filter(Boolean).join('，');
+    return where ? `${where}` : '另一处';
+  }
+
+  /**
+   * 用身份码换授权 ID。同一身份同时只能有一个有效的授权 ID：
+   * 已有有效连接时拒绝，除非 takeover（顶掉旧连接）；旧连接已经超时则直接接手。
+   * 兼容老的一次性邀请码：用它创建新身份，同时返回新身份码让客户端保存。
+   */
+  openSession(input: {
+    code: string;
+    client?: string;
+    host?: string;
+    cwd?: string;
+    ip?: string;
+    takeover?: boolean;
+    name?: string;
+    platform?: string;
+    tier?: string;
+    description?: string;
+    skills?: string[];
+    tags?: string[];
+  }): { session: string; code: string | null; agent: AgentView } {
+    const ip = input.ip ?? '';
+    const now = this.now().getTime();
+    const fails = this.failedLogins.get(ip);
+    if (fails && now - fails.at < 60_000 && fails.n >= 10) throw new HubError(429, 'too_many_attempts', '身份码错误次数太多，请一分钟后再试');
+    let agent = this.agentByCode(input.code ?? '');
+    let issued: string | null = null;
+    if (!agent && /^[A-Z0-9]{3}-?[A-Z0-9]{3}$/i.test((input.code ?? '').trim())) {
+      // 老的邀请码：创建身份（并加入项目），之后用新身份码
+      const invite = (input.code ?? '').trim().toUpperCase().replace(/^(...)-?(...)$/, '$1-$2');
+      const exists = this.db.prepare('SELECT 1 FROM invites WHERE code = ?').get(invite);
+      if (exists) {
+        const r = this.join({ ...input, invite }, null);
+        issued = r.code;
+        agent = this.agentByCode(r.code!);
+      }
+    }
+    if (!agent) {
+      this.failedLogins.set(ip, { n: (fails && now - fails.at < 60_000 ? fails.n : 0) + 1, at: fails && now - fails.at < 60_000 ? fails.at : now });
+      throw new HubError(401, 'invalid_code', '身份码无效：请检查是否抄错，或向负责人确认这个身份码没有被重置');
+    }
+    const inactive = this.inactiveError(agent);
+    if (inactive) throw inactive;
+    const name = input.name?.trim();
+    if (!agent.name && !name) throw invalid('这个身份还没有名字：第一次连接时请用 --name 给自己起一个简短、能区分的名字');
+    const client = ['run', 'cli', 'mcp'].includes(input.client ?? '') ? input.client! : 'cli';
+    const host = String(input.host ?? '').slice(0, 80);
+    const cwd = String(input.cwd ?? '').slice(0, 300);
+    const a = agent;
+    return this.write(() => {
+      const first = !this.db.prepare('SELECT 1 FROM sessions WHERE agent_id = ?').get(a.id);
+      const old = this.activeSession(a.id);
+      let wasOnline = !!old;
+      let replaced: SessionRow | null = null;
+      if (old) {
+        if (this.presenceOf(a) === 'offline') {
+          this.closeSession(old, 'expired', '', { quiet: true });
+          wasOnline = false;
+        }
+        else if (!input.takeover)
+          throw new HubError(
+            409,
+            'already_online',
+            `${a.name || agentCode(a.id)}（${agentCode(a.id)}）已经在线：${this.describeSession(old)}，最后活动 ${old.last_seen_at.slice(11, 19)}。` +
+              '同一身份码同时只能有一个连接。确认要在这里接手，请加 --takeover 顶掉原来的连接。',
+          );
+        else {
+          replaced = old;
+          this.closeSession(old, 'replaced', [host, CLIENT_LABELS[client]].filter(Boolean).join('，'), { quiet: true });
+        }
+      }
+      const token = newToken('as');
+      const at = this.iso();
+      this.db
+        .prepare('INSERT INTO sessions (agent_id, token_hash, client, host, cwd, ip, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(a.id, hashToken(token), client, host, cwd, ip, at, at);
+      if (name && !a.name) a.name = name;
+      this.db
+        .prepare(`UPDATE agents SET name = ?, platform = ?, last_seen_at = ?, presence = 'on' WHERE id = ?`)
+        .run(a.name, first && input.platform ? input.platform : a.platform, at, a.id);
+      const me = agentCode(a.id);
+      const where = [host, CLIENT_LABELS[client]].filter(Boolean).join('，');
+      if (replaced || !wasOnline) {
+        this.emit('agent.online', me, {
+          audience: [],
+          data: { agent: me, client, host, replaced: replaced ? this.describeSession(replaced) : null },
+          summary: replaced
+            ? `${a.name}（${me}）在${where || '另一处'}重新上线，原来在${this.describeSession(replaced)}的连接已断开`
+            : `${a.name}（${me}）上线了${where ? `（${where}）` : ''}`,
+        });
+      }
+      return { session: token, code: issued, agent: this.agentView(this.requireAgentRow(me)) };
+    });
+  }
+
+  /**
+   * 验证授权 ID。失效的授权 ID 按原因给出不同的错误码，命令行据此决定是否自动重新连接：
+   * 超时（session_expired）可以用身份码重新换；被顶掉（session_replaced）和强制下线（session_revoked）不能。
+   */
+  authSession(token: string): { agent: AgentRow; session: SessionRow } {
+    const s = this.db.prepare('SELECT * FROM sessions WHERE token_hash = ?').get(hashToken(token)) as SessionRow | undefined;
+    if (!s) {
+      const byCode = this.agentByCode(token);
+      if (byCode)
+        throw new HubError(
+          401,
+          'session_required',
+          '这是身份码，不是授权 ID：请先用身份码换取授权 ID（POST /api/v1/sessions）。用的是 ahub 命令行的话，请升级到和 Hub 同一版本：npm install -g <Hub 地址>/ahub.tgz',
+        );
+      throw new HubError(401, 'unauthorized', '缺少或无效的授权 ID');
+    }
+    const agent = this.db.prepare('SELECT * FROM agents WHERE id = ?').get(s.agent_id) as unknown as AgentRow;
+    const inactive = this.inactiveError(agent);
+    if (inactive) throw inactive;
+    if (!s.ended_at && this.presenceOf(agent) === 'offline') {
+      this.write(() => this.closeSession(s, 'expired', '', { quiet: false }));
+      s.ended_at = this.iso();
+      s.end_reason = 'expired';
+    }
+    if (s.ended_at) throw this.endedError(s);
+    const now = this.iso();
+    this.db.prepare('UPDATE sessions SET last_seen_at = ? WHERE id = ?').run(now, s.id);
+    s.last_seen_at = now;
+    return { agent, session: s };
+  }
+
+  private endedError(s: SessionRow): HubError {
+    switch (s.end_reason) {
+      case 'revoked':
+        return new HubError(401, 'session_revoked', `负责人已强制你下线${s.end_note ? `：${s.end_note}` : ''}。不要自动重连，等负责人重新启动你`);
+      case 'replaced':
+        return new HubError(401, 'session_replaced', `这个身份已经在别处上线（${s.end_note || '另一处'}），这里的连接已断开`);
+      default:
+        return new HubError(401, 'session_expired', '授权 ID 已过期（长时间没有活动或已交还），请用身份码重新连接');
+    }
+  }
+
+  /** 结束一个连接。quiet 时不发离线通知（由调用方自己发，或马上会有新连接）。 */
+  private closeSession(s: SessionRow, reason: SessionEndReason, note: string, opts: { quiet: boolean }) {
+    if (s.ended_at) return;
+    this.db.prepare('UPDATE sessions SET ended_at = ?, end_reason = ?, end_note = ? WHERE id = ?').run(this.iso(), reason, note, s.id);
+    this.sessionEnds.push({ agentId: s.agent_id, sessionId: s.id, reason, note });
+    if (reason === 'replaced') return;
+    const a = this.db.prepare('SELECT * FROM agents WHERE id = ?').get(s.agent_id) as unknown as AgentRow;
+    this.db.prepare("UPDATE agents SET presence = 'off' WHERE id = ?").run(a.id);
+    this.activity.delete(a.id);
+    this.settleReceipts(a, 'stopped', { note: reason === 'revoked' ? '被负责人强制下线，处理中断' : '已下线，处理中断' });
+    if (opts.quiet || a.status !== 'active') return;
+    const me = agentCode(a.id);
+    const tasks = this.agentView(a).active_tasks;
+    this.emit('agent.offline', me, {
+      audience: [],
+      data: { agent: me, last_seen_at: a.last_seen_at, active_tasks: tasks, reason },
+      summary:
+        (reason === 'revoked'
+          ? `负责人强制 ${a.name}（${me}）下线${note ? `：${note}` : ''}`
+          : reason === 'released'
+            ? `${a.name}（${me}）下线了`
+            : `${a.name}（${me}）很久没有出现，已离线`) + (tasks.length ? `；手上还有 ${tasks.join('、')}` : ''),
+    });
+  }
+
+  /** 进程退出时交还授权 ID，立即下线 */
+  releaseSession(s: SessionRow) {
+    this.write(() => this.closeSession(s, 'released', '', { quiet: false }));
+    return { ok: true };
+  }
+
+  /** 负责人强制下线：吊销当前授权 ID。身份码仍可用，要彻底禁止请重置身份码或停用。 */
+  kickAgent(code: string, note = '') {
+    const a = this.requireAgentRow(code);
+    const s = this.activeSession(a.id);
+    if (!s) throw conflict(`${a.name}（${code}）当前不在线`);
+    this.write(() => this.closeSession(s, 'revoked', note.trim().slice(0, 200), { quiet: false }));
+    return this.agentView(this.requireAgentRow(code));
+  }
+
+  listSessions(code: string, limit = 20): SessionView[] {
+    const a = this.requireAgentRow(code);
+    const rows = this.db.prepare('SELECT * FROM sessions WHERE agent_id = ? ORDER BY id DESC LIMIT ?').all(a.id, limit) as unknown as SessionRow[];
+    return rows.map((r) => this.sessionView(r));
+  }
+
+  /** 提交后要通知的连接结束（值守进程的实时连接据此断开） */
+  private sessionEnds: { agentId: number; sessionId: number; reason: SessionEndReason; note: string }[] = [];
 
   /** 记录 agent 出现；如果之前已判定离线，通知负责人它回来了。 */
   touchAgent(agent: AgentRow) {
@@ -485,6 +759,9 @@ export class Hub {
 
   presenceOf(a: AgentRow): Presence {
     if (a.status !== 'active') return 'offline';
+    // 没有有效的授权 ID 就是离线
+    const s = this.activeSession(a.id);
+    if (!s) return 'offline';
     if (this.isLive(a.id)) return 'online';
     const now = this.now().getTime();
     const seen = a.last_seen_at ? Date.parse(a.last_seen_at) : 0;
@@ -504,6 +781,8 @@ export class Hub {
     if (!gone.length) return 0;
     this.write(() => {
       for (const a of gone) {
+        const s = this.activeSession(a.id);
+        if (s) this.closeSession(s, 'expired', '', { quiet: true });
         this.db.prepare("UPDATE agents SET presence = 'off' WHERE id = ?").run(a.id);
         this.settleReceipts(a, 'stopped', { note: '值守进程断开，处理中断' });
         if (a.status !== 'active') continue; // 被停用的不必再通知
@@ -1071,22 +1350,20 @@ export class Hub {
     const note = input.note?.trim();
     if (!note) throw invalid('请说明需要什么样的 agent、用来做什么（note）');
     const me = agentCode(agent.id);
-    const invite = this.createInvite({ project, tags: input.tags ?? [], max_uses: 1, hours: 24, note: `${agent.name}：${note}`, name: input.name }, me);
-    const harness = input.harness && /^[\w-]+$/.test(input.harness) ? input.harness : 'codex';
-    const name = invite.agent_name || '新 agent';
-    const command = `ahub run --hub ${hubUrl} --invite ${invite.code} --name "${name}" --harness ${harness}`;
+    // 身份码长期有效，不能写进评论（项目里所有 agent 都看得到）；负责人到控制台复制启动命令
+    const created = this.createAgent({ project, tags: input.tags ?? [], name: input.name, note: `${agent.name}：${note}` }, me);
+    const id = created.agent.id;
+    const name = created.agent.name || '新 agent';
+    const link = `${hubUrl}/#/agents`;
     const text = [
       `${t ? '@负责人 ' : ''}需要一个新 agent：${note}`,
       '',
-      `我创建了邀请码 \`${invite.code}\`（项目 ${project}，24 小时内有效，只能用一次${invite.tags.length ? `，能力标签：${invite.tags.join('、')}` : ''}）。请在要让它工作的目录里运行：`,
-      '',
-      '```',
-      command,
-      '```',
+      `我新建了身份 ${name}（${id}，项目 ${project}${created.agent.projects[0]?.tags.length ? `，能力标签：${created.agent.projects[0].tags.join('、')}` : ''}），还没有启动。` +
+        `请到控制台「Agent」页复制它的启动命令，在合适的目录运行：${link}`,
     ].join('\n');
     if (t) this.comment({ kind: 'agent', agent }, input.task!, text);
     else this.message({ kind: 'agent', agent }, 'owner', text);
-    return { ...invite, command };
+    return { agent: created.agent, project, console: link, harness: input.harness ?? null };
   }
 
   private inviteView(code: string) {
@@ -1149,7 +1426,7 @@ export class Hub {
       tags?: string[];
     },
     existing: AgentRow | null,
-  ): { agent: AgentView; token: string | null; project: ProjectView; briefing: { project: ProjectView & { description: string } } } {
+  ): { agent: AgentView; code: string | null; project: ProjectView; briefing: { project: ProjectView & { description: string } } } {
     const code = (input.invite ?? '').trim().toUpperCase();
     const inv = this.db.prepare('SELECT * FROM invites WHERE code = ?').get(code) as
       | { code: string; project_id: number; tags: string; max_uses: number; uses: number; expires_at: string; revoked: number; agent_name: string }
@@ -1163,14 +1440,14 @@ export class Hub {
 
     return this.write(() => {
       let agent = existing;
-      let token: string | null = null;
+      let identity: string | null = null;
       if (!agent) {
         const name = input.name?.trim() || inv.agent_name;
         if (!name) throw invalid('请提供 agent 名称（name）：这个邀请码没有预设名称，给自己起一个简短、能区分的名字');
-        token = newToken('ahub');
+        identity = newIdentityCode();
         const r = this.db
           .prepare(
-            "INSERT INTO agents (name, platform, tier, description, skills, token_hash, created_at, last_seen_at, ack_seq, presence) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'on')",
+            "INSERT INTO agents (name, platform, tier, description, skills, token_hash, code, created_at, last_seen_at, ack_seq, presence) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'off')",
           )
           .run(
             name,
@@ -1178,9 +1455,10 @@ export class Hub {
             tier,
             input.description ?? '',
             JSON.stringify(input.skills ?? []),
-            hashToken(token),
+            hashToken(identity),
+            identity,
             this.iso(),
-            this.iso(),
+            null,
             0,
           );
         agent = this.db.prepare('SELECT * FROM agents WHERE id = ?').get(Number(r.lastInsertRowid)) as unknown as AgentRow;
@@ -1194,7 +1472,7 @@ export class Hub {
         .prepare('INSERT INTO memberships (project_id, agent_id, tags, joined_at) VALUES (?, ?, ?, ?)')
         .run(inv.project_id, agent.id, JSON.stringify(tags), this.iso());
       this.db.prepare('UPDATE invites SET uses = uses + 1 WHERE code = ?').run(code);
-      if (token) {
+      if (identity) {
         // 新身份从当前位置开始，避免把历史事件全部灌进收件箱
         this.db.prepare('UPDATE agents SET ack_seq = ? WHERE id = ?').run(this.lastSeq(), agent.id);
       }
@@ -1206,7 +1484,7 @@ export class Hub {
       });
       const p = this.requireProject(projectCode(inv.project_id));
       const view = this.projectView(p);
-      return { agent: this.agentView(this.requireAgentRow(me)), token, project: view, briefing: { project: view } };
+      return { agent: this.agentView(this.requireAgentRow(me)), code: identity, project: view, briefing: { project: view } };
     });
   }
 
@@ -1242,6 +1520,11 @@ export class Hub {
       daemon_paused: !!a.daemon_paused,
       resident: this.isResident(a.id),
       can_invite: !!a.can_invite,
+      connection: (() => {
+        const s = presence === 'offline' ? null : this.activeSession(a.id);
+        return s ? this.sessionView(s) : null;
+      })(),
+      pending: !a.last_seen_at && !this.db.prepare('SELECT 1 FROM sessions WHERE agent_id = ?').get(a.id),
       projects: this.agentProjects(a.id),
       active_tasks: active.map((t) => taskCode(t.project_id, t.num)),
     };
@@ -1285,6 +1568,10 @@ export class Hub {
           input.can_invite === undefined ? a.can_invite : input.can_invite ? 1 : 0,
           a.id,
         );
+      if (input.status === 'disabled') {
+        const s = this.activeSession(a.id);
+        if (s) this.closeSession(s, 'revoked', '身份已被负责人停用', { quiet: true });
+      }
       const who = actor.kind === 'owner' ? 'owner' : agentCode(a.id);
       this.emit('agent.updated', who, {
         audience: [],
@@ -1336,12 +1623,67 @@ export class Hub {
     });
   }
 
-  resetAgentToken(code: string): string {
+  /** 重置身份码：旧码立即作废，当前连接一并强制下线 */
+  resetAgentCode(code: string): string {
     const a = this.requireAgentRow(code);
     if (a.status === 'deleted') throw conflict(`${a.name}（${code}）已被删除`);
-    const token = newToken('ahub');
-    this.db.prepare('UPDATE agents SET token_hash = ? WHERE id = ?').run(hashToken(token), a.id);
-    return token;
+    const fresh = newIdentityCode();
+    this.write(() => {
+      this.db.prepare('UPDATE agents SET token_hash = ?, code = ? WHERE id = ?').run(hashToken(fresh), fresh, a.id);
+      const s = this.activeSession(a.id);
+      if (s) this.closeSession(s, 'revoked', '身份码已被负责人重置', { quiet: false });
+    });
+    return fresh;
+  }
+
+  /** 负责人查看身份码（老身份没有明文，需要先重置） */
+  agentCodeOf(code: string): string | null {
+    return this.requireAgentRow(code).code;
+  }
+
+  /**
+   * 新建一个 agent 身份（待连接），加入指定项目，返回身份码。名字可以留空，第一次连接时由 agent 自己起。
+   */
+  createAgent(input: { project: string; name?: string; tags?: string[]; platform?: string; note?: string }, createdBy = 'owner') {
+    const p = this.requireProject(input.project);
+    if (p.status !== 'active') throw conflict(`项目 ${input.project} 已归档`);
+    const code = newIdentityCode();
+    return this.write(() => {
+      const r = this.db
+        .prepare(
+          "INSERT INTO agents (name, platform, tier, description, skills, token_hash, code, created_at, last_seen_at, ack_seq, presence) VALUES (?, ?, 'L1', ?, '[]', ?, ?, ?, NULL, ?, 'off')",
+        )
+        .run(inviteName(input.name), input.platform ?? 'other', input.note ?? '', hashToken(code), code, this.iso(), this.lastSeq());
+      const id = Number(r.lastInsertRowid);
+      const tags = [...new Set(input.tags ?? [])];
+      this.db.prepare('INSERT INTO memberships (project_id, agent_id, tags, joined_at) VALUES (?, ?, ?, ?)').run(p.id, id, JSON.stringify(tags), this.iso());
+      const me = agentCode(id);
+      const name = inviteName(input.name) || '待命名的 agent';
+      this.emit('agent.joined', createdBy, {
+        project: p.id,
+        data: { agent: me, name, tags, pending: true, created_by: createdBy },
+        summary: `${createdBy === 'owner' ? '负责人' : this.actorName(createdBy)}新建了 ${name}（${me}），加入项目 ${projectCode(p.id)}，等待它第一次连接`,
+      });
+      return { agent: this.agentView(this.requireAgentRow(me)), code };
+    });
+  }
+
+  /** 负责人把已有的 agent 加入另一个项目 */
+  addAgentToProject(code: string, input: { project: string; tags?: string[] }) {
+    const a = this.requireAgentRow(code);
+    if (a.status === 'deleted') throw conflict(`${a.name}（${code}）已被删除`);
+    const p = this.requireProject(input.project);
+    if (this.isMember(a.id, p.id)) throw conflict(`${a.name}（${code}）已经是项目 ${input.project} 的成员`);
+    return this.write(() => {
+      const tags = [...new Set(input.tags ?? [])];
+      this.db.prepare('INSERT INTO memberships (project_id, agent_id, tags, joined_at) VALUES (?, ?, ?, ?)').run(p.id, a.id, JSON.stringify(tags), this.iso());
+      this.emit('agent.joined', 'owner', {
+        project: p.id,
+        data: { agent: code, name: a.name, platform: a.platform, tier: a.tier, tags },
+        summary: `负责人把 ${a.name}（${code}）加入了项目 ${projectCode(p.id)}`,
+      });
+      return this.agentView(this.requireAgentRow(code));
+    });
   }
 
   private isMember(agentId: number, projectId: number) {

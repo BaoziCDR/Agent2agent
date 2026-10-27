@@ -29,7 +29,7 @@ async function setup(t) {
   const dir = join(home, 'work');
   const configPath = join(dir, '.ahub', 'config.json');
   mkdirSync(join(dir, '.ahub'), { recursive: true });
-  writeFileSync(configPath, JSON.stringify({ hub: url, token: joined.token, agent: joined.agent.id, name: '旧身份', project: project.id, last_seq: 3 }));
+  writeFileSync(configPath, JSON.stringify({ hub: url, token: joined.code, agent: joined.agent.id, name: '旧身份', project: project.id, last_seq: 3 }));
   const env = { ...process.env, HOME: home, USERPROFILE: home, AHUB_URL: '', AHUB_TOKEN: '' };
   delete env.AHUB_URL;
   delete env.AHUB_TOKEN;
@@ -48,11 +48,11 @@ test('ahub run 续用已停用的身份：报错并给出提示，清掉配置�
   const r = await run(['run', '--harness', 'codex', '--dry-run']);
   assert.notEqual(r.code, 0);
   assert.match(r.stderr, /身份 旧身份 不能再使用：身份 旧身份（A-1）已被负责人停用/);
-  assert.match(r.stderr, /ahub run --harness codex --invite <邀请码> --name <名字>/);
+  assert.match(r.stderr, /ahub run --harness codex --code <身份码>/);
   assert.deepEqual(config(), { hub: url });
 });
 
-test('ahub join / run 带新邀请码：清掉失效身份后以新身份加入，不报错', async (t) => {
+test('ahub join / run 带旧邀请码：清掉失效身份后以新身份加入，不报错', async (t) => {
   const { invite, run, config, call, joined } = await setup(t);
   const r = await run(['join', '--invite', await invite(), '--name', '新身份']);
   assert.equal(r.code, 0, r.stderr);
@@ -66,7 +66,38 @@ test('ahub join / run 带新邀请码：清掉失效身份后以新身份加入�
   const code = await invite();
   const out = await run(['run', '--harness', 'codex', '--invite', code, '--name', '第三个', '--dry-run'], 2500);
   assert.match(out.stdout, /已被负责人删除/);
-  assert.match(out.stdout, /已加入项目 P-1，身份 第三个（A-3）/);
+  assert.match(out.stdout, /已连接 Hub，身份 第三个（A-3）/);
   assert.equal(config().agent, 'A-3');
-  assert.notEqual(config().token, joined.token);
+  assert.notEqual(config().code, joined.code);
+  assert.equal(config().token, undefined);
+  assert.match(config().session, /^as_/);
+});
+
+test('ahub 用身份码连接：同一身份只能一处在线，--takeover 顶掉；身份码可以反复使用', async (t) => {
+  const { url, call, run, config } = await setup(t);
+  const created = await call('POST', '/api/v1/admin/agents', { project: 'P-1', name: '审核' });
+  const r = await run(['join', '--hub', url, '--code', created.code.toLowerCase().replaceAll('-', '')]);
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, /已连接 Hub，身份 审核（A-2）/);
+  assert.equal(config().agent, 'A-2');
+  const first = config().session;
+  // 后续命令直接用保存的授权 ID
+  assert.equal((await run(['whoami'])).code, 0);
+  assert.equal(config().session, first);
+  // 已在线时再用身份码连接被拒绝，--takeover 顶掉
+  const again = await run(['join', '--code', created.code]);
+  assert.notEqual(again.code, 0);
+  assert.match(again.stderr, /已经在线[\s\S]*--takeover/);
+  const take = await run(['join', '--code', created.code, '--takeover']);
+  assert.equal(take.code, 0, take.stderr);
+  assert.notEqual(config().session, first);
+  // 强制下线后命令行不会自动重连
+  await call('POST', '/api/v1/admin/agents/A-2/kick', { note: '先停一下' });
+  const kicked = await run(['whoami']);
+  assert.notEqual(kicked.code, 0);
+  assert.match(kicked.stderr, /负责人已强制你下线：先停一下/);
+  assert.equal(config().session, undefined);
+  // 身份码仍然有效：再次运行就重新上线
+  assert.equal((await run(['whoami'])).code, 0);
+  assert.match(config().session, /^as_/);
 });
