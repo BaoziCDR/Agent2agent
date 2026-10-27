@@ -46,7 +46,7 @@ interface Inbox {
 }
 
 /** 唤起时要列给 harness 的任务；kind 说明它为什么在这里，默认是任务池里可领取的。 */
-type OpenTask = { id: string; title: string; kind?: string };
+type OpenTask = { id: string; title: string; kind?: string; mine?: boolean };
 
 interface RunState {
   claude_session?: string;
@@ -155,11 +155,11 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
     pickup = false;
     if (pickingUp) {
       const seen = new Set(open.map((t) => t.id));
-      const add = (list: { id: string; title: string }[], kind: string) => {
-        for (const t of list) if (!seen.has(t.id)) (seen.add(t.id), open.push({ ...t, kind }));
+      const add = (list: { id: string; title: string }[], kind: string, mine = false) => {
+        for (const t of list) if (!seen.has(t.id)) (seen.add(t.id), open.push({ id: t.id, title: t.title, kind, mine }));
       };
-      add(inbox.pending_assignments ?? [], '指派给你、还没接受的任务');
-      add((inbox.my_tasks ?? []).filter((t) => t.status === 'working'), '你进行中、还没完成的任务');
+      add(inbox.pending_assignments ?? [], '指派给你、还没接受的任务', true);
+      add((inbox.my_tasks ?? []).filter((t) => t.status === 'working'), '你进行中、还没完成的任务', true);
       add(inbox.claimable, '任务池里有可领取的任务');
     }
     const top = Math.max(handled, ...inbox.events.map((e) => e.seq));
@@ -202,6 +202,12 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
       return;
     }
     await report('working', note);
+    // 在这次要处理的评论、私信和任务下打上 👌，控制台能看到谁接手了；跑完再改成 ✅ 或 ⚠️
+    await api('POST', '/api/v1/me/receipts', {
+      state: 'working',
+      seqs: reasons.map((e) => e.seq),
+      tasks: open.filter((t) => t.mine).map((t) => t.id),
+    }).catch(() => undefined);
     const startedAt = new Date().toISOString();
     mkdirSync(logDir, { recursive: true });
     const logFile = join(logDir, `${new Date().toISOString().replace(/[:.]/g, '-')}.log`);
@@ -286,6 +292,10 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
     }
     out.end();
     log(`${code === 0 ? '完成' : `退出码 ${code}`}，日志：${logFile}`);
+    await api('POST', '/api/v1/me/receipts', {
+      state: code === 0 ? 'done' : 'failed',
+      note: code === 0 ? '' : killed || `运行失败（退出码 ${code}）`,
+    }).catch(() => undefined);
     await report('idle', code === 0 ? summary.slice(0, 200) : killed || `运行失败（退出码 ${code}），详见本机日志`);
     await api('POST', '/api/v1/me/runs', {
       harness: opts.harness,

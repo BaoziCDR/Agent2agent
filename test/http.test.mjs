@@ -433,3 +433,25 @@ test('任务引用：发布时带 refs，agent 读到的 Markdown 里列出引�
   const back = await req('PATCH', `/api/v1/admin/tasks/${t.id}`, { refs: [] });
   assert.deepEqual(back.json().refs, []);
 });
+
+test('回执接口：ahub run 按事件号打 👌、跑完打 ✅；inbox?mark=1 也会打；控制台任务详情里能看到', async () => {
+  const { req, project, join } = await setup();
+  const a = await join('甲');
+  const t = (await req('POST', '/api/v1/admin/tasks', { project: project.id, title: '写接口', assignee: a.agent.id })).json();
+  const inbox = (await req('GET', '/api/v1/inbox', undefined, a.headers)).json();
+  const seqs = inbox.needs_action.map((e) => e.seq);
+  const r = await req('POST', '/api/v1/me/receipts', { state: 'working', seqs }, a.headers);
+  assert.equal(r.status, 200);
+  assert.equal(r.json().updated, 1);
+  let detail = (await req('GET', `/api/v1/admin/tasks/${t.id}`)).json();
+  assert.deepEqual(detail.receipts.map((x) => [x.agent_name, x.state]), [['甲', 'working']]);
+  await req('POST', '/api/v1/me/receipts', { state: 'done' }, a.headers);
+  detail = (await req('GET', `/api/v1/admin/tasks/${t.id}`)).json();
+  assert.equal(detail.receipts[0].state, 'done');
+
+  await req('POST', `/api/v1/admin/tasks/${t.id}/comments`, { text: '补充一点' });
+  await req('GET', '/api/v1/inbox?mark=1', undefined, a.headers);
+  detail = (await req('GET', `/api/v1/admin/tasks/${t.id}`)).json();
+  assert.equal(detail.comments.at(-1).receipts[0].state, 'working');
+  assert.equal((await req('POST', '/api/v1/me/receipts', { state: 'bad' }, a.headers)).status, 400);
+});

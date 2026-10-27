@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { get, patch, post, uploadFile, type Part, type TaskDetail, type Uploaded } from '../api';
-import { Modal, StatusBadge, clock, dateTime, dueInfo, splitList, timeAgo, toLocalInput, useData, useHub } from '../ui';
+import { Modal, Receipts, StatusBadge, clock, dateTime, dueInfo, splitList, timeAgo, toLocalInput, useData, useHub } from '../ui';
 import { MentionTextarea, agentCandidates } from '../mention';
 import { Markdown } from '../markdown';
 import { Suggest, useRecommend } from '../suggest';
@@ -172,6 +172,7 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
                   创建者 {t.created_by === 'owner' ? '负责人' : t.created_by} · 更新于 {timeAgo(t.updated_at)}
                 </span>
               </div>
+              <Receipts list={t.receipts} />
               <div className="btn-row drawer-actions">
                 {t.status === 'draft' && (
                   <button className="btn primary" onClick={() => act('publish', {}, '已发布')}>
@@ -303,6 +304,7 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
                         {c.parts.map((p, i) => p.kind === 'file' && <FilePart key={i} p={p} />)}
                       </div>
                     )}
+                    <Receipts list={c.receipts} />
                   </div>
                 ))}
                 <form

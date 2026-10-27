@@ -141,7 +141,8 @@ export function App() {
     es.onerror = () => setConnected(false);
     const onEvent = (msg: MessageEvent) => {
       const e = JSON.parse(msg.data) as HubEvent;
-      setEvents((list) => [e, ...list].slice(0, 300));
+      // 回执只用来刷新评论和私信下的标签，不进动态列表
+      if (e.type !== 'receipt.updated') setEvents((list) => [e, ...list].slice(0, 300));
       maybeNotify(e, () => {
         location.hash = e.task ? `#/${readHash().page}/${e.task}` : e.type === 'agent.offline' ? '#/agents' : '#/overview';
       });
@@ -152,6 +153,7 @@ export function App() {
       'project.created', 'project.updated', 'agent.joined', 'agent.updated', 'task.created', 'task.updated', 'task.assigned',
       'task.claimed', 'task.status_changed', 'task.progress', 'task.lease_expiring', 'task.due_soon', 'task.overdue', 'task.unlocked', 'task.stalled', 'task.deliverable', 'comment.created', 'artifact.updated',
       'message.direct', 'mention', 'owner.broadcast', 'agent.online', 'agent.offline', 'agent.activity', 'agent.control',
+      'receipt.updated',
     ];
     for (const t of types) es.addEventListener(t, onEvent);
     // 在线状态依赖时间推移，定期刷新

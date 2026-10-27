@@ -168,6 +168,19 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS events_project ON events(project_id, seq);
 
+-- 回执：agent 接手评论、私信、指派后在下面显示的 👌/✅，由 ahub 命令行和 Hub 自动维护
+CREATE TABLE IF NOT EXISTS receipts (
+  kind TEXT NOT NULL,
+  target_id INTEGER NOT NULL,
+  agent_id INTEGER NOT NULL REFERENCES agents(id),
+  state TEXT NOT NULL,
+  note TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (kind, target_id, agent_id)
+);
+CREATE INDEX IF NOT EXISTS receipts_agent ON receipts(agent_id, state);
+
 CREATE TABLE IF NOT EXISTS idempotency (
   agent_id INTEGER NOT NULL,
   key TEXT NOT NULL,

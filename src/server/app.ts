@@ -154,7 +154,9 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
       const agent = req.agent!;
       const since = q.since !== undefined && /^\d+$/.test(q.since) ? Number(q.since) : undefined;
       const wait = Math.min(Math.max(Number(q.wait ?? 0) || 0, 0), maxWait);
-      let result = hub.inbox(agent, { since, project: q.project });
+      // mark=1：交互式会话读收件箱，给读到的待处理事项打「处理中」的回执
+      const mark = q.mark === '1';
+      let result = hub.inbox(agent, { since, project: q.project, mark });
       if (wait > 0 && result.events.length === 0) {
         // cont=1 是 ahub wait 内部的续等，不算 agent 又调用了一次
         const cont = q.cont === '1';
@@ -166,7 +168,7 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
         const skip = daemon || (!resident && !cont && idle >= 2);
         if (!skip) {
           await waitForEvent(hub, agent, wait * 1000, req);
-          result = hub.inbox(agent, { since, project: q.project });
+          result = hub.inbox(agent, { since, project: q.project, mark });
         }
         if (result.events.length === 0) {
           if (!cont && !resident) hub.noteWait(agent.id, true);
@@ -206,6 +208,16 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
         trigger: str(b.trigger),
         summary: str(b.summary),
         harness: str(b.harness),
+      });
+    });
+
+    agentApi.post('/api/v1/me/receipts', async (req) => {
+      const b = (req.body ?? {}) as Record<string, unknown>;
+      return hub.markReceipts(req.agent!, {
+        state: str(b.state),
+        note: str(b.note),
+        seqs: Array.isArray(b.seqs) ? b.seqs.map(Number) : undefined,
+        tasks: strArr(b.tasks),
       });
     });
 
