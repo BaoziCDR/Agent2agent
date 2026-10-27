@@ -36,6 +36,7 @@ jobs:
       packages: write
     outputs:
       image: ${{ steps.name.outputs.image }}
+      version: ${{ steps.meta.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -80,15 +81,24 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+
+      # docs/releases/<tag>.md 存在时用作发布说明正文，否则用下面的默认正文；两种情况都附上自动生成的变更列表
+      - id: notes
+        run: |
+          f="docs/releases/${GITHUB_REF_NAME}.md"
+          if [ -f "$f" ]; then echo "path=$f" >> "$GITHUB_OUTPUT"; fi
+
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, '-') }}
+          body_path: ${{ steps.notes.outputs.path }}
           body: |
             ## Docker 镜像
 
             ```bash
-            docker pull ${{ needs.image.outputs.image }}:${{ github.ref_name }}
+            docker pull ${{ needs.image.outputs.image }}:${{ needs.image.outputs.version }}
             ```
 
             部署和升级见 [部署与运维](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/docs/deployment.md)。

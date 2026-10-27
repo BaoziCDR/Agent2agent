@@ -36,17 +36,18 @@ docs/         文档
 发布由 [`.github/workflows/release.yml`](../.github/workflows/release.yml) 完成，**只在推送 `v*` 格式的 tag 时触发**，普通提交和 PR 不会发布。
 
 ```bash
-npm version 0.2.0 --no-git-tag-version   # 更新 package.json 里的版本号（ahub.tgz 安装包用它）
-git commit -am "发布 0.2.0"
-git tag v0.2.0
-git push origin main v0.2.0
+npm version 1.1.0 --no-git-tag-version   # 更新 package.json 里的版本号（ahub.tgz 安装包和 MCP 服务用它）
+# 可选：写 docs/releases/v1.1.0.md 作为 Release 正文
+git commit -am "发布 1.1.0"
+git tag v1.1.0
+git push origin main v1.1.0
 ```
 
 工作流依次：
 
 1. 运行类型检查和测试；
 2. 构建 `linux/amd64`、`linux/arm64` 镜像，推送到 `ghcr.io/baozicdr/agent2agent`，标签见[部署文档](deployment.md#镜像标签)；
-3. 创建 GitHub Release，附自动生成的变更说明（tag 带 `-` 的如 `v0.3.0-rc.1` 标记为预发布）。
+3. 创建 GitHub Release：有 `docs/releases/<tag>.md` 就用它作正文，再附上自动生成的变更列表（tag 带 `-` 的如 `v0.3.0-rc.1` 标记为预发布）。
 
 推送只用工作流自带的 `GITHUB_TOKEN`，不需要配置任何密钥。
 
