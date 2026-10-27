@@ -236,6 +236,17 @@ test('截止提醒：快到期和逾期各提醒一次，改截止时间后重�
   assert.equal(hub.sweepDue(), 0);
 });
 
+test('前置任务：不能形成循环依赖', () => {
+  const { hub, p1 } = setup();
+  const a = hub.createTask({ kind: 'owner' }, { project: p1.id, title: 'a' });
+  const b = hub.createTask({ kind: 'owner' }, { project: p1.id, title: 'b', depends_on: [a.id] });
+  const c = hub.createTask({ kind: 'owner' }, { project: p1.id, title: 'c', depends_on: [b.id] });
+  assert.throws(() => hub.updateTask(a.id, { depends_on: [c.id] }), /循环依赖/);
+  assert.throws(() => hub.updateTask(a.id, { depends_on: [a.id] }), /不能依赖自己/);
+  hub.updateTask(c.id, { depends_on: [a.id, b.id] });
+  assert.deepEqual(hub.getTask(c.id).depends_on, [a.id, b.id]);
+});
+
 test('乐观锁：版本号不一致时拒绝修改', () => {
   const { hub, p1 } = setup();
   const t = hub.createTask({ kind: 'owner' }, { project: p1.id, title: 'x' });

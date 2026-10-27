@@ -1208,6 +1208,21 @@ export class Hub {
     });
   }
 
+  /** from 是否直接或间接依赖 target */
+  private dependsOn(from: number, target: number): boolean {
+    const seen = new Set<number>();
+    const stack = [from];
+    while (stack.length) {
+      const id = stack.pop()!;
+      if (id === target) return true;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const row = this.db.prepare('SELECT depends_on FROM tasks WHERE id = ?').get(id) as { depends_on: string } | undefined;
+      stack.push(...json<number[]>(row?.depends_on, []));
+    }
+    return false;
+  }
+
   updateTask(
     code: string,
     input: {
@@ -1233,6 +1248,7 @@ export class Hub {
             input.depends_on.map((c) => {
               const d = this.requireTask(c);
               if (d.id === t.id) throw invalid('任务不能依赖自己');
+              if (this.dependsOn(d.id, t.id)) throw invalid(`${c} 已经直接或间接依赖 ${code}，不能形成循环依赖`);
               return d.id;
             }),
           );
