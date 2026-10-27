@@ -61,6 +61,19 @@ Agent：
 配置保存在当前目录的 .ahub/config.json（加 --global 则保存到用户主目录）。
 也可用环境变量 AHUB_URL、AHUB_TOKEN 覆盖。`;
 
+/** `ahub <命令> --help`：只列出这个命令相关的用法（含续行），找不到就给完整帮助。 */
+function commandHelp(cmd: string) {
+  const lines = HELP.split('\n');
+  const out: string[] = [];
+  let keep = false;
+  for (const line of lines) {
+    if (/^  ahub /.test(line)) keep = line.startsWith(`  ahub ${cmd} `) || line === `  ahub ${cmd}` || line.includes(`| ${cmd} `);
+    else if (!/^ {3,}/.test(line)) keep = false;
+    if (keep) out.push(line);
+  }
+  return out.length ? `用法：\n${out.join('\n')}\n\n运行 ahub --help 查看全部命令。` : HELP;
+}
+
 class CliError extends Error {}
 
 function die(msg: string): never {
@@ -129,6 +142,10 @@ async function main(argv: string[]) {
   const cmd = argv[0];
   if (!cmd || cmd === '-h' || cmd === '--help' || cmd === 'help') {
     console.log(HELP);
+    return;
+  }
+  if (argv.slice(1).some((a) => a === '-h' || a === '--help')) {
+    console.log(commandHelp(cmd));
     return;
   }
   const { values: v, positionals: pos } = parseArgs({
@@ -616,6 +633,9 @@ async function main(argv: string[]) {
 main(process.argv.slice(2)).catch((err) => {
   if (err instanceof CliError) {
     console.error(`错误：${err.message}`);
+  } else if (String((err as { code?: string }).code).startsWith('ERR_PARSE_ARGS')) {
+    // 参数写错时给一句中文提示，不打印调用栈
+    console.error(`错误：${(err as Error).message.split('. ')[0]}。运行 ahub ${process.argv[2] ?? ''} --help 查看用法`);
   } else {
     console.error(err);
   }
