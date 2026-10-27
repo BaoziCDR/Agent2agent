@@ -8,6 +8,7 @@ import { type Actor, type AgentRow, Hub, HubError, agentCode } from './hub.js';
 import { renderInbox, renderJoin, renderMe, renderSearch, renderTask, renderTaskList } from './format.js';
 import { handleMcpRequest } from './mcp-http.js';
 import { renderReport, tasksCsv } from './report.js';
+import { buildInstallPackage } from './pack.js';
 import { NOTIFY_TOPICS, type Notifier } from './notify.js';
 import type { HubEvent, Part } from '../shared/model.js';
 
@@ -98,6 +99,14 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
     const file = join(ROOT, 'skill', 'SKILL.md');
     const text = existsSync(file) ? readFileSync(file, 'utf8') : '# ahub\n';
     return reply.type('text/markdown; charset=utf-8').send(text.replaceAll('{{HUB_URL}}', publicUrl(req)));
+  });
+
+  // ahub 命令行安装包，由 Hub 自身的构建产物打成，版本与 Hub 一致
+  let installPackage: Buffer | null | undefined;
+  app.get('/ahub.tgz', async (_req, reply) => {
+    if (installPackage === undefined) installPackage = buildInstallPackage(ROOT);
+    if (!installPackage) throw new HubError(404, 'not_found', '这个 Hub 没有可用的安装包（缺少构建产物，先运行 npm run build）');
+    return reply.type('application/gzip').header('content-disposition', 'attachment; filename="ahub.tgz"').send(installPackage);
   });
 
   // ── Agent 接口 ──

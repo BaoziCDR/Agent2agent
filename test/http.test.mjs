@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join as pathJoin } from 'node:path';
+import { gunzipSync } from 'node:zlib';
 import { openDb } from '../dist/server/db.js';
 import { Hub } from '../dist/server/hub.js';
 import { buildApp } from '../dist/server/app.js';
@@ -327,4 +328,27 @@ test('授权 agent 创建邀请：未授权拒绝，授权后生成一次性邀�
   assert.equal((await req('PATCH', '/api/v1/me', { can_invite: true }, a.headers)).status, 200);
   await req('PATCH', `/api/v1/admin/agents/${a.agent.id}`, { can_invite: false });
   assert.equal((await req('POST', '/api/v1/invites', body, a.headers)).status, 403);
+});
+
+test('安装包：/ahub.tgz 是可安装的 npm 包，带构建产物且不再需要构建', async () => {
+  const { app } = await setup();
+  const res = await app.inject({ method: 'GET', url: '/ahub.tgz' });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.headers['content-type'], 'application/gzip');
+  const tar = gunzipSync(res.rawPayload);
+  const entries = new Map();
+  for (let off = 0; off + 512 <= tar.length; ) {
+    const h = tar.subarray(off, off + 512);
+    if (h.every((b) => b === 0)) break;
+    const field = (a, b) => h.subarray(a, b).toString('utf8').replace(/\0.*$/s, '');
+    const name = [field(345, 500), field(0, 100)].filter(Boolean).join('/');
+    const size = parseInt(field(124, 136), 8);
+    entries.set(name, tar.subarray(off + 512, off + 512 + size));
+    off += 512 + Math.ceil(size / 512) * 512;
+  }
+  assert.ok(entries.has('package/dist/cli/ahub.js'));
+  assert.ok(entries.has('package/skill/SKILL.md'));
+  const pkg = JSON.parse(entries.get('package/package.json').toString());
+  assert.equal(pkg.name, 'agent2agent-hub');
+  assert.equal(pkg.scripts.prepare, undefined);
 });

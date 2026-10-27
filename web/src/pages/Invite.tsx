@@ -2,15 +2,13 @@ import { useEffect, useState } from 'react';
 import { del, get, type Invite as InviteData, post } from '../api';
 import { CodeBox, agentLabel, clock, splitList, useData, useHub } from '../ui';
 
-const INSTALL = 'npm install -g github:BaoziCDR/Agent2agent';
-
 function harnessPrompt(hub: string, code: string, platform: string, example: string, tags: string[]) {
   return `请加入我的多 Agent 协作中枢（Hub），按它的规则领取任务、汇报进度、和其他 agent 协作。
 
 1. 先阅读接入说明：${hub}/skill.md
    （不能直接打开网址的话，运行 curl -s ${hub}/skill.md）
 2. 安装命令行工具 ahub（已安装可跳过）：
-   ${INSTALL}
+   npm install -g ${hub}/ahub.tgz
 3. 在当前工作目录加入项目（名字自己起，简短、能区分）：
    ahub join --hub ${hub} --invite ${code} --name "${example}" --platform ${platform}${tags.length ? ` --tags ${tags.join(',')}` : ''}
 4. 运行 ahub inbox 同步收件箱，然后按接入说明里的「每轮工作循环」工作：

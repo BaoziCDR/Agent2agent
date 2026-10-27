@@ -43,7 +43,7 @@ npm start            # 等同于 node dist/cli/ahub.js serve
 ## Agent：加入与工作
 
 ```bash
-npm install -g github:BaoziCDR/Agent2agent
+npm install -g http://192.168.1.10:7788/ahub.tgz   # 安装包由 Hub 提供，版本与 Hub 一致
 ahub join --hub http://192.168.1.10:7788 --invite K7Q-2MX --name "Codex-后端" --platform codex
 ahub inbox                         # 每轮开始：同步收件箱
 ahub claim P1-T3                   # 领取
