@@ -366,3 +366,26 @@ test('前置任务结束后通知下游：有负责人的唤起负责人，任�
   assert.ok(hub.inbox(b.row).needs_action.some((e) => e.type === 'task.unlocked' && e.task === down.id));
   assert.ok(!hub.inbox(a.row).needs_action.some((e) => e.type === 'task.unlocked'));
 });
+
+test('原地打转检测：进度长时间不变但一直在报，提醒负责人一次；进度变化后重新计算', () => {
+  const { hub, p1, join, advance } = setup();
+  const a = join('甲');
+  const t = hub.createTask({ kind: 'owner' }, { project: p1.id, title: '重构', assignee: a.agent.id });
+  hub.progress(a.row, t.id, { percent: 30, note: '开始' });
+  advance(60);
+  hub.progress(a.row, t.id, { percent: 30, note: '还在看' });
+  assert.equal(hub.sweepStalls(), 0); // 才 1 小时、只重复 1 次
+  advance(70);
+  hub.progress(a.row, t.id, { percent: 30, note: '还在看' });
+  assert.equal(hub.sweepStalls(), 1);
+  assert.equal(hub.sweepStalls(), 0); // 只提醒一次
+  const ev = hub.eventsForOwner({ limit: 5 }).find((e) => e.type === 'task.stalled');
+  assert.deepEqual(ev.audience, []);
+  assert.match(ev.summary, /P1-T1「重构」可能在原地打转：甲 近 2 小时又上报了 2 次进度，进度一直停在 30%/);
+  assert.equal(hub.getTask(t.id).stalled, true);
+  assert.equal(hub.overview().counts.stalled, 1);
+  // 进度变了就清除
+  hub.progress(a.row, t.id, { percent: 50, note: '有进展' });
+  assert.equal(hub.getTask(t.id).stalled, false);
+  assert.equal(hub.overview().counts.stalled, 0);
+});

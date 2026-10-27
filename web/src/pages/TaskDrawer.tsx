@@ -204,6 +204,11 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
                 </div>
               )}
               {t.status === 'input_required' && <AnswerBox task={t} onDone={reload} />}
+              {t.stalled && (
+                <p className="due warn" style={{ margin: '8px 0' }}>
+                  进度停在 {t.progress}% 已经很久，期间一直在上报，可能在原地打转。可以在下面评论问问卡在哪，或者拆成更小的子任务、改派给别人。
+                </p>
+              )}
               {t.lease_until && !closed && <div className="faint">租约到期：{clock(t.lease_until)}</div>}
               {t.due_at && (
                 <div className="faint">

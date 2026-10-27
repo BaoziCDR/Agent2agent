@@ -74,6 +74,7 @@ export type EventType =
   | 'task.due_soon'
   | 'task.overdue'
   | 'task.unlocked'
+  | 'task.stalled'
   | 'task.deliverable'
   | 'comment.created'
   | 'message.direct'

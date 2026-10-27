@@ -232,6 +232,11 @@ export function Board() {
                         )
                       );
                     })()}
+                    {t.stalled && (
+                      <div className="due warn" title="一直在报进度，但百分比 2 小时以上没变">
+                        ↻ 疑似原地打转
+                      </div>
+                    )}
                     {['working', 'input_required', 'review'].includes(t.status) && (
                       <div className="progress" title={`${t.progress}%`}>
                         <div style={{ width: `${t.progress}%` }} />

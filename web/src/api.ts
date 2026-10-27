@@ -54,6 +54,8 @@ export interface Task {
   block_reason: string;
   /** 阻塞时 agent 给出的可选答案 */
   block_options: string[];
+  /** 疑似原地打转 */
+  stalled: boolean;
   lease_until: string | null;
   due_at: string | null;
   created_at: string;
@@ -81,7 +83,7 @@ export interface Invite {
 }
 
 export interface Overview {
-  counts: { working: number; review: number; input_required: number; open: number; lost: number; overdue: number };
+  counts: { working: number; review: number; input_required: number; open: number; lost: number; overdue: number; stalled: number };
   attention: Task[];
   mentions: HubEvent[];
   agents_online: number;

@@ -148,7 +148,7 @@ export function App() {
     };
     const types = [
       'project.created', 'project.updated', 'agent.joined', 'agent.updated', 'task.created', 'task.updated', 'task.assigned',
-      'task.claimed', 'task.status_changed', 'task.progress', 'task.lease_expiring', 'task.due_soon', 'task.overdue', 'task.unlocked', 'task.deliverable', 'comment.created',
+      'task.claimed', 'task.status_changed', 'task.progress', 'task.lease_expiring', 'task.due_soon', 'task.overdue', 'task.unlocked', 'task.stalled', 'task.deliverable', 'comment.created',
       'message.direct', 'mention', 'owner.broadcast', 'agent.online', 'agent.offline', 'agent.activity', 'agent.control',
     ];
     for (const t of types) es.addEventListener(t, onEvent);

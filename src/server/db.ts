@@ -199,6 +199,8 @@ function migrate(db: Db) {
   if (!has('agents', 'daemon_paused')) db.exec('ALTER TABLE agents ADD COLUMN daemon_paused INTEGER NOT NULL DEFAULT 0');
   // 阻塞时 agent 给出的可选答案（JSON 数组），负责人在控制台点选即可解除阻塞
   if (!has('tasks', 'block_options')) db.exec("ALTER TABLE tasks ADD COLUMN block_options TEXT NOT NULL DEFAULT '[]'");
+  // 疑似原地打转：已提醒负责人为 1，进度有变化或状态变化时清零
+  if (!has('tasks', 'stall_warned')) db.exec('ALTER TABLE tasks ADD COLUMN stall_warned INTEGER NOT NULL DEFAULT 0');
   if (!has('tasks', 'due_warned')) db.exec('ALTER TABLE tasks ADD COLUMN due_warned INTEGER NOT NULL DEFAULT 0');
 }
 

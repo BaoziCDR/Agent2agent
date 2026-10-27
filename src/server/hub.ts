@@ -81,6 +81,7 @@ interface TaskRow {
   lease_until: string | null;
   lease_warned: number;
   due_warned: number;
+  stall_warned: number;
   due_at: string | null;
   created_at: string;
   updated_at: string;
@@ -163,6 +164,8 @@ export interface TaskView {
   block_reason: string;
   /** 阻塞时给负责人的可选答案 */
   block_options: string[];
+  /** 疑似原地打转：一直在报进度，但百分比很久没变 */
+  stalled: boolean;
   lease_until: string | null;
   due_at: string | null;
   created_at: string;
@@ -1194,6 +1197,7 @@ export class Hub {
       notes: t.notes,
       block_reason: t.block_reason,
       block_options: t.status === 'input_required' ? json<string[]>(t.block_options, []) : [],
+      stalled: t.status === 'working' && t.stall_warned === 1,
       lease_until: t.lease_until,
       due_at: t.due_at,
       created_at: t.created_at,
@@ -1480,7 +1484,7 @@ export class Hub {
     const assignee = extra.assignee === undefined ? t.assignee_id : extra.assignee;
     const r = this.db
       .prepare(
-        `UPDATE tasks SET status = ?, assignee_id = ?, lease_until = ?, lease_warned = 0, block_reason = ?, updated_at = ?,
+        `UPDATE tasks SET status = ?, assignee_id = ?, lease_until = ?, lease_warned = 0, stall_warned = 0, block_reason = ?, updated_at = ?,
           version = version + 1 WHERE id = ? AND version = ?`,
       )
       .run(
@@ -1673,9 +1677,10 @@ export class Hub {
       }
       this.db
         .prepare(
-          'UPDATE tasks SET progress = ?, progress_note = ?, notes = ?, lease_until = ?, lease_warned = 0, updated_at = ?, version = version + 1 WHERE id = ?',
+          `UPDATE tasks SET progress = ?, progress_note = ?, notes = ?, lease_until = ?, lease_warned = 0,
+             stall_warned = CASE WHEN progress = ? THEN stall_warned ELSE 0 END, updated_at = ?, version = version + 1 WHERE id = ?`,
         )
-        .run(percent, note, input.notes ?? row.notes, this.lease(agent), this.iso(), t.id);
+        .run(percent, note, input.notes ?? row.notes, this.lease(agent), percent, this.iso(), t.id);
       this.db
         .prepare('INSERT INTO progress_log (task_id, author, percent, note, created_at) VALUES (?, ?, ?, ?, ?)')
         .run(t.id, me, percent, note, this.iso());
@@ -2010,6 +2015,53 @@ export class Hub {
     return n;
   }
 
+  /**
+   * 定时调用：找出「一直在报进度但没有实际进展」的任务提醒负责人（每次停滞只提醒一次）。
+   * 判断标准：进度百分比停在同一个值已超过 2 小时，期间又上报了至少 2 次进度，
+   * 或者值守进程为这个任务唤起了至少 3 次。
+   */
+  sweepStalls(): number {
+    const now = this.now().getTime();
+    const rows = this.db.prepare("SELECT * FROM tasks WHERE status = 'working' AND stall_warned = 0").all() as unknown as TaskRow[];
+    let n = 0;
+    this.write(() => {
+      for (const t of rows) {
+        const logs = this.db
+          .prepare('SELECT percent, created_at FROM progress_log WHERE task_id = ? ORDER BY id DESC LIMIT 50')
+          .all(t.id) as { percent: number; created_at: string }[];
+        if (!logs.length || logs[0].percent !== t.progress || t.progress >= 100) continue;
+        // 从最新往前数，进度一直是同一个值的那几次上报
+        let same = 0;
+        while (same < logs.length && logs[same].percent === t.progress) same++;
+        const since = logs[same - 1].created_at;
+        if (now - Date.parse(since) < STALL_MS) continue;
+        const code = taskCode(t.project_id, t.num);
+        const runs =
+          t.assignee_id === null
+            ? 0
+            : (
+                this.db
+                  .prepare('SELECT COUNT(*) AS n FROM runs WHERE agent_id = ? AND started_at >= ? AND trigger LIKE ?')
+                  .get(t.assignee_id, since, `%${code}%`) as { n: number }
+              ).n;
+        const repeats = same - 1;
+        if (repeats < 2 && runs < 3) continue;
+        n++;
+        this.db.prepare('UPDATE tasks SET stall_warned = 1 WHERE id = ?').run(t.id);
+        const hours = Math.round((now - Date.parse(since)) / 3600_000);
+        const who = this.agentName(t.assignee_id) ?? '负责的 agent';
+        const what = [repeats >= 2 ? `又上报了 ${repeats} 次进度` : '', runs >= 3 ? `被唤起了 ${runs} 次` : ''].filter(Boolean).join('、');
+        this.emit('task.stalled', 'owner', {
+          task: t,
+          audience: [],
+          data: { assignee: t.assignee_id === null ? null : agentCode(t.assignee_id), percent: t.progress, since, reports: repeats, runs },
+          summary: `${code}「${t.title}」可能在原地打转：${who} 近 ${hours} 小时${what}，进度一直停在 ${t.progress}%`,
+        });
+      }
+    });
+    return n;
+  }
+
   sweepLeases(): number {
     const rows = this.db
       .prepare(
@@ -2249,9 +2301,12 @@ export class Hub {
         .prepare(`SELECT COUNT(*) AS n FROM tasks WHERE due_at IS NOT NULL AND due_at < ? AND status IN (${LIVE_SQL}) ${scope}`)
         .get(now, ...params) as { n: number }
     ).n;
+    const stalled = (
+      this.db.prepare(`SELECT COUNT(*) AS n FROM tasks WHERE stall_warned = 1 AND status = 'working' ${scope}`).get(...params) as { n: number }
+    ).n;
     const attention = this.db
       .prepare(
-        `SELECT * FROM tasks WHERE (status IN ('review','input_required','draft') OR (lease_warned = 1 AND status = 'working')
+        `SELECT * FROM tasks WHERE (status IN ('review','input_required','draft') OR ((lease_warned = 1 OR stall_warned = 1) AND status = 'working')
            OR (due_at IS NOT NULL AND due_at < ? AND status IN (${LIVE_SQL}))) ${scope}
          ORDER BY updated_at DESC LIMIT 50`,
       )
@@ -2266,6 +2321,7 @@ export class Hub {
         open: count('open'),
         lost,
         overdue,
+        stalled,
       },
       attention: attention.map((t) => this.taskView(t)),
       mentions,
@@ -2275,6 +2331,7 @@ export class Hub {
 }
 
 const DUE_SOON_MS = 2 * 3600_000;
+const STALL_MS = 2 * 3600_000;
 const LIVE_SQL = "'open','assigned','working','input_required'";
 
 /** 截止时间统一存成 ISO；空串表示清除。 */

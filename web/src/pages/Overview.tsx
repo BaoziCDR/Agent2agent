@@ -47,6 +47,10 @@ export function Overview() {
           <div className="stat-label">可能失联</div>
           <div className="stat-value">{c?.lost ?? '–'}</div>
         </div>
+        <div className={`card stat ${c?.stalled ? 'warn' : ''}`} title="一直在报进度，但百分比 2 小时以上没变">
+          <div className="stat-label">原地打转</div>
+          <div className="stat-value">{c?.stalled ?? '–'}</div>
+        </div>
         <div className={`card stat ${c?.overdue ? 'bad' : ''}`}>
           <div className="stat-label">已逾期</div>
           <div className="stat-value">{c?.overdue ?? '–'}</div>
@@ -82,6 +86,7 @@ export function Overview() {
                       {t.status === 'input_required' && `${t.block_options.length ? '等你回答' : '阻塞原因'}：${t.block_reason}`}
                       {t.status === 'draft' && `${t.created_by === 'owner' ? '你' : t.created_by} 的草稿，尚未发布`}
                       {t.status === 'working' && t.lease_until && new Date(t.lease_until) < new Date() && `${t.assignee_name ?? ''} 很久没有上报进度，可能已失联`}
+                      {t.stalled && `${t.assignee_name ?? ''} 一直在报进度，但停在 ${t.progress}% 很久了，可能在原地打转`}
                       {(() => {
                         const d = dueInfo(t);
                         return d?.cls === 'bad' && <span className="due bad">{t.status === 'working' || t.status === 'input_required' ? ' · ' : ''}{d.text}</span>;

@@ -52,6 +52,7 @@ export async function serve(opts: ServeOptions) {
     try {
       hub.sweepLeases();
       hub.sweepDue();
+      hub.sweepStalls();
       hub.sweepPresence();
     } catch (err) {
       console.error('租约/在线状态检查失败：', err);
