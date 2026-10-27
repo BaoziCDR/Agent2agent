@@ -157,7 +157,7 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
               )}
             </span>
             <span className="btn-row">
-              <button className="btn small ghost" onClick={toggleWide} title={wide ? '恢复侧栏宽度' : '铺满窗口阅读'}>
+              <button className="btn small ghost drawer-widen" onClick={toggleWide} title={wide ? '恢复侧栏宽度' : '铺满窗口阅读'}>
                 {wide ? '收起' : '展开'}
               </button>
               <button className="btn small" onClick={onClose} aria-label="关闭">

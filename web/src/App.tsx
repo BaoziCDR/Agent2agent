@@ -31,6 +31,14 @@ const PAGES = [
 ] as const;
 type PageId = (typeof PAGES)[number]['id'];
 
+// 手机上导航放到底部：常用的四页直接点，其余收进「更多」
+const TABBAR: { id: PageId; label: string }[] = [
+  { id: 'overview', label: '总览' },
+  { id: 'board', label: '看板' },
+  { id: 'new', label: '发布' },
+  { id: 'feed', label: '动态' },
+];
+
 function readHash(): { page: PageId; task: string | null } {
   const [page, task] = location.hash.replace(/^#\/?/, '').split('/');
   const valid = PAGES.some((p) => p.id === page);
@@ -90,6 +98,7 @@ export function App() {
   const [connected, setConnected] = useState(false);
   const [notifyOn, setNotifyOn] = useState(notifyEnabled);
   const [toastMsg, setToastMsg] = useState<{ text: string; error: boolean } | null>(null);
+  const [moreOpen, setMoreOpen] = useState(false);
   const toastTimer = useRef<number>(0);
 
   useEffect(() => {
@@ -181,6 +190,7 @@ export function App() {
   }, [project, projects, setProject]);
 
   const go = useCallback((page: string) => {
+    setMoreOpen(false);
     location.hash = `#/${page}`;
   }, []);
   const openTask = useCallback((id: string) => {
@@ -200,6 +210,18 @@ export function App() {
   const reviewCount = projects
     .filter((p) => !project || p.id === project)
     .reduce((n, p) => n + (p.counts.review ?? 0) + (p.counts.input_required ?? 0), 0);
+
+  const toggleNotify = async () => {
+    const on = await setNotify(!notifyOn);
+    setNotifyOn(on);
+    if (!notifyOn && !on) toast('浏览器没有允许通知，请在地址栏左侧的网站设置里打开', true);
+  };
+  const logout = () => {
+    setToken(null);
+    setAuthed(false);
+  };
+  const isActive = (id: string) => route.page === id || (id === 'agents' && route.page === 'invite');
+  const moreActive = !TABBAR.some((t) => isActive(t.id));
 
   const Page = {
     overview: Overview,
@@ -241,13 +263,9 @@ export function App() {
           <GlobalSearch />
           {notifySupported() && (
             <button
-              className="btn small"
+              className="btn small topbar-extra"
               title="控制台在后台时，用系统通知提醒你：待验收、阻塞、@你、私信、agent 下线、任务可能失联"
-              onClick={async () => {
-                const on = await setNotify(!notifyOn);
-                setNotifyOn(on);
-                if (!notifyOn && !on) toast('浏览器没有允许通知，请在地址栏左侧的网站设置里打开', true);
-              }}
+              onClick={toggleNotify}
             >
               {notifyOn ? '通知：开' : '通知：关'}
             </button>
@@ -256,19 +274,13 @@ export function App() {
             <span className={`dot ${connected ? 'online' : ''}`} />
             <span className="conn-label">{connected ? '实时' : '重连中'}</span>
           </span>
-          <button
-            className="btn small"
-            onClick={() => {
-              setToken(null);
-              setAuthed(false);
-            }}
-          >
+          <button className="btn small topbar-extra" onClick={logout}>
             退出
           </button>
         </header>
         <nav className="sidebar">
           {PAGES.filter((p) => !('hidden' in p)).map((p) => (
-            <button key={p.id} className={`nav-item ${route.page === p.id || (p.id === 'agents' && route.page === 'invite') ? 'active' : ''}`} onClick={() => go(p.id)}>
+            <button key={p.id} className={`nav-item ${isActive(p.id) ? 'active' : ''}`} onClick={() => go(p.id)}>
               <span>{p.label}</span>
               {p.id === 'overview' && reviewCount > 0 && <span className="badge warn">{reviewCount}</span>}
             </button>
@@ -277,7 +289,39 @@ export function App() {
         <main className="main">
           <Page />
         </main>
+        <nav className="tabbar" aria-label="主导航">
+          {TABBAR.map((t) => (
+            <button key={t.id} className={`tabbar-item ${isActive(t.id) && !moreOpen ? 'active' : ''}`} onClick={() => go(t.id)}>
+              {t.label}
+              {t.id === 'overview' && reviewCount > 0 && <span className="tabbar-badge">{reviewCount}</span>}
+            </button>
+          ))}
+          <button className={`tabbar-item ${moreActive || moreOpen ? 'active' : ''}`} aria-expanded={moreOpen} onClick={() => setMoreOpen((v) => !v)}>
+            更多
+          </button>
+        </nav>
       </div>
+      {moreOpen && (
+        <div className="sheet-mask" onClick={() => setMoreOpen(false)}>
+          <div className="sheet" role="menu" onClick={(e) => e.stopPropagation()}>
+            {PAGES.filter((p) => !('hidden' in p) && !TABBAR.some((t) => t.id === p.id)).map((p) => (
+              <button key={p.id} role="menuitem" className={`sheet-item ${isActive(p.id) ? 'active' : ''}`} onClick={() => go(p.id)}>
+                {p.label}
+              </button>
+            ))}
+            <div className="sheet-sep" />
+            {notifySupported() && (
+              <button role="menuitem" className="sheet-item" onClick={toggleNotify}>
+                <span>系统通知</span>
+                <span className="faint">{notifyOn ? '已开' : '已关'}</span>
+              </button>
+            )}
+            <button role="menuitem" className="sheet-item" onClick={logout}>
+              退出登录
+            </button>
+          </div>
+        </div>
+      )}
       {route.task && <TaskDrawer id={route.task} onClose={closeTask} />}
       {toastMsg && <div className={`toast ${toastMsg.error ? 'error' : ''}`}>{toastMsg.text}</div>}
     </Ctx.Provider>
