@@ -10,6 +10,7 @@ import { handleMcpRequest } from './mcp-http.js';
 import { renderReport, tasksCsv } from './report.js';
 import { buildInstallPackage } from './pack.js';
 import { NOTIFY_TOPICS, type Notifier } from './notify.js';
+import type { Tagger } from './tagger.js';
 import type { HubEvent, Part } from '../shared/model.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -26,6 +27,8 @@ export interface AppOptions {
   filesDir?: string;
   /** 外部通知（钉钉机器人）；不设置时不提供通知设置接口 */
   notifier?: Notifier;
+  /** 发布任务时用外部模型自动打标签；不设置时不提供模型设置接口 */
+  tagger?: Tagger;
 }
 
 declare module 'fastify' {
@@ -540,6 +543,21 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
       admin.patch(`${A}/notify/channels/:id`, async (req) => notifier.update(cid(req), channelInput((req.body ?? {}) as B)));
       admin.delete(`${A}/notify/channels/:id`, async (req) => notifier.remove(cid(req)));
       admin.post(`${A}/notify/channels/:id/test`, async (req) => notifier.test(cid(req)));
+    }
+    admin.get(`${A}/tags`, async () => hub.tagOptions());
+    admin.put(`${A}/tags/presets`, async (req) => ({ presets: hub.setPresetTags(strArr(((req.body ?? {}) as B).presets) ?? []) }));
+    const tagger = opts.tagger;
+    if (tagger) {
+      const llmInput = (b: B) => ({
+        base_url: str(b.base_url),
+        model: str(b.model),
+        api_key: b.api_key === null ? '' : str(b.api_key) || undefined,
+        auto_tag: typeof b.auto_tag === 'boolean' ? b.auto_tag : undefined,
+      });
+      admin.get(`${A}/llm`, async () => tagger.view());
+      admin.put(`${A}/llm`, async (req) => tagger.update(llmInput((req.body ?? {}) as B)));
+      admin.post(`${A}/llm/test`, async (req) => tagger.test(llmInput((req.body ?? {}) as B)));
+      admin.post(`${A}/tasks/:id/auto-tag`, async (req) => tagger.tagTask((req.params as { id: string }).id));
     }
     admin.get(`${A}/templates`, async () => hub.listTemplates());
     const templateInput = (b: B) => ({

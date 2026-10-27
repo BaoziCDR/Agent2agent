@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { del, get, post, type Task, type Template } from '../api';
-import { Modal, splitList, useData, useHub } from '../ui';
+import { Modal, TagPicker, splitList, useData, useHub } from '../ui';
 import { Suggest, useRecommend } from '../suggest';
 import { TaskPicker } from '../taskpicker';
 
@@ -196,7 +196,7 @@ export function NewTask() {
           </div>
           <div className="field">
             <label htmlFor="nt-tags">需要的能力标签</label>
-            <input id="nt-tags" className="input" value={tags} onChange={(e) => setTags(e.target.value)} placeholder="如：前端, 测试" />
+            <TagPicker id="nt-tags" value={tags} onChange={setTags} placeholder="留空则所有成员都能领取；设置里配置了外部模型时，发布后会自动打标签" />
           </div>
         </div>
         {mode === 'single' ? (

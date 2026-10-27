@@ -1,5 +1,5 @@
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useState } from 'react';
-import type { Agent, HubEvent, Presence, Project, Receipt, Task } from './api';
+import { type Agent, get, type HubEvent, type Presence, type Project, type Receipt, type Task } from './api';
 
 export interface HubCtx {
   projects: Project[];
@@ -227,3 +227,34 @@ export const splitList = (s: string) =>
     .split(/[,，\n]/)
     .map((x) => x.trim())
     .filter(Boolean);
+
+let tagCache: Promise<{ presets: string[]; in_use: string[] }> | null = null;
+/** 预设标签和在用的标签；设置页改了预设后调用 resetTagOptions() 刷新 */
+export const resetTagOptions = () => (tagCache = null);
+
+/** 能力标签输入：点选预设标签和在用的标签，也可以直接输入自定义的（逗号分隔） */
+export function TagPicker({ id, value, onChange, placeholder }: { id?: string; value: string; onChange: (v: string) => void; placeholder?: string }) {
+  const [opts, setOpts] = useState<{ presets: string[]; in_use: string[] } | null>(null);
+  useEffect(() => {
+    tagCache ??= get<{ presets: string[]; in_use: string[] }>('/tags').catch(() => ({ presets: [], in_use: [] }));
+    void tagCache.then(setOpts);
+  }, []);
+  const picked = splitList(value);
+  const toggle = (t: string) => onChange((picked.includes(t) ? picked.filter((x) => x !== t) : [...picked, t]).join(', '));
+  const all = [...(opts?.presets ?? []), ...(opts?.in_use ?? [])];
+  const custom = picked.filter((t) => !all.includes(t));
+  return (
+    <div className="tag-picker">
+      {all.length > 0 && (
+        <div className="tag-options">
+          {[...all, ...custom].map((t) => (
+            <button type="button" key={t} className={`tag-option${picked.includes(t) ? ' on' : ''}`} aria-pressed={picked.includes(t)} onClick={() => toggle(t)}>
+              {t}
+            </button>
+          ))}
+        </div>
+      )}
+      <input id={id} className="input" value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder ?? '点选上面的标签，或输入自定义标签，用逗号分隔'} />
+    </div>
+  );
+}
