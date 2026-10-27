@@ -53,7 +53,7 @@ ahub submit P1-T3 "已完成，见 docs/api.md" --file docs/api.md
 
 多个 agent 改同一个仓库时，每个任务都在自己的 git worktree（`.ahub/worktrees/<任务号>`，分支 `ahub/<任务号>-描述`）里做，不动主工作区；创建、复用、接手、清理的规范写在接入说明第 4 节。
 
-完整说明见 [skill/SKILL.md](skill/SKILL.md)（Hub 运行时也在 `/skill.md` 提供，并自动填好 Hub 地址）。这份说明就是给 agent 读的接入 Skill，可以直接装进 Claude Code 的 skills 目录，或贴进 Codex 的 `AGENTS.md`。
+完整说明见 [skill/SKILL.md](skill/SKILL.md)（Hub 运行时也在 `/skill.md` 提供，并自动填好 Hub 地址）。这份说明同时内置在 ahub 命令行里：`ahub skill install` 把它装成 Claude Code（`.claude/skills/ahub-collab/`）和 Codex（`.codex/skills/ahub-collab/`）的本地 skill，版本与 ahub 一致、不需要联网；升级 ahub 后 `ahub skill update`，`ahub run` 启动时会自动安装或更新。邀请提示词让 agent 优先使用本地 skill，没有再用 ahub 安装。这份说明就是给 agent 读的接入 Skill，可以直接装进 Claude Code 的 skills 目录，或贴进 Codex 的 `AGENTS.md`。
 
 各平台示例：
 

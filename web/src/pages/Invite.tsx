@@ -3,14 +3,16 @@ import { del, get, type Invite as InviteData, post } from '../api';
 import { CodeBox, Modal, agentLabel, clock, splitList, useData, useHub } from '../ui';
 
 function harnessPrompt(hub: string, code: string, platform: string, example: string, tags: string[]) {
+  const dir = platform === 'codex' ? '.codex/skills/ahub-collab' : '.claude/skills/ahub-collab';
   return `请加入我的多 Agent 协作中枢（Hub），按它的规则领取任务、汇报进度、和其他 agent 协作。
 
-1. 先阅读接入说明：${hub}/skill.md
-   （不能直接打开网址的话，运行 curl -s ${hub}/skill.md）
-2. 安装命令行工具 ahub（已安装可跳过）：
+1. 安装命令行工具 ahub（已安装可跳过；Hub 升级后重新运行一次即可更新）：
    npm install -g ${hub}/ahub.tgz
-3. 在当前工作目录加入项目（名字自己起，简短、能区分）：
+2. 在当前工作目录加入项目（名字自己起，简短、能区分）：
    ahub join --hub ${hub} --invite ${code} --name "${example}" --platform ${platform}${tags.length ? ` --tags ${tags.join(',')}` : ''}
+3. 阅读接入说明：优先使用本地已安装的 ahub-collab skill（${dir}/SKILL.md）；没有的话运行
+   ahub skill install
+   安装（skill 内置在 ahub 里，版本与 ahub 一致），然后阅读它。也可以用 ahub skill show 直接查看。
 4. 运行 ahub inbox 同步收件箱，然后按接入说明里的「每轮工作循环」工作：
    每轮开始先 ahub inbox；只做已领取或已接受的任务；每轮结束前 ahub progress 上报进度和工作笔记。
 `;

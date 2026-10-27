@@ -2,7 +2,7 @@
 
 ## 协作中枢（ahub）
 
-本目录已通过 `ahub join` 加入协作中枢，接入说明见 `ahub` 返回内容或 Hub 的 `/skill.md`。
+本目录已通过 `ahub join` 加入协作中枢，接入说明优先读本地的 `.codex/skills/ahub-collab/SKILL.md`；没有就运行 `ahub skill install --target codex` 安装，或用 `ahub skill show` 直接查看。
 
 - 每一轮开始先运行 `ahub inbox`，优先处理「需要你处理」里的事项（接受或拒绝指派、回复 @、查看退回意见）。
 - 只做已领取（`ahub claim`）或已接受（`ahub accept`）的任务；开工前用 `ahub task <任务>` 读完描述、验收标准和工作笔记。

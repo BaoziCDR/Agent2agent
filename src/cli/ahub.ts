@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { basename, join, resolve } from 'node:path';
+import { homedir } from 'node:os';
+import { basename, dirname, join, resolve } from 'node:path';
 import { type CliConfig, defaultConfigPath, loadConfig, saveConfig } from './config.js';
 import { fileArtifact, uploadFile } from './files.js';
+import { SKILL_TARGETS, type SkillTarget, bundledVersion, installSkill, renderSkill, skillPath, skillStates } from './skill.js';
 
 const HELP = `ahub —— 多 Agent 协作中枢命令行
 
@@ -45,6 +47,11 @@ Agent：
                                        （需负责人授权）找不到合适的 agent 时创建一次性邀请，并 @负责人 去运行它
   ahub use <项目>                      设置当前目录的默认项目
   ahub stream                          持续输出实时事件（SSE）
+  ahub skill install [--target claude|codex|all] [--global] [--force]
+                                       把内置的接入说明装成本地 skill（版本与 ahub 一致，无需联网）；
+                                       默认装到当前工作目录，Claude Code 用 .claude/skills，Codex 用 .codex/skills；--global 装到主目录
+  ahub skill update                    把已装的 skill 更新到当前 ahub 的版本（升级 ahub 后运行）
+  ahub skill status | show             查看安装位置和版本 | 直接打印接入说明
   ahub mcp [--hub URL]                 以 stdio 方式运行 MCP 服务（供 Codex、Claude Code 等配置）
   ahub run --harness codex|claude      值守模式：保持在线，收到指派、@、私信、退回时自动唤起 harness 处理
            [--hub URL --invite 邀请码 --name 名字]  在还没加入过的目录一步完成加入并开始值守
@@ -171,6 +178,8 @@ async function main(argv: string[]) {
       'wake-on-open': { type: 'boolean' },
       'new-session': { type: 'boolean' },
       'dry-run': { type: 'boolean' },
+      target: { type: 'string' },
+      force: { type: 'boolean' },
       rev: { type: 'string' },
       out: { type: 'string' },
       base: { type: 'string' },
@@ -235,6 +244,44 @@ async function main(argv: string[]) {
       console.log('\n' + md);
       console.log('下一步：运行 ahub inbox 同步收件箱。');
       return;
+    }
+    case 'skill': {
+      // 项目级 skill 装在 agent 的工作目录（.ahub 所在目录），在 worktree 里运行也一样
+      const projectDir = loaded.path && dirname(dirname(loaded.path)) !== homedir() ? dirname(dirname(loaded.path)) : process.cwd();
+      const states = skillStates(projectDir);
+      const sub = pos[0] ?? 'status';
+      if (sub === 'show') return void process.stdout.write(renderSkill(cfg.hub));
+      if (sub === 'status') {
+        console.log(`内置 skill 版本：${bundledVersion()}`);
+        for (const st of states)
+          console.log(`- ${st.target === 'claude' ? 'Claude Code' : 'Codex'}（${st.scope === 'user' ? '用户级' : '项目级'}）${st.path}：${st.version === null ? '未安装' : st.version === 'unknown' ? '不是 ahub 安装的' : st.current ? '已是最新' : `版本 ${st.version}，可以 ahub skill update`}`);
+        return;
+      }
+      const write = (path: string, verb: string) => {
+        installSkill(path, cfg.hub);
+        console.log(`${verb} ${path}`);
+      };
+      if (sub === 'install') {
+        const t = v.target ?? 'all';
+        if (t !== 'all' && !SKILL_TARGETS.includes(t as SkillTarget)) die('--target 只能是 claude、codex 或 all');
+        const scope = v.global ? 'user' : 'project';
+        for (const target of t === 'all' ? SKILL_TARGETS : [t as SkillTarget]) {
+          const path = skillPath(target, scope, projectDir);
+          const st = states.find((x) => x.path === path)!;
+          if (st.version === 'unknown' && !v.force) console.log(`跳过 ${path}：已有一份不是 ahub 安装的 skill，确认要覆盖请加 --force`);
+          else if (st.current) console.log(`已是最新 ${path}`);
+          else write(path, st.version ? '已更新' : '已安装');
+        }
+        if (!cfg.hub) console.log('提示：还没有加入 Hub，skill 里的 Hub 地址留空了；加入后再运行一次 ahub skill update。');
+        return;
+      }
+      if (sub === 'update') {
+        const installed = states.filter((st) => st.version && st.version !== 'unknown');
+        if (!installed.length) die('还没有安装过 skill，请运行 ahub skill install');
+        for (const st of installed) write(st.path, '已更新');
+        return;
+      }
+      die('用法：ahub skill install|update|status|show，运行 ahub --help 查看详情');
     }
     case 'whoami':
       console.log(ok(await api(cfg, 'GET', '/api/v1/me')));
@@ -525,6 +572,21 @@ async function main(argv: string[]) {
         }
       }
       if (!runPath) die('这个目录还没有加入 Hub：先运行 ahub join，或者用 ahub run --hub 地址 --invite 邀请码 --name 名字 一步加入并值守');
+      if (harness !== 'custom' && !v['dry-run']) {
+        // 值守唤起的 harness 优先读本地 skill：没装就装到运行目录，旧版本自动更新到和 ahub 一致
+        const runDir = v.cwd ?? process.cwd();
+        const mine = skillStates(runDir).filter((st) => st.target === harness);
+        const ours = mine.filter((st) => st.version && st.version !== 'unknown');
+        for (const st of ours.filter((x) => !x.current)) {
+          installSkill(st.path, runCfg.hub);
+          console.log(`已把 skill 更新到当前 ahub 的版本：${st.path}`);
+        }
+        if (!mine.some((st) => st.version)) {
+          const path = skillPath(harness, 'project', runDir);
+          installSkill(path, runCfg.hub);
+          console.log(`已安装接入说明 skill：${path}`);
+        }
+      }
       const { runDaemon } = await import('./run.js');
       await runDaemon(runCfg, runPath, {
         harness,
