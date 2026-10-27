@@ -122,6 +122,7 @@ interface TaskRow {
   due_warned: number;
   stall_warned: number;
   due_at: string | null;
+  opened_at: string | null;
   created_at: string;
   updated_at: string;
   version: number;
@@ -167,6 +168,20 @@ export interface AgentView {
   pending: boolean;
   projects: { id: string; name: string; tags: string[] }[];
   active_tasks: string[];
+}
+
+/** 智能领取：一个可领取任务对某个 agent 的匹配度和它在所有候选里的名次 */
+export interface ClaimFit {
+  score: number;
+  /** 从 1 开始；让出过就是 0 */
+  rank: number;
+  /** 候选人数（能自动响应的 agent，加上自己） */
+  of: number;
+  reasons: string[];
+  warnings: string[];
+  /** 任务最近一次变成可领取的时间，值守进程按它和名次错峰唤起 */
+  open_since: string;
+  passed: boolean;
 }
 
 export interface Recommendation {
@@ -232,6 +247,8 @@ export interface TaskDetail extends TaskView {
   receipts: ReceiptView[];
   artifacts: ArtifactView[];
   progress_log: { author: string; percent: number; note: string; created_at: string }[];
+  /** 看过任务后觉得不适合、让给别人的 agent */
+  passes: { agent: string; agent_name: string; reason: string; created_at: string }[];
 }
 
 export type ReceiptKind = 'comment' | 'message' | 'task';
@@ -316,7 +333,7 @@ export interface InboxResult {
   needs_action: HubEvent[];
   my_tasks: TaskView[];
   pending_assignments: TaskView[];
-  claimable: TaskView[];
+  claimable: (TaskView & { fit: ClaimFit })[];
   projects: { id: string; name: string }[];
   /** 长轮询等待落空时给 agent 的提示；skipped 表示这次没有真正等待就直接返回了 */
   wait?: { skipped: boolean; hint: string };
@@ -998,7 +1015,7 @@ export class Hub {
       needs_action: needs,
       my_tasks: mine.filter((t) => t.status !== 'assigned').map((t) => this.taskView(t)),
       pending_assignments: mine.filter((t) => t.status === 'assigned').map((t) => this.taskView(t)),
-      claimable: this.claimableFor(agent, projectFilter).map((t) => this.taskView(t)),
+      claimable: this.claimableFor(agent, projectFilter).map((t) => ({ ...this.taskView(t), fit: this.claimFit(t, agent) })),
       projects: this.agentProjects(agent.id).map((p) => ({ id: p.id, name: p.name })),
     };
   }
@@ -1051,6 +1068,96 @@ export class Hub {
       }
     }
     return out.slice(0, 20);
+  }
+
+  /**
+   * 智能领取的排名：在能自动响应的 agent（值守进程在线且没暂停，或常驻待命）里，按指派推荐的分数排，
+   * 再算上「正在处理别的事」和「做过相关任务」。让出过的不参加；me 总是算作候选，方便它知道自己排第几。
+   */
+  claimRanking(t: TaskRow, me?: number): (Recommendation & { agentId: number })[] {
+    const code = taskCode(t.project_id, t.num);
+    const passed = new Set(
+      (this.db.prepare('SELECT agent_id FROM task_passes WHERE task_id = ?').all(t.id) as { agent_id: number }[]).map((r) => r.agent_id),
+    );
+    // 做过父任务、兄弟任务、引用或前置任务的 agent 已经有上下文
+    const relatedIds = [t.parent_id, ...json<number[]>(t.refs, []), ...json<number[]>(t.depends_on, [])].filter((x): x is number => !!x);
+    const related = new Map<number, string>();
+    const note = (rows: TaskRow[]) => {
+      for (const r of rows) if (r.assignee_id !== null && !related.has(r.assignee_id)) related.set(r.assignee_id, taskCode(r.project_id, r.num));
+    };
+    if (relatedIds.length) note(this.db.prepare(`SELECT * FROM tasks WHERE id IN (${relatedIds.map(() => '?').join(',')})`).all(...relatedIds) as unknown as TaskRow[]);
+    if (t.parent_id) note(this.db.prepare('SELECT * FROM tasks WHERE parent_id = ? AND id != ?').all(t.parent_id, t.id) as unknown as TaskRow[]);
+    const out: (Recommendation & { agentId: number })[] = [];
+    for (const r of this.recommend({ task: code })) {
+      const id = parseId(r.id, 'A')!;
+      if (passed.has(id)) continue;
+      const row = this.requireAgentRow(r.id);
+      if (id !== me) {
+        if (!((this.hasDaemon(id) && !row.daemon_paused) || this.isResident(id))) continue;
+        const m = this.db.prepare('SELECT tags FROM memberships WHERE project_id = ? AND agent_id = ?').get(t.project_id, id) as { tags: string } | undefined;
+        if (!m || !this.tagsMatch(t, [...json<string[]>(m.tags, []), ...json<string[]>(row.skills, [])])) continue;
+      }
+      // 在线、有值守是参加排名的前提，人人都有，不再写进理由
+      const x = { ...r, reasons: r.reasons.filter((y) => !/^(在线|最近活跃|有值守进程)/.test(y)), warnings: [...r.warnings], agentId: id };
+      if (this.activity.get(id)?.state === 'working') {
+        x.score -= 15;
+        x.warnings.push('正在处理别的事');
+      }
+      const rel = related.get(id);
+      if (rel) {
+        x.score += 15;
+        x.reasons.push(`做过相关任务 ${rel}`);
+      }
+      x.score = Math.max(0, Math.min(100, x.score));
+      out.push(x);
+    }
+    return out.sort((a, b) => b.score - a.score || a.load - b.load || a.agentId - b.agentId);
+  }
+
+  claimFit(t: TaskRow, agent: AgentRow): ClaimFit {
+    const open_since = t.opened_at ?? t.updated_at;
+    const passed = !!this.db.prepare('SELECT 1 FROM task_passes WHERE task_id = ? AND agent_id = ?').get(t.id, agent.id);
+    const ranking = this.claimRanking(t, passed ? undefined : agent.id);
+    const i = ranking.findIndex((r) => r.agentId === agent.id);
+    const mine = ranking[i];
+    return {
+      score: mine?.score ?? 0,
+      rank: i + 1,
+      of: ranking.length + (passed ? 1 : 0),
+      reasons: mine?.reasons ?? [],
+      warnings: passed ? ['你已经让出过这个任务'] : (mine?.warnings ?? []),
+      open_since,
+      passed,
+    };
+  }
+
+  /** agent 看过任务后觉得不适合自己，让给别人；所有候选都让出了就提醒负责人。 */
+  pass(agent: AgentRow, code: string, reason: string): { ok: true; task: string; remaining: number } {
+    const t = this.requireTask(code);
+    this.assertVisible({ kind: 'agent', agent }, t);
+    if (t.status !== 'open') throw conflict(`${code} 当前状态是「${STATUS_LABELS[t.status]}」，只有待领取的任务可以让出`);
+    if (!reason?.trim()) throw invalid('请说明为什么不适合你，负责人和其他 agent 会看到');
+    const me = agentCode(agent.id);
+    return this.write(() => {
+      this.db
+        .prepare('INSERT OR REPLACE INTO task_passes (task_id, agent_id, reason, created_at) VALUES (?, ?, ?, ?)')
+        .run(t.id, agent.id, reason.trim().slice(0, 500), this.iso());
+      this.emit('task.passed', me, {
+        task: t,
+        data: { agent: me, reason: reason.trim() },
+        summary: `${agent.name}（${me}）让出了 ${code}「${t.title}」：${excerpt(reason.trim())}`,
+      });
+      const remaining = this.claimRanking(t).length;
+      if (remaining === 0) {
+        this.emit('task.unclaimed', 'owner', {
+          task: t,
+          audience: [],
+          data: { passes: (this.db.prepare('SELECT COUNT(*) AS n FROM task_passes WHERE task_id = ?').get(t.id) as { n: number }).n },
+          summary: `没有 agent 愿意领取 ${code}「${t.title}」：能自动领取的 agent 都让出了，可以看看让出理由，修改任务或直接指派`,
+        });
+      }
+      return { ok: true as const, task: code, remaining };
+    });
   }
 
   private tagsMatch(t: TaskRow, tags: string[]) {
@@ -1822,6 +1929,13 @@ export class Hub {
       receipts: this.receiptsFor('task', [t.id]).get(t.id) ?? [],
       artifacts: artifacts.map((a) => this.artifactView(a)),
       progress_log: log,
+      passes: (
+        this.db.prepare('SELECT agent_id, reason, created_at FROM task_passes WHERE task_id = ? ORDER BY created_at').all(t.id) as {
+          agent_id: number;
+          reason: string;
+          created_at: string;
+        }[]
+      ).map((p) => ({ agent: agentCode(p.agent_id), agent_name: this.agentName(p.agent_id) ?? '', reason: p.reason, created_at: p.created_at })),
     };
   }
 
@@ -1965,6 +2079,7 @@ export class Hub {
           now,
           now,
         );
+      if (status === 'open') this.db.prepare('UPDATE tasks SET opened_at = ? WHERE id = ?').run(now, Number(r.lastInsertRowid));
       const t = this.taskById(Number(r.lastInsertRowid));
       const code = taskCode(projectId, num);
       const who = this.actorName(creator);
@@ -2055,6 +2170,11 @@ export class Hub {
           t.id,
         );
       const fields = Object.keys(input).filter((k) => k !== 'version' && (input as Record<string, unknown>)[k] !== undefined);
+      // 任务内容变了，之前的让出理由可能不再成立：清空，大家重新排名
+      if (fields.some((f) => ['title', 'description', 'acceptance', 'required_tags'].includes(f))) {
+        const cleared = this.db.prepare('DELETE FROM task_passes WHERE task_id = ?').run(t.id).changes;
+        if (cleared && t.status === 'open') this.db.prepare('UPDATE tasks SET opened_at = ? WHERE id = ?').run(this.iso(), t.id);
+      }
       const updated = this.taskById(t.id);
       this.emit('task.updated', 'owner', {
         task: updated,
@@ -2088,6 +2208,7 @@ export class Hub {
         t.version,
       );
     if (r.changes === 0) throw conflict('任务刚刚被其他人修改，请重试');
+    if (to === 'open') this.db.prepare('UPDATE tasks SET opened_at = ? WHERE id = ?').run(this.iso(), t.id);
     const updated = this.taskById(t.id);
     // agent 自己接受、提交、阻塞或放下任务，说明指派这件事已经处理了
     const self = parseId(actor, 'A');
@@ -2120,6 +2241,7 @@ export class Hub {
       .all(t.project_id, t.id) as unknown as TaskRow[];
     for (const d of rows) {
       if (!this.depsDone(d)) continue;
+      if (d.status === 'open') this.db.prepare('UPDATE tasks SET opened_at = ? WHERE id = ?').run(this.iso(), d.id);
       const dcode = taskCode(d.project_id, d.num);
       const how = t.status === 'canceled' ? `前置任务 ${code} 已取消` : `前置任务 ${code}「${excerpt(t.title)}」已完成`;
       const assignee = d.assignee_id === null ? null : agentCode(d.assignee_id);

@@ -31,7 +31,7 @@ test('钉钉通知：按类别和项目过滤、合并发送、记录失败', as
   const ch = n.create({ webhook: 'https://oapi.dingtalk.com/robot/send?access_token=abcdefghijk', secret: 'SEC1', projects: [p1.id], console_url: 'http://10.0.0.2:7788/' });
   assert.equal(ch.webhook_masked, 'https://oapi.dingtalk.com/robot/send?access_token=abcdef…');
   assert.equal(ch.has_secret, true);
-  assert.deepEqual(ch.topics, ['review', 'blocked', 'message', 'overdue', 'lost', 'stalled', 'offline']);
+  assert.deepEqual(ch.topics, ['review', 'blocked', 'message', 'overdue', 'lost', 'stalled', 'unclaimed', 'offline']);
 
   const inv = hub.createInvite({ project: p1.id });
   const a = hub.join({ invite: inv.code, name: '甲' }, null);

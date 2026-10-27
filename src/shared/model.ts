@@ -75,6 +75,8 @@ export type EventType =
   | 'task.overdue'
   | 'task.unlocked'
   | 'task.stalled'
+  | 'task.passed'
+  | 'task.unclaimed'
   | 'task.deliverable'
   | 'artifact.updated'
   | 'comment.created'

@@ -29,6 +29,7 @@ Agent：
                                        同项目的任何任务都能查，历史任务用 --status completed,canceled
   ahub task <任务>                     任务详情（含引用的任务、交付物、讨论；不限状态）
   ahub claim <任务>                    领取
+  ahub pass <任务> <理由>              看过任务后觉得不适合自己，让给别的 agent（负责人能看到理由）
   ahub accept <任务> | decline <任务> <理由>
   ahub progress <任务> <百分比> <一句话进展> [--notes 工作笔记]
   ahub block <任务> <问题> [--option 答案 ...] | unblock <任务> [说明]
@@ -61,8 +62,10 @@ Agent：
   ahub run --harness codex|claude      值守模式：保持在线，收到指派、@、私信、退回时自动唤起 harness 处理
            [--hub URL --code 身份码 [--name 名字]]  用身份码连接并开始值守（可反复运行同一条命令）
            [--takeover]                 这个身份已在别处在线时，顶掉原来的连接
-           [--cwd 目录] [--max-runs 10] [--idle-timeout 15] [--run-timeout 240] [--wake-on-open] [--new-session]
+           [--cwd 目录] [--max-runs 10] [--idle-timeout 15] [--run-timeout 240] [--new-session]
            [--harness-arg 参数 ...] [--cmd "自定义命令"] [--dry-run]
+           [--claim smart|always|off] [--max-active 2] [--claim-min-score 30] [--claim-stagger 10]
+                                         任务池领取：smart 按 Hub 给的匹配度和名次错峰唤起（默认）；always 一有就唤起；off 不为任务池唤起
            [--session-policy smart|task|shared|new]  续用还是新开会话：smart 按任务关系、上下文、缓存打分（默认）；
                                          task 只续用同一任务的会话；shared 共用一个会话；new 每次新开（同 --new-session）
            [--reuse-threshold 25] [--gray-band 10] [--context-max-ratio 0.6] [--context-window 200000]
@@ -229,6 +232,10 @@ async function main(argv: string[]) {
       debounce: { type: 'string' },
       'wake-on-open': { type: 'boolean' },
       'new-session': { type: 'boolean' },
+      claim: { type: 'string' },
+      'max-active': { type: 'string' },
+      'claim-min-score': { type: 'string' },
+      'claim-stagger': { type: 'string' },
       'session-policy': { type: 'string' },
       'reuse-threshold': { type: 'string' },
       'gray-band': { type: 'string' },
@@ -481,6 +488,7 @@ async function main(argv: string[]) {
       return;
     }
     case 'decline':
+    case 'pass':
     case 'release':
     case 'block': {
       const id = need(pos[0], '任务编号');
@@ -689,6 +697,9 @@ async function main(argv: string[]) {
       };
       const ratio = num('context-max-ratio', 0.6, 0.05);
       if (ratio > 1) die('--context-max-ratio 是上下文窗口的比例，填 0 到 1 之间的数，例如 0.6');
+      if (v['wake-on-open']) console.log('提示：--wake-on-open 已经不需要了，默认就会按匹配度和名次领取任务池里的任务；这次按 --claim always 处理。');
+      const claimPolicy = v.claim ?? (v['wake-on-open'] ? 'always' : 'smart');
+      if (!['smart', 'always', 'off'].includes(claimPolicy)) die('--claim 只能是 smart、always 或 off');
       const judge = v.judge ?? 'gray';
       if (!['off', 'gray', 'always'].includes(judge)) die('--judge 只能是 off、gray 或 always');
       if (v.judge && judge !== 'off' && harness === 'codex' && !v['judge-model']) console.log('提示：Codex 值守需要用 --judge-model 指定一个小模型，灰区才会交给小模型判断；现在按规则得分决定。');
@@ -702,7 +713,12 @@ async function main(argv: string[]) {
         timeoutMinutes: Number(v['run-timeout'] ?? 240) || 240,
         idleMinutes: Number(v['idle-timeout'] ?? 15) || 15,
         debounceSeconds: Number(v.debounce ?? 5) || 5,
-        wakeOnOpen: !!v['wake-on-open'],
+        claim: {
+          policy: claimPolicy as 'smart' | 'always' | 'off',
+          maxActive: num('max-active', 2, 1),
+          minScore: num('claim-min-score', 30),
+          staggerMinutes: num('claim-stagger', 10),
+        },
         session: {
           policy: policy as 'smart' | 'task' | 'shared' | 'new',
           threshold: num('reuse-threshold', 25),

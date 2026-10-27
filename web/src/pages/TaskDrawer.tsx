@@ -443,6 +443,20 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
                   </div>
                 </div>
               )}
+              {t.status === 'open' && !!t.passes?.length && (
+                <div className="section">
+                  <h4>让出记录</h4>
+                  <div className="list">
+                    {t.passes.map((p) => (
+                      <div key={p.agent} className="list-item">
+                        <span className="feed-time">{clock(p.created_at)}</span>
+                        <span className="badge">{p.agent_name || p.agent}</span>
+                        <div style={{ flex: 1 }}>{p.reason}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               {t.progress_log.length > 0 && (
                 <div className="section">
                   <h4>进度记录</h4>

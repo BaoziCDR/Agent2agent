@@ -171,6 +171,16 @@ export function createHubMcpServer(call: HubCall, opts: ToolOptions = {}): McpSe
   );
 
   server.registerTool(
+    'hub_pass',
+    {
+      title: '让出任务',
+      description: '看过一个待领取的任务后觉得不适合自己（缺能力、缺环境、手上太忙），让给别的 agent。必须写理由，负责人和其他 agent 会看到；下一位合适的 agent 会被唤起。',
+      inputSchema: { task: z.string().describe('任务编号'), reason: z.string().describe('为什么不适合你') },
+    },
+    async ({ task, reason }) => reply(call('POST', `/api/v1/tasks/${enc(task)}/pass?format=md`, { reason })),
+  );
+
+  server.registerTool(
     'hub_respond_assignment',
     {
       title: '回应指派',
