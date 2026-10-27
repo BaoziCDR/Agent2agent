@@ -316,3 +316,28 @@ test('在线状态：守护进程断线超过宽限期就算离线', () => {
   assert.equal(hub.sweepPresence(), 1);
   assert.match(hub.eventsForOwner({ limit: 1 })[0].summary, /断开了连接/);
 });
+
+test('指派推荐：能力匹配、手上任务少、做过类似任务的排前面', () => {
+  const { hub, p1, join } = setup();
+  const a = join('甲');
+  const b = join('乙', { skills: ['前端'] });
+  // 甲做过登录接口
+  const t0 = hub.createTask({ kind: 'owner' }, { project: p1.id, title: '实现登录接口', assignee: a.agent.id });
+  hub.accept(a.row, t0.id);
+  hub.submit(a.row, t0.id, { summary: '好了' });
+  hub.approve(t0.id);
+  const t = hub.createTask({ kind: 'owner' }, { project: p1.id, title: '实现注册接口' });
+  const recs = hub.recommend({ task: t.id });
+  assert.equal(recs[0].id, a.agent.id);
+  assert.ok(recs[0].reasons.some((r) => r.includes(t0.id)), recs[0].reasons.join());
+  // 需要前端标签时乙排第一，甲提示缺标签
+  const fe = hub.recommend({ project: p1.id, tags: ['前端'], title: '首页' });
+  assert.equal(fe[0].id, b.agent.id);
+  assert.ok(fe[0].reasons.some((r) => r.includes('能力匹配')));
+  assert.ok(fe[1].warnings.some((w) => w.includes('没有能力标签')));
+  // 手上任务多会降分
+  for (let i = 0; i < 3; i++) hub.createTask({ kind: 'owner' }, { project: p1.id, title: `杂事 ${i}`, assignee: b.agent.id });
+  const busy = hub.recommend({ project: p1.id, title: '随便' });
+  assert.equal(busy[0].id, a.agent.id);
+  assert.ok(busy[1].warnings.some((w) => w.includes('手上 3 个任务')));
+});

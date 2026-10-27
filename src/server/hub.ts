@@ -120,6 +120,17 @@ export interface AgentView {
   active_tasks: string[];
 }
 
+export interface Recommendation {
+  id: string;
+  name: string;
+  /** 0–100，越高越合适 */
+  score: number;
+  reasons: string[];
+  warnings: string[];
+  presence: Presence;
+  load: number;
+}
+
 export interface ProjectView {
   id: string;
   name: string;
@@ -1970,6 +1981,101 @@ export class Hub {
       .prepare('INSERT OR REPLACE INTO idempotency (agent_id, key, response, created_at) VALUES (?, ?, ?, ?)')
       .run(agent.id, key, JSON.stringify(result ?? null), this.iso());
     return result;
+  }
+
+  // ───────────── 指派推荐 ─────────────
+
+  /**
+   * 给一个任务推荐负责人：看能力标签是否匹配、在线和值守情况、手上的任务量、
+   * 最近 30 天在这个项目里的完成数和退回率，以及是否做过标题相近的任务。
+   * 只是建议，分数高低不影响任何权限。
+   */
+  recommend(input: { project?: string; task?: string; tags?: string[]; title?: string }): Recommendation[] {
+    const t = input.task ? this.requireTask(input.task) : null;
+    const project = t ? `P-${t.project_id}` : input.project;
+    if (!project) throw invalid('需要指定项目或任务');
+    const projectId = this.requireProject(project).id;
+    const required = t ? json<string[]>(t.required_tags, []) : (input.tags ?? []).filter(Boolean);
+    const title = t?.title ?? input.title ?? '';
+    const stats = new Map(this.stats(project, 30).agents.map((a) => [a.id, a]));
+    const grams = (s: string) => {
+      const x = s.toLowerCase().replace(/[\s\p{P}]+/gu, '');
+      const out = new Set<string>();
+      for (let i = 0; i < x.length - 1; i++) out.add(x.slice(i, i + 2));
+      return out;
+    };
+    const mine = grams(title);
+    const done = this.db
+      .prepare(`SELECT assignee_id, num, title FROM tasks WHERE project_id = ? AND status = 'completed' AND assignee_id IS NOT NULL ORDER BY updated_at DESC LIMIT 300`)
+      .all(projectId) as { assignee_id: number; num: number; title: string }[];
+
+    return this.listAgents(project)
+      .filter((a) => a.status === 'active' && (!t || agentCode(t.assignee_id ?? 0) !== a.id))
+      .map((a) => {
+        let score = 50;
+        const reasons: string[] = [];
+        const warnings: string[] = [];
+        const tags = [...(a.projects.find((p) => p.id === project)?.tags ?? []), ...a.skills];
+        if (required.length) {
+          const hit = required.filter((r) => tags.includes(r));
+          if (hit.length) {
+            score += 25;
+            reasons.push(`能力匹配：${hit.join('、')}`);
+          } else {
+            score -= 40;
+            warnings.push(`没有能力标签 ${required.join('、')}`);
+          }
+        }
+        if (a.presence === 'online') {
+          score += 15;
+          reasons.push('在线');
+        } else if (a.presence === 'active') {
+          score += 10;
+          reasons.push('最近活跃');
+        } else if (a.presence === 'idle') score += 3;
+        else warnings.push('离线');
+        if (a.daemon_paused) {
+          score -= 15;
+          warnings.push('值守已暂停');
+        } else if (a.daemon) {
+          score += 10;
+          reasons.push('有值守进程，指派后会自动唤醒');
+        }
+        const load = a.active_tasks.length;
+        score -= Math.min(load, 5) * 8;
+        if (load === 0) reasons.push('手上没有任务');
+        else (load >= 3 ? warnings : reasons).push(`手上 ${load} 个任务`);
+        const s = stats.get(a.id);
+        if (s?.completed) {
+          score += Math.min(s.completed, 5) * 3;
+          reasons.push(`近 30 天完成 ${s.completed} 个`);
+        }
+        if (s && s.submitted >= 2 && (s.reject_rate ?? 0) >= 50) {
+          score -= 10;
+          warnings.push(`退回率 ${s.reject_rate}%`);
+        }
+        if (s?.overdue) {
+          score -= 5 * s.overdue;
+          warnings.push(`${s.overdue} 个任务已逾期`);
+        }
+        if (mine.size) {
+          let best: { sim: number; code: string; title: string } | null = null;
+          for (const d of done) {
+            if (agentCode(d.assignee_id) !== a.id) continue;
+            const g = grams(d.title);
+            let common = 0;
+            for (const x of mine) if (g.has(x)) common++;
+            const sim = common / (mine.size + g.size - common);
+            if (sim >= 0.25 && (!best || sim > best.sim)) best = { sim, code: taskCode(projectId, d.num), title: d.title };
+          }
+          if (best) {
+            score += Math.round(best.sim * 20);
+            reasons.push(`做过类似任务 ${best.code}「${best.title}」`);
+          }
+        }
+        return { id: a.id, name: a.name, score: Math.max(0, Math.min(100, Math.round(score))), reasons, warnings, presence: a.presence, load };
+      })
+      .sort((x, y) => y.score - x.score || x.load - y.load || x.id.localeCompare(y.id, undefined, { numeric: true }));
   }
 
   // ───────────── 统计 ─────────────

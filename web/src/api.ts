@@ -203,3 +203,13 @@ export async function uploadFile(file: File): Promise<Uploaded> {
   if (!res.ok) throw new ApiError(res.status, res.status === 413 ? `${file.name} 超过 25 MB` : (data?.error?.message ?? `上传失败（${res.status}）`));
   return data as Uploaded;
 }
+
+export interface Recommendation {
+  id: string;
+  name: string;
+  score: number;
+  reasons: string[];
+  warnings: string[];
+  presence: Presence;
+  load: number;
+}
