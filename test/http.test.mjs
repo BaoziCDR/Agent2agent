@@ -222,3 +222,29 @@ test('值守进程上报状态：负责人看到「正在处理」', async () =>
   assert.equal(ev.type, 'agent.activity');
   assert.match(ev.summary, /甲（A-1）被唤醒：处理 P1-T1/);
 });
+
+test('导出：Markdown 报告和任务 CSV', async () => {
+  const { req, project, join: joinAgent } = await setup();
+  const a = await joinAgent('甲');
+  const t1 = (await req('POST', '/api/v1/admin/tasks', { project: project.id, title: '实现登录, "接口"' })).json();
+  const t2 = (await req('POST', '/api/v1/admin/tasks', { project: project.id, title: '写文档' })).json();
+  await req('POST', `/api/v1/tasks/${t1.id}/claim`, {}, a.headers);
+  await req('POST', `/api/v1/tasks/${t1.id}/submit`, { summary: '登录接口已上线' }, a.headers);
+  await req('POST', `/api/v1/admin/tasks/${t1.id}/approve`, {});
+  await req('POST', `/api/v1/tasks/${t2.id}/claim`, {}, a.headers);
+
+  const md = await req('GET', `/api/v1/admin/export/report?days=7&project=${project.id}`);
+  assert.equal(md.status, 200);
+  assert.match(md.text, /## 本期完成/);
+  assert.match(md.text, /实现登录[\s\S]*登录接口已上线/);
+  assert.match(md.text, /## 进行中[\s\S]*写文档/);
+  assert.match(md.text, /甲/);
+
+  const csv = await req('GET', `/api/v1/admin/export/tasks.csv?project=${project.id}`);
+  assert.equal(csv.status, 200);
+  assert.ok(csv.text.startsWith('﻿'));
+  const lines = csv.text.slice(1).split('\r\n').filter(Boolean);
+  assert.equal(lines.length, 3);
+  assert.ok(lines.some((l) => l.includes('"实现登录, ""接口"""')));
+  assert.equal((await req('GET', '/api/v1/admin/export/tasks.csv', undefined, {})).status, 401);
+});

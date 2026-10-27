@@ -166,3 +166,20 @@ export const post = <T>(path: string, body: unknown = {}) => api<T>('POST', path
 export const patch = <T>(path: string, body: unknown) => api<T>('PATCH', path, body);
 export const put = <T>(path: string, body: unknown) => api<T>('PUT', path, body);
 export const del = <T>(path: string) => api<T>('DELETE', path);
+
+/** 带令牌下载文件（导出报告、CSV 等），浏览器里另存为 filename。 */
+export async function download(path: string, filename: string) {
+  const res = await fetch(`/api/v1/admin${path}`, { headers: { authorization: `Bearer ${getToken() ?? ''}` } });
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new ApiError(res.status, data?.error?.message ?? `下载失败（${res.status}）`);
+  }
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
