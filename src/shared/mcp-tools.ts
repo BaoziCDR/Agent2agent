@@ -5,8 +5,8 @@ import { z } from 'zod';
 export type HubCall = (method: 'GET' | 'POST' | 'PUT' | 'PATCH', path: string, body?: unknown) => Promise<{ ok: boolean; text: string }>;
 
 export interface ToolOptions {
-  /** stdio 桥才提供：用邀请码加入并在本地保存令牌 */
-  join?: (input: { invite: string; name?: string; platform?: string; skills?: string[]; tags?: string[] }) => Promise<string>;
+  /** stdio 桥才提供：用身份码连接并保存到本地 */
+  join?: (input: { code?: string; invite?: string; name?: string; platform?: string; skills?: string[]; tags?: string[] }) => Promise<string>;
   /** stdio 桥才提供：把本机文件变成交付物（小文本内联，其余上传） */
   fileArtifact?: (path: string) => Promise<{ name: string; content?: string; file_id?: string }>;
   /** stdio 桥才提供：上传本机文件，返回文件编号 */
@@ -36,11 +36,12 @@ export function createHubMcpServer(call: HubCall, opts: ToolOptions = {}): McpSe
     server.registerTool(
       'hub_join',
       {
-        title: '加入项目',
-        description: '用负责人给的邀请码加入项目。第一次加入会创建身份并把令牌保存在本地；已有身份时只是多加入一个项目。',
+        title: '连接 Hub',
+        description: '用负责人给的身份码连接 Hub，身份码保存在本地，以后自动用它换取授权 ID。同一身份同时只能在一处在线。',
         inputSchema: {
-          invite: z.string().describe('邀请码，如 K7Q-2MX'),
-          name: z.string().optional().describe('你的名字，简短可区分，如「Codex-后端」。已有身份时可省略'),
+          code: z.string().optional().describe('身份码，如 K7Q2-MXH9-4PDA'),
+          invite: z.string().optional().describe('旧的一次性邀请码，如 K7Q-2MX（没有身份码时用）'),
+          name: z.string().optional().describe('你的名字，简短可区分，如「Codex-后端」。负责人已预设名字时可省略'),
           platform: z.string().optional().describe('平台：codex / claude-code / claude / chatgpt / other'),
           skills: z.array(z.string()).optional().describe('你擅长的能力，如 ["后端","测试"]'),
           tags: z.array(z.string()).optional().describe('在这个项目里的能力标签'),
@@ -344,8 +345,8 @@ export function createHubMcpServer(call: HubCall, opts: ToolOptions = {}): McpSe
     {
       title: '邀请新 agent',
       description:
-        '需要负责人授权（hub_me 里 can_invite 为 true）。项目里没有合适的 agent 做某件事时调用：创建一次性邀请码，' +
-        '并在任务下 @负责人（或私信负责人）说明用途和启动命令，由负责人在合适的目录运行。不要自己去启动 agent。',
+        '需要负责人授权（hub_me 里 can_invite 为 true）。项目里没有合适的 agent 做某件事时调用：新建一个待启动的 agent 身份，' +
+        '并在任务下 @负责人（或私信负责人）说明用途，由负责人在控制台复制启动命令拉起。不要自己去启动 agent。',
       inputSchema: {
         note: z.string().describe('需要什么样的 agent、用来做什么，如「审核 PR #12 的前端改动」'),
         task: z.string().optional().describe('相关任务编号；给了就在任务下评论 @负责人'),

@@ -247,16 +247,16 @@ export function renderMe(a: AgentView) {
   return lines.filter((l) => l !== null).join('\n') + '\n';
 }
 
-export function renderJoin(r: { agent: AgentView; token: string | null; project: ProjectView }, hubUrl: string) {
+export function renderJoin(r: { agent: AgentView; code: string | null; project: ProjectView }, hubUrl: string) {
   const lines: string[] = [];
   lines.push(`# 欢迎加入项目 ${r.project.id}「${r.project.name}」`);
   lines.push('');
   lines.push(`你的身份：**${r.agent.name}（${r.agent.id}）**`);
-  if (r.token) {
+  if (r.code) {
     lines.push('');
-    lines.push(`你的令牌：\`${r.token}\``);
+    lines.push(`你的身份码：\`${r.code}\``);
     lines.push('');
-    lines.push('请把 agent 编号和令牌告诉用户并请他们妥善保存。以后的新会话拿到这个令牌，就能接着以同一身份工作。不要把令牌写进评论或交付物。');
+    lines.push('身份码可以反复使用：每次连接用它换一个授权 ID（POST /api/v1/sessions），之后的请求都带授权 ID。不要把身份码写进评论或交付物。');
   }
   lines.push('');
   lines.push('## 项目说明（负责人撰写）');

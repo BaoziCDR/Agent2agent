@@ -4,7 +4,7 @@ import { createReadStream, existsSync, mkdirSync, readFileSync, writeFileSync } 
 import { networkInterfaces } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { type Actor, type AgentRow, Hub, HubError, agentCode } from './hub.js';
+import { type Actor, type AgentRow, Hub, HubError, type SessionRow, agentCode } from './hub.js';
 import { renderArtifact, renderArtifactLog, renderInbox, renderJoin, renderMe, renderSearch, renderTask, renderTaskList } from './format.js';
 import { handleMcpRequest } from './mcp-http.js';
 import { renderReport, tasksCsv } from './report.js';
@@ -31,6 +31,8 @@ export interface AppOptions {
 declare module 'fastify' {
   interface FastifyRequest {
     agent?: AgentRow;
+    /** 这次请求用的授权 ID */
+    session?: SessionRow;
     isOwner?: boolean;
   }
 }
@@ -71,6 +73,8 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
     const code = err instanceof HubError ? err.code : status === 500 ? 'internal' : 'bad_request';
     const message = status === 500 ? '服务器内部错误' : err.message;
     if (status === 500) req.log.error(err);
+    // Markdown 错误里看不到错误码，放在响应头里，命令行据此判断授权 ID 能否自动重连
+    reply.header('x-ahub-error', code);
     if (wantsMarkdown(req)) return reply.status(status).type('text/markdown; charset=utf-8').send(`**错误**：${message}\n`);
     return reply.status(status).send({ error: { code, message } });
   });
@@ -78,10 +82,11 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
   // ── 鉴权 ──
   const requireAgent = async (req: FastifyRequest) => {
     const token = tokenOf(req);
-    const agent = token ? hub.authAgent(token) : null;
-    if (!agent) throw (token && hub.inactiveAgentError(token)) || new HubError(401, 'unauthorized', '缺少或无效的 agent 令牌');
+    if (!token) throw new HubError(401, 'unauthorized', '缺少授权 ID：先用身份码换取（POST /api/v1/sessions）');
+    const { agent, session } = hub.authSession(token);
     hub.touchAgent(agent);
     req.agent = agent;
+    req.session = session;
     const ack = (req.query as Q)?.ack ?? (req.headers['x-ahub-ack'] as string | undefined);
     if (ack !== undefined && /^\d+$/.test(ack)) hub.ack(agent, Number(ack));
   };
@@ -113,8 +118,7 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
   app.post('/api/v1/join', async (req, reply) => {
     const body = (req.body ?? {}) as B;
     const token = tokenOf(req);
-    const existing = token ? hub.authAgent(token) : null;
-    if (token && !existing) throw hub.inactiveAgentError(token) || new HubError(401, 'unauthorized', '令牌无效；新身份加入时不要带令牌');
+    const existing = token ? hub.authSession(token).agent : null;
     const r = hub.join(
       {
         invite: str(body.invite) ?? '',
@@ -128,11 +132,35 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
       existing,
     );
     reply.status(201);
-    return send(req, reply, { agent: r.agent, token: r.token, project: r.project }, () => renderJoin(r, publicUrl(req)));
+    return send(req, reply, { agent: r.agent, code: r.code, project: r.project }, () => renderJoin(r, publicUrl(req)));
+  });
+
+  // 用身份码换授权 ID：每次连接（ahub run 启动、MCP 桥启动、命令行第一次调用）换一个
+  app.post('/api/v1/sessions', async (req, reply) => {
+    const b = (req.body ?? {}) as B;
+    const r = hub.openSession({
+      code: str(b.code) ?? '',
+      client: str(b.client),
+      host: str(b.host),
+      cwd: str(b.cwd),
+      ip: req.ip,
+      takeover: b.takeover === true || b.takeover === 'true',
+      name: str(b.name),
+      platform: str(b.platform),
+      tier: str(b.tier),
+      description: str(b.description),
+      skills: strArr(b.skills),
+      tags: strArr(b.tags),
+    });
+    reply.status(201);
+    return r;
   });
 
   app.register(async (agentApi) => {
     agentApi.addHook('preHandler', requireAgent);
+
+    // 进程退出时交还授权 ID，立即下线
+    agentApi.delete('/api/v1/sessions/current', async (req) => hub.releaseSession(req.session!));
 
     agentApi.get('/api/v1/me', async (req, reply) => {
       const view = hub.agentView(req.agent!);
@@ -195,7 +223,7 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
         hub.markDaemon(agent.id, 1);
         req.raw.on('close', () => hub.markDaemon(agent.id, -1));
       }
-      streamEvents(hub, req, reply, lastId, (e) => hub.canSee(agent, e), () => hub.eventsForAgent(agent, lastId, 1000).events, agent.id);
+      streamEvents(hub, req, reply, lastId, (e) => hub.canSee(agent, e), () => hub.eventsForAgent(agent, lastId, 1000).events, agent.id, req.session!.id);
     });
 
     // ahub run 守护进程上报自己被唤醒/处理完毕
@@ -366,7 +394,7 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
         publicUrl(req),
       );
       return send(req, reply, r, () =>
-        `已创建邀请码 **${r.code}**（${r.project}，24 小时内有效），并已通知负责人。负责人需要在目标目录运行：\n\n    ${r.command}\n`,
+        `已新建身份 ${r.agent.name || '（待命名）'}（${r.agent.id}，项目 ${r.project}）并通知了负责人。负责人会在控制台复制启动命令拉起它；拉起之前它是离线的，先不要指派任务给它。\n`,
       );
     });
     action(
@@ -386,12 +414,10 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
     const token = tokenOf(req);
     let uploader: string | null = null;
     if (token && hub.isOwnerToken(token)) uploader = 'owner';
-    else {
-      const agent = token ? hub.authAgent(token) : null;
-      if (agent) {
-        hub.touchAgent(agent);
-        uploader = agentCode(agent.id);
-      }
+    else if (token) {
+      const { agent } = hub.authSession(token);
+      hub.touchAgent(agent);
+      uploader = agentCode(agent.id);
     }
     if (!uploader) throw new HubError(401, 'unauthorized', '缺少或无效的令牌');
     if (!Buffer.isBuffer(req.body)) throw new HubError(400, 'invalid', '请用 Content-Type: application/octet-stream 上传文件内容');
@@ -422,10 +448,10 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
   // ── MCP（Streamable HTTP，无状态） ──
   app.all('/mcp', async (req, reply) => {
     const token = tokenOf(req);
-    const agent = token ? hub.authAgent(token) : null;
-    if (!agent) throw new HubError(401, 'unauthorized', '缺少或无效的 agent 令牌（用 Authorization: Bearer 或 ?token=）');
+    if (!token) throw new HubError(401, 'unauthorized', '缺少授权 ID（用 Authorization: Bearer 或 ?token=）；推荐用 ahub mcp 桥接，它会自动用身份码换取');
+    const { agent } = hub.authSession(token);
     hub.touchAgent(agent);
-    await handleMcpRequest(app, req, reply, token!);
+    await handleMcpRequest(app, req, reply, token);
   });
 
   // ── 负责人接口 ──
@@ -556,7 +582,27 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
     );
     admin.get(`${A}/agents/:id/runs`, async (req) => hub.listRuns((req.params as { id: string }).id));
     admin.delete(`${A}/agents/:id`, async (req) => hub.deleteAgent((req.params as { id: string }).id));
-    admin.post(`${A}/agents/:id/reset-token`, async (req) => ({ token: hub.resetAgentToken((req.params as { id: string }).id) }));
+    // 重置身份码：旧码作废，当前连接强制下线（reset-token 是旧地址）
+    for (const path of ['reset-code', 'reset-token'])
+      admin.post(`${A}/agents/:id/${path}`, async (req) => {
+        const code = hub.resetAgentCode((req.params as { id: string }).id);
+        return { code, token: code };
+      });
+    admin.get(`${A}/agents/:id/code`, async (req) => ({ code: hub.agentCodeOf((req.params as { id: string }).id) }));
+    admin.post(`${A}/agents`, async (req, reply) => {
+      const b = (req.body ?? {}) as B;
+      reply.status(201);
+      return hub.createAgent({ project: str(b.project) ?? '', name: str(b.name), tags: strArr(b.tags), platform: str(b.platform), note: str(b.note) });
+    });
+    admin.post(`${A}/agents/:id/projects`, async (req) => {
+      const b = (req.body ?? {}) as B;
+      return hub.addAgentToProject((req.params as { id: string }).id, { project: str(b.project) ?? '', tags: strArr(b.tags) });
+    });
+    // 强制下线：吊销当前授权 ID
+    admin.post(`${A}/agents/:id/kick`, async (req) =>
+      hub.kickAgent((req.params as { id: string }).id, str(((req.body ?? {}) as B).note) ?? ''),
+    );
+    admin.get(`${A}/agents/:id/sessions`, async (req) => hub.listSessions((req.params as { id: string }).id));
 
     admin.get(`${A}/invites`, async (req) => hub.listInvites((req.query as Q).project));
     admin.post(`${A}/invites`, async (req, reply) => {
@@ -732,6 +778,7 @@ function streamEvents(
   visible: (e: HubEvent) => boolean,
   backlog: () => HubEvent[],
   agentId: number | null,
+  sessionId: number | null = null,
 ) {
   reply.hijack();
   const res = reply.raw;
@@ -755,11 +802,19 @@ function streamEvents(
     }
   };
   hub.bus.on('event', onEvent);
+  // 授权 ID 被吊销、顶掉或过期：告诉对方原因后断开
+  const onEnded = (e: { sessionId: number; reason: string; note: string }) => {
+    if (e.sessionId !== sessionId) return;
+    res.write(`event: session.ended\ndata: ${JSON.stringify({ reason: e.reason, note: e.note })}\n\n`);
+    res.end();
+  };
+  if (sessionId !== null) hub.bus.on('session.ended', onEnded);
   if (agentId !== null) hub.markLive(agentId, 1, 'stream');
   const heartbeat = setInterval(() => res.write(': 心跳\n\n'), 20_000);
   req.raw.on('close', () => {
     clearInterval(heartbeat);
     hub.bus.off('event', onEvent);
+    hub.bus.off('session.ended', onEnded);
     if (agentId !== null) hub.markLive(agentId, -1, 'stream');
   });
 }

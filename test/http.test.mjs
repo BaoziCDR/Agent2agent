@@ -26,7 +26,8 @@ async function setup() {
   const invite = (await req('POST', '/api/v1/admin/invites', { project: project.id, max_uses: 5 })).json();
   const join = async (name) => {
     const r = (await req('POST', '/api/v1/join', { invite: invite.code, name, platform: 'codex' }, {})).json();
-    return { ...r, headers: { authorization: `Bearer ${r.token}` } };
+    const s = (await req('POST', '/api/v1/sessions', { code: r.code, client: 'cli' }, {})).json();
+    return { ...r, session: s.session, headers: { authorization: `Bearer ${s.session}` } };
   };
   return { hub, app, req, project, join };
 }
@@ -342,7 +343,7 @@ test('阻塞提问：agent 给出选项，负责人点选后解除阻塞并通�
   assert.equal((await req('POST', `/api/v1/admin/tasks/${t.id}/answer`, { answer: 'x' })).status, 409);
 });
 
-test('授权 agent 创建邀请：未授权拒绝，授权后生成一次性邀请并 @负责人', async () => {
+test('授权 agent 新建身份：未授权拒绝，授权后新建待启动的身份并 @负责人，评论里不出现身份码', async () => {
   const { req, project, join: joinAgent } = await setup();
   const a = await joinAgent('协调者');
   const t = (await req('POST', '/api/v1/admin/tasks', { project: project.id, title: '审核 PR #12' })).json();
@@ -352,22 +353,80 @@ test('授权 agent 创建邀请：未授权拒绝，授权后生成一次性邀�
   assert.match((await req('GET', '/api/v1/me?format=md', undefined, a.headers)).text, /已获负责人授权/);
   const r = await req('POST', '/api/v1/invites', body, a.headers);
   assert.equal(r.status, 200);
-  const inv = r.json();
-  assert.equal(inv.max_uses, 1);
-  assert.equal(inv.created_by, a.agent.id);
-  assert.match(inv.command, new RegExp(`^ahub run --hub http://[^ ]+ --invite ${inv.code} --name "审核-前端" --harness claude$`));
-  // 任务下有评论 @负责人，负责人收到提及
+  const created = r.json();
+  assert.equal(created.agent.name, '审核-前端');
+  assert.equal(created.agent.pending, true);
+  assert.equal(created.code, undefined);
+  // 任务下有评论 @负责人，负责人收到提及；身份码只在控制台
   const c = (await req('GET', `/api/v1/admin/tasks/${t.id}`)).json().comments.at(-1);
   assert.match(c.parts[0].text, /^@负责人 需要一个新 agent：需要一个熟悉前端的审核者/);
+  const code = (await req('GET', `/api/v1/admin/agents/${created.agent.id}/code`)).json().code;
+  assert.ok(!c.parts[0].text.includes(code));
   const events = (await req('GET', '/api/v1/admin/events?limit=10')).json();
   assert.ok(events.some((e) => e.type === 'mention' && e.audience.length === 0));
-  // 邀请可以正常使用，带上标签
-  const j = (await req('POST', '/api/v1/join', { invite: inv.code, name: '审核-前端' }, {})).json();
-  assert.deepEqual(j.agent.projects[0].tags, ['前端']);
+  // 负责人拉起后用身份码连接，带上标签
+  const s = (await req('POST', '/api/v1/sessions', { code, client: 'run' }, {})).json();
+  assert.deepEqual(s.agent.projects[0].tags, ['前端']);
+  assert.equal(s.agent.pending, false);
   // 取消授权后又被拒绝；agent 不能自己改权限
   assert.equal((await req('PATCH', '/api/v1/me', { can_invite: true }, a.headers)).status, 200);
   await req('PATCH', `/api/v1/admin/agents/${a.agent.id}`, { can_invite: false });
   assert.equal((await req('POST', '/api/v1/invites', body, a.headers)).status, 403);
+});
+
+test('授权 ID：同一身份只能一处在线，takeover 顶掉，强制下线、交还、重置身份码', async () => {
+  const { req } = await setup();
+  const created = (await req('POST', '/api/v1/admin/agents', { project: 'P-1', tags: ['后端'] })).json();
+  const code = created.code;
+  assert.match(code, /^[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/);
+  const open = (body = {}) => req('POST', '/api/v1/sessions', { code, client: 'run', host: 'box-1', ...body }, {});
+  const as = (s) => ({ authorization: `Bearer ${s}` });
+  // 没有名字的身份第一次连接要起名字
+  assert.equal((await open()).status, 400);
+  const s1 = (await open({ name: '后端' })).json();
+  assert.equal(s1.agent.name, '后端');
+  assert.equal(s1.agent.connection.host, 'box-1');
+  // 身份码不能直接当授权 ID 用
+  const direct = await req('GET', '/api/v1/me', undefined, as(code));
+  assert.equal(direct.status, 401);
+  assert.equal(direct.json().error.code, 'session_required');
+  // 已在线：拒绝；takeover：顶掉旧的
+  const busy = await open({ host: 'box-2' });
+  assert.equal(busy.status, 409);
+  assert.match(busy.json().error.message, /已经在线：box-1，值守/);
+  const s2 = (await open({ host: 'box-2', takeover: true })).json();
+  const old = await req('GET', '/api/v1/me', undefined, as(s1.session));
+  assert.equal(old.json().error.code, 'session_replaced');
+  assert.match(old.json().error.message, /box-2/);
+  assert.equal((await req('GET', '/api/v1/me', undefined, as(s2.session))).status, 200);
+  // 交还后立即可以重新连接
+  assert.equal((await req('DELETE', '/api/v1/sessions/current', undefined, as(s2.session))).status, 200);
+  assert.equal((await req('GET', '/api/v1/me', undefined, as(s2.session))).json().error.code, 'session_expired');
+  const s3 = (await open()).json();
+  // 强制下线：吊销授权 ID，身份码仍然可用
+  assert.equal((await req('POST', `/api/v1/admin/agents/${created.agent.id}/kick`, { note: '维护' })).status, 200);
+  const kicked = (await req('GET', '/api/v1/me', undefined, as(s3.session))).json();
+  assert.equal(kicked.error.code, 'session_revoked');
+  assert.match(kicked.error.message, /维护/);
+  assert.equal((await req('POST', `/api/v1/admin/agents/${created.agent.id}/kick`, {})).status, 409);
+  const sessions = (await req('GET', `/api/v1/admin/agents/${created.agent.id}/sessions`)).json();
+  assert.deepEqual(sessions.map((x) => x.end_reason), ['revoked', 'released', 'replaced']);
+  const s4 = (await open()).json();
+  // 重置身份码：旧码作废，当前连接下线
+  const fresh = (await req('POST', `/api/v1/admin/agents/${created.agent.id}/reset-code`)).json().code;
+  assert.notEqual(fresh, code);
+  assert.equal((await req('GET', '/api/v1/me', undefined, as(s4.session))).json().error.code, 'session_revoked');
+  assert.equal((await open()).json().error.code, 'invalid_code');
+  assert.equal((await req('POST', '/api/v1/sessions', { code: fresh }, {})).status, 201);
+  // 停用：连接失效，身份码不能再换
+  await req('PATCH', `/api/v1/admin/agents/${created.agent.id}`, { status: 'disabled' });
+  assert.equal((await req('POST', '/api/v1/sessions', { code: fresh }, {})).json().error.code, 'agent_disabled');
+});
+
+test('授权 ID：身份码错太多次暂时拒绝', async () => {
+  const { req } = await setup();
+  for (let i = 0; i < 10; i++) assert.equal((await req('POST', '/api/v1/sessions', { code: 'AAAA-BBBB-CCCC' }, {})).status, 401);
+  assert.equal((await req('POST', '/api/v1/sessions', { code: 'AAAA-BBBB-CCCC' }, {})).status, 429);
 });
 
 test('安装包：/ahub.tgz 是可安装的 npm 包，带构建产物且不再需要构建', async () => {

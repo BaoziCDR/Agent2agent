@@ -4,7 +4,12 @@ import { dirname, join, resolve } from 'node:path';
 
 export interface CliConfig {
   hub?: string;
+  /** 身份码：可以反复使用，每次连接用它换授权 ID */
+  code?: string;
+  /** 旧版保存的令牌，现在当作身份码使用 */
   token?: string;
+  /** 当前授权 ID；过期后用身份码重新换 */
+  session?: string;
   agent?: string;
   name?: string;
   project?: string;
@@ -33,7 +38,12 @@ export function loadConfig(): { path: string | null; config: CliConfig } {
   const path = findConfigPath();
   const config: CliConfig = path ? JSON.parse(readFileSync(path, 'utf8')) : {};
   if (process.env.AHUB_URL) config.hub = process.env.AHUB_URL;
-  if (process.env.AHUB_TOKEN) config.token = process.env.AHUB_TOKEN;
+  const code = process.env.AHUB_CODE ?? process.env.AHUB_TOKEN;
+  if (code && code !== (config.code ?? config.token)) {
+    config.code = code;
+    delete config.token;
+    delete config.session;
+  }
   if (config.hub) config.hub = config.hub.replace(/\/+$/, '');
   return { path, config };
 }
