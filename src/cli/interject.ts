@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { appendFileSync, existsSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 
@@ -96,7 +97,8 @@ export function runHook(file: string, input: string): string {
     // 读不到输入就按工具调用后处理
   }
   if (!file || !existsSync(file)) return '';
-  const taken = `${file}.taken-${Date.now()}-${process.pid}`;
+  // 加随机后缀：同一毫秒里取走两次时不会改成同一个名字、覆盖掉上一批的送达记录
+  const taken = `${file}.taken-${Date.now()}-${process.pid}-${randomBytes(4).toString('hex')}`;
   try {
     renameSync(file, taken); // 改名是原子的：值守进程之后追加的事项会写进新文件，留给下一次
   } catch {

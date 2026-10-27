@@ -2521,7 +2521,8 @@ export class Hub {
   progress(agent: AgentRow, code: string, input: { percent?: number; note: string; notes?: string }): TaskView {
     const t = this.requireTask(code);
     this.requireAssignee(agent, t, code);
-    if (!['assigned', 'working', 'input_required'].includes(t.status)) {
+    // 待验收时也可以更新进度和工作笔记（例如补充说明、改了交付物），任务仍是待验收
+    if (!['assigned', 'working', 'input_required', 'review'].includes(t.status)) {
       throw conflict(`${code} 当前状态是「${STATUS_LABELS[t.status]}」，不能上报进度`);
     }
     const note = input.note?.trim();
@@ -2539,7 +2540,8 @@ export class Hub {
           `UPDATE tasks SET progress = ?, progress_note = ?, notes = ?, lease_until = ?, lease_warned = 0,
              stall_warned = CASE WHEN progress = ? THEN stall_warned ELSE 0 END, updated_at = ?, version = version + 1 WHERE id = ?`,
         )
-        .run(percent, note, input.notes ?? row.notes, this.lease(agent), percent, this.iso(), t.id);
+        // 待验收没有租约，不要因为上报进度又开始计租约
+        .run(percent, note, input.notes ?? row.notes, t.status === 'review' ? t.lease_until : this.lease(agent), percent, this.iso(), t.id);
       this.db
         .prepare('INSERT INTO progress_log (task_id, author, percent, note, created_at) VALUES (?, ?, ?, ?, ?)')
         .run(t.id, me, percent, note, this.iso());
