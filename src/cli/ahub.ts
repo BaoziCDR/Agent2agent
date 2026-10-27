@@ -28,7 +28,7 @@ Agent：
   ahub submit <任务> <交付说明> [--file 路径 ...] [--link URL ...]
   ahub release <任务> <理由>
   ahub upload <文件>                   上传文件（最大 25 MB），返回下载地址；submit --file 遇到大文件或二进制文件会自动上传
-  ahub comment <任务> <内容>           可用 @A-3、@成员名字 或 @负责人
+  ahub comment <任务> <内容> [--file 路径 ...]  可用 @A-3、@成员名字 或 @负责人；--file 把文件作为附件上传
   ahub members [--project P-1]         查看项目成员和编号（用于 @）
   ahub search <关键字> [--project P-1] 按编号、标题、描述、笔记、评论搜索任务
   ahub subtask <父任务> <标题> [--desc 描述] [--assignee A-3] [--tags a,b] [--priority P1] [--accept "标准1;标准2"] [--due 2026-11-01T18:00+08:00]
@@ -351,8 +351,9 @@ async function main(argv: string[]) {
     }
     case 'comment': {
       const id = need(pos[0], '任务编号');
-      const text = need(pos.slice(1).join(' '), '评论内容');
-      console.log(ok(await api(cfg, 'POST', `/api/v1/tasks/${enc(id)}/comments`, { text }, { ack: true })));
+      const text = v.file?.length ? pos.slice(1).join(' ') : need(pos.slice(1).join(' '), '评论内容');
+      const files = await Promise.all((v.file ?? []).map((f) => uploadFile(cfg, f).then((r) => r.id, (err: Error) => die(err.message))));
+      console.log(ok(await api(cfg, 'POST', `/api/v1/tasks/${enc(id)}/comments`, { text, files }, { ack: true })));
       return;
     }
     case 'subtask': {

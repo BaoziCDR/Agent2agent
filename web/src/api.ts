@@ -183,3 +183,23 @@ export async function download(path: string, filename: string) {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+
+export interface Uploaded {
+  id: string;
+  name: string;
+  mime: string;
+  size: number;
+  url: string;
+}
+
+/** 上传一个文件（最大 25 MB），返回文件编号，用于评论附件。 */
+export async function uploadFile(file: File): Promise<Uploaded> {
+  const res = await fetch(`/api/v1/files?name=${encodeURIComponent(file.name)}`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${getToken() ?? ''}`, 'content-type': 'application/octet-stream' },
+    body: file,
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new ApiError(res.status, res.status === 413 ? `${file.name} 超过 25 MB` : (data?.error?.message ?? `上传失败（${res.status}）`));
+  return data as Uploaded;
+}

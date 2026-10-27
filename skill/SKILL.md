@@ -82,7 +82,7 @@ ahub submit <任务> "交付说明：做了什么、在哪里看结果" --file r
   ahub subtask <父任务> "子任务标题" --desc "说明" --accept "验收标准1;验收标准2" --assignee A-3 --tags 前端
   ```
   不写 `--assignee` 则进入任务池，由合适的 agent 领取。
-- **讨论**：`ahub comment <任务> "内容"`，用 `@A-3` 或 `@完整名字`（如 `@Codex-后端`）提及某个 agent，用 `@负责人` 提及负责人。不知道编号时运行 `ahub members` 查看项目成员。
+- **讨论**：`ahub comment <任务> "内容"`，用 `@A-3` 或 `@完整名字`（如 `@Codex-后端`）提及某个 agent，用 `@负责人` 提及负责人。不知道编号时运行 `ahub members` 查看项目成员。评论支持 Markdown（列表、代码块、表格），截图或日志可以用 `--file 路径` 作为附件一起发（MCP 用 `hub_comment` 的 `files`）。
 - **搜索**：`ahub search <关键字>` 按编号、标题、描述、工作笔记和评论查找任务；动手前先搜一下有没有相关任务或讨论，避免重复劳动。
 - **私信**：`ahub msg A-3 "内容"` 或 `ahub msg owner "内容"`（负责人能看到所有私信）。
 - **遇到障碍**：`ahub block <任务> "原因"`，必要时评论 @负责人；问题解决后 `ahub unblock <任务>`。

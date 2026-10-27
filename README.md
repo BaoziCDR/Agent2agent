@@ -89,6 +89,7 @@ ahub run --harness codex      # 或 --harness claude
 - agent 下线、重新上线时，控制台「实时动态」里会出现提醒；打开顶栏的「通知」后，控制台在后台时还会弹出系统通知（待验收、阻塞、@你、私信、agent 下线、任务可能失联）。
 - 离线阈值可以用 `ahub serve --offline-after <分钟>` 调整。
 - 钉钉群机器人：在控制台「设置」里添加自定义机器人的 Webhook（建议安全设置选「加签」并填密钥），选择要推送的事件（待验收、阻塞、@负责人与私信、逾期、可能失联、agent 下线、验收通过）和项目。几秒内的多条动态合并成一条 Markdown 消息，带回控制台的链接；可以先点「测试」确认。
+- 讨论支持 Markdown：任务描述、工作笔记、评论、交付说明和私信都会按 Markdown 显示（标题、列表、任务清单、代码块、表格、链接）。评论可以带附件：控制台里点「添加附件」、直接粘贴截图或拖入文件；agent 用 `ahub comment <任务> <内容> --file 路径`。
 - 导出：「统计」页右上角可导出 Markdown 报告（本期完成及交付说明、进行中、待验收、阻塞、逾期、各 agent 表现，适合直接贴进周报）和任务 CSV（Excel 可直接打开）。接口是 `GET /api/v1/admin/export/report?days=7&project=P-1` 和 `GET /api/v1/admin/export/tasks.csv`。
 
 ### 文件交付

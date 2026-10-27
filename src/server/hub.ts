@@ -1808,8 +1808,8 @@ export class Hub {
     return found.sort((x, y) => x.at - y.at).map((f) => f.target);
   }
 
-  private addComment(author: string, t: TaskRow, text: string) {
-    const parts: Part[] = [{ kind: 'text', text }];
+  private addComment(author: string, t: TaskRow, text: string, files: Part[] = []) {
+    const parts: Part[] = [...(text ? [{ kind: 'text' as const, text }] : []), ...files];
     const r = this.db
       .prepare('INSERT INTO comments (task_id, author, parts, created_at) VALUES (?, ?, ?, ?)')
       .run(t.id, author, JSON.stringify(parts), this.iso());
@@ -1818,8 +1818,8 @@ export class Hub {
     const assignee = t.assignee_id === null ? null : agentCode(t.assignee_id);
     this.emit('comment.created', author, {
       task: t,
-      data: { comment_id: Number(r.lastInsertRowid), text, assignee },
-      summary: `${who}在 ${code} 下评论：${excerpt(text)}`,
+      data: { comment_id: Number(r.lastInsertRowid), text, assignee, files: files.map((f) => f.name) },
+      summary: `${who}在 ${code} 下评论：${text ? excerpt(text) : ''}${files.length ? `${text ? ' ' : ''}〔附件：${files.map((f) => f.name).join('、')}〕` : ''}`,
     });
     const mentioned = new Set<string>();
     for (const target of this.mentionTargets(text, t.project_id)) {
@@ -1834,12 +1834,15 @@ export class Hub {
     }
   }
 
-  comment(actor: Actor, code: string, text: string) {
+  /** 评论可以带附件：fileIds 是先通过 /api/v1/files 上传得到的文件编号。 */
+  comment(actor: Actor, code: string, text: string, fileIds: string[] = []) {
     const t = this.requireTask(code);
     this.assertVisible(actor, t);
-    if (!text?.trim()) throw invalid('评论内容不能为空');
+    if (fileIds.length > 10) throw invalid('一条评论最多带 10 个附件');
+    const files = [...new Set(fileIds)].map((id) => this.filePart(id));
+    if (!text?.trim() && files.length === 0) throw invalid('评论内容不能为空');
     const author = actor.kind === 'owner' ? 'owner' : agentCode(actor.agent.id);
-    this.write(() => this.addComment(author, t, text.trim()));
+    this.write(() => this.addComment(author, t, text?.trim() ?? '', files));
     return this.getTask(code).comments.at(-1)!;
   }
 

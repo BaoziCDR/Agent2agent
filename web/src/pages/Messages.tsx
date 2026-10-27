@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { get, type Message, post } from '../api';
 import { clock, useData, useHub } from '../ui';
+import { Markdown } from '../markdown';
 
 export function Messages() {
   const { agents, projects, project, toast } = useHub();
@@ -97,7 +98,7 @@ export function Messages() {
                 <div className="faint">
                   {m.sender_name} → {m.recipient_name}
                 </div>
-                <div className="prose">{m.body}</div>
+                <Markdown text={m.body} agents={agents} />
               </div>
               {m.sender !== 'owner' && agents.some((a) => a.id === m.sender && a.status === 'active') && (
                 <button

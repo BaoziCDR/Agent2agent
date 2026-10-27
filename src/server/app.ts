@@ -286,7 +286,7 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
     action('/api/v1/tasks/:id/release', (a, id, b) => hub.release(a, id, str(b.reason) ?? ''), taskDone('放弃'));
     action(
       '/api/v1/tasks/:id/comments',
-      (a, id, b) => hub.comment({ kind: 'agent', agent: a }, id, str(b.text) ?? ''),
+      (a, id, b) => hub.comment({ kind: 'agent', agent: a }, id, str(b.text) ?? '', strArr(b.files)),
       () => '已发表评论。\n',
     );
     action(
@@ -547,7 +547,7 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
     ownerAction('reject', (id, b) => hub.reject(id, str(b.reason) ?? ''));
     ownerAction('cancel', (id, b) => hub.cancel(id, str(b.reason)));
     ownerAction('unblock', (id, b) => hub.unblock({ kind: 'owner' }, id, str(b.note)));
-    ownerAction('comments', (id, b) => hub.comment({ kind: 'owner' }, id, str(b.text) ?? ''));
+    ownerAction('comments', (id, b) => hub.comment({ kind: 'owner' }, id, str(b.text) ?? '', strArr(b.files)));
 
     admin.get(`${A}/messages`, async (req) => hub.listMessages({ agent: (req.query as Q).agent }));
     admin.post(`${A}/messages`, async (req) => {

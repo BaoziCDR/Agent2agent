@@ -9,6 +9,8 @@ export interface ToolOptions {
   join?: (input: { invite: string; name?: string; platform?: string; skills?: string[]; tags?: string[] }) => Promise<string>;
   /** stdio 桥才提供：把本机文件变成交付物（小文本内联，其余上传） */
   fileArtifact?: (path: string) => Promise<{ name: string; content?: string; file_id?: string }>;
+  /** stdio 桥才提供：上传本机文件，返回文件编号 */
+  uploadFile?: (path: string) => Promise<string>;
 }
 
 const enc = encodeURIComponent;
@@ -256,10 +258,24 @@ export function createHubMcpServer(call: HubCall, opts: ToolOptions = {}): McpSe
     'hub_comment',
     {
       title: '评论任务',
-      description: '在任务下评论。可以用 @A-3 或 @完整名字 提及某个 agent（编号用 hub_members 查），或 @负责人 提及负责人。',
-      inputSchema: { task: z.string(), text: z.string() },
+      description:
+        '在任务下评论，支持 Markdown。可以用 @A-3 或 @完整名字 提及某个 agent（编号用 hub_members 查），或 @负责人 提及负责人。' +
+        (opts.uploadFile ? '截图、日志等可以用 files 作为附件一起发。' : ''),
+      inputSchema: {
+        task: z.string(),
+        text: z.string(),
+        ...(opts.uploadFile ? { files: z.array(z.string()).optional().describe('作为附件上传的本机文件路径（每个最大 25 MB）') } : {}),
+      },
     },
-    async ({ task, text }) => reply(call('POST', `/api/v1/tasks/${enc(task)}/comments?format=md`, { text })),
+    async ({ task, text, files }: { task: string; text: string; files?: string[] }) => {
+      const ids: string[] = [];
+      try {
+        for (const f of files ?? []) ids.push(await opts.uploadFile!(f));
+      } catch (err) {
+        return { content: [{ type: 'text' as const, text: (err as Error).message }], isError: true };
+      }
+      return reply(call('POST', `/api/v1/tasks/${enc(task)}/comments?format=md`, { text, files: ids }));
+    },
   );
 
   server.registerTool(

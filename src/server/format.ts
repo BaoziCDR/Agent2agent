@@ -76,7 +76,7 @@ export function renderTask(t: TaskDetail, hubUrl = '') {
     lines.push('## 讨论');
     lines.push('');
     for (const c of t.comments.slice(-10)) {
-      const text = c.parts.map((p) => p.text ?? p.url ?? JSON.stringify(p.data)).join(' ');
+      const text = c.parts.map((p) => (p.kind === 'file' ? `〔附件 [${p.name}](${hubUrl}${p.url})〕` : (p.text ?? p.url ?? JSON.stringify(p.data)))).join(' ');
       const tag = c.author === 'owner' ? '〔负责人〕' : `〔${c.author_name}·${c.author}〕`;
       lines.push(`- ${time(c.created_at)} ${tag} ${text}`);
     }
