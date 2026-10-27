@@ -15,11 +15,12 @@ export const NOTIFY_TOPICS: Record<string, string> = {
   message: '@负责人 与私信',
   overdue: '任务逾期',
   lost: '任务可能失联',
+  stalled: '任务疑似原地打转',
   offline: 'Agent 下线',
   done: '任务验收通过',
 };
 
-const DEFAULT_TOPICS = ['review', 'blocked', 'message', 'overdue', 'lost', 'offline'];
+const DEFAULT_TOPICS = ['review', 'blocked', 'message', 'overdue', 'lost', 'stalled', 'offline'];
 
 export function topicOf(e: HubEvent): string | null {
   const to = e.data.to;
@@ -32,6 +33,7 @@ export function topicOf(e: HubEvent): string | null {
   if ((e.type === 'mention' || e.type === 'message.direct') && e.audience?.length === 0) return 'message';
   if (e.type === 'task.overdue') return 'overdue';
   if (e.type === 'task.lease_expiring') return 'lost';
+  if (e.type === 'task.stalled') return 'stalled';
   if (e.type === 'agent.offline') return 'offline';
   return null;
 }

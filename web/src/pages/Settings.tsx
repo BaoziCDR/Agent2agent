@@ -125,7 +125,7 @@ function ChannelForm({
   const [name, setName] = useState(channel?.name ?? '钉钉群');
   const [webhook, setWebhook] = useState('');
   const [secret, setSecret] = useState('');
-  const [picked, setPicked] = useState<string[]>(channel?.topics ?? ['review', 'blocked', 'message', 'overdue', 'lost', 'offline']);
+  const [picked, setPicked] = useState<string[]>(channel?.topics ?? ['review', 'blocked', 'message', 'overdue', 'lost', 'stalled', 'offline']);
   const [scope, setScope] = useState<string[]>(channel?.projects ?? []);
   const [consoleUrl, setConsoleUrl] = useState(channel?.console_url || location.origin);
   const toggle = (list: string[], v: string) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
