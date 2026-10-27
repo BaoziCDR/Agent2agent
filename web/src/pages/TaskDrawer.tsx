@@ -5,6 +5,7 @@ import { MentionTextarea, agentCandidates } from '../mention';
 import { Markdown } from '../markdown';
 import { Suggest, useRecommend } from '../suggest';
 import { AnswerBox } from '../answer';
+import { Artifacts, FilePart } from './Artifacts';
 
 const fileSize = (n: number) => (n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`);
 
@@ -13,26 +14,6 @@ const partText = (parts: Part[]) =>
     .filter((p) => p.kind !== 'file')
     .map((p) => p.text ?? p.url ?? JSON.stringify(p.data))
     .join('\n');
-
-const isImage = (p: { mime?: string }) => /^image\/(png|jpeg|gif|webp)$/.test(p.mime ?? '');
-
-/** 文件：图片显示缩略图，其他显示文件名和大小。 */
-function FilePart({ p }: { p: Part }) {
-  if (isImage(p))
-    return (
-      <a className="file-thumb" href={p.url} target="_blank" rel="noreferrer" title={`${p.name} · ${fileSize(p.size ?? 0)}`}>
-        <img src={p.url} alt={p.name} loading="lazy" />
-      </a>
-    );
-  return (
-    <div className="file-chip">
-      <a href={p.url} target="_blank" rel="noreferrer" download={p.name}>
-        {p.name}
-      </a>
-      <span className="faint">{fileSize(p.size ?? 0)}</span>
-    </div>
-  );
-}
 
 export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void }) {
   const { agents, toast, refresh, openTask } = useHub();
@@ -108,7 +89,7 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
   const fileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && !dialog && onClose();
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && !dialog && !document.querySelector('.modal-mask') && onClose();
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose, dialog]);
@@ -284,30 +265,7 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
                   <h4>
                     交付物<span className="h4-hint">划选文字可以引用到评论</span>
                   </h4>
-                  {t.artifacts.map((a) => (
-                    <div key={a.id} className="artifact" data-source={`「${a.name}」（${a.author}）`}>
-                      <div className="faint artifact-meta">
-                        {a.name} · {a.author} · {clock(a.created_at)}
-                      </div>
-                      {a.parts.map((p, i) =>
-                        p.kind === 'file' ? (
-                          <FilePart key={i} p={p} />
-                        ) : p.kind === 'link' ? (
-                          <div key={i}>
-                            <a href={p.url} target="_blank" rel="noreferrer">
-                              {p.url}
-                            </a>
-                          </div>
-                        ) : (
-                          p.text !== undefined ? (
-                            <Markdown key={i} text={p.text} agents={agents} />
-                          ) : (
-                            <pre key={i}>{JSON.stringify(p.data, null, 2)}</pre>
-                          )
-                        ),
-                      )}
-                    </div>
-                  ))}
+                  <Artifacts task={t.id} artifacts={t.artifacts} onChanged={reload} />
                 </div>
               )}
 
