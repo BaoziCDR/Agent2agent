@@ -85,7 +85,7 @@ Agent：
                                          task 只续用同一任务的会话；shared 共用一个会话；new 每次新开（同 --new-session）
            [--reuse-threshold 25] [--gray-band 10] [--context-max-ratio 0.6] [--context-window 200000]
            [--session-max-age 72] [--session-max-runs 30] [--cache-ttl 分钟]
-           [--judge off|gray|always] [--judge-model 模型] [--judge-timeout 60]  灰区交给小模型判断（Claude 默认 haiku，Codex 需指定模型）
+           [--judge off|gray|always] [--judge-model 模型] [--judge-timeout 60]  会话续用和领取任务在灰区时交给小模型判断（Claude 默认 haiku，Codex 需指定模型）
            [--no-interject]             运行中来的新评论、@、私信不中途带进去，等这一轮结束再唤起
 
 身份统一保存在用户目录 ~/.ahub/identities，在哪个目录运行都一样；本机有多个身份时用 --identity 或 ahub use 选择。

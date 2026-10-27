@@ -69,11 +69,16 @@ export function judgePrompt(decision: SessionDecision, wakeItems: string[], thre
 
 /** 从小模型的输出里取出判断；Claude 的结构化输出在 structured_output，Codex 的在最后一条 agent_message */
 export function parseVerdict(stdout: string): JudgeVerdict | null {
-  const pick = (v: unknown): JudgeVerdict | null => {
+  return parseOutput(stdout, (v) => {
     const o = v as Partial<JudgeVerdict> | null;
     if (!o || (o.decision !== 'reuse' && o.decision !== 'new')) return null;
-    return { decision: o.decision, reason: String(o.reason ?? '').trim().replace(/[。.；;]+$/, '').slice(0, 300) };
-  };
+    return { decision: o.decision, reason: cleanReason(o.reason) };
+  });
+}
+
+const cleanReason = (r: unknown) => String(r ?? '').trim().replace(/[。.；;]+$/, '').slice(0, 300);
+
+function parseOutput<T>(stdout: string, pick: (v: unknown) => T | null): T | null {
   const fromText = (t: unknown) => {
     if (typeof t !== 'string') return null;
     const m = t.match(/\{[\s\S]*\}/);
@@ -84,7 +89,7 @@ export function parseVerdict(stdout: string): JudgeVerdict | null {
       return null;
     }
   };
-  let found: JudgeVerdict | null = null;
+  let found: T | null = null;
   for (const line of stdout.split('\n')) {
     if (!line.startsWith('{')) continue;
     let m: Record<string, any>;
@@ -99,7 +104,7 @@ export function parseVerdict(stdout: string): JudgeVerdict | null {
   return found ?? fromText(stdout);
 }
 
-export function judgeCommand(opts: JudgeOptions, schemaFile: string): { cmd: string; args: string[] } {
+export function judgeCommand(opts: JudgeOptions, schemaFile: string, system = SYSTEM, schema: object = SCHEMA): { cmd: string; args: string[] } {
   if (opts.harness === 'claude') {
     return {
       cmd: 'claude',
@@ -109,8 +114,8 @@ export function judgeCommand(opts: JudgeOptions, schemaFile: string): { cmd: str
         '--output-format', 'json',
         '--tools', '',
         '--no-session-persistence',
-        '--system-prompt', SYSTEM,
-        '--json-schema', JSON.stringify(SCHEMA),
+        '--system-prompt', system,
+        '--json-schema', JSON.stringify(schema),
       ],
     };
   }
@@ -122,12 +127,18 @@ export function judgeCommand(opts: JudgeOptions, schemaFile: string): { cmd: str
 
 /** 运行小模型；任何失败都返回 null，由调用方沿用规则的决定 */
 export async function runJudge(prompt: string, opts: JudgeOptions, env: NodeJS.ProcessEnv): Promise<JudgeVerdict | null> {
+  const out = await runModel(prompt, opts, env, SYSTEM, SCHEMA);
+  return out === null ? null : parseVerdict(out);
+}
+
+/** 用指定的系统提示词和输出格式运行一次小模型，返回原始输出；失败返回 null */
+async function runModel(prompt: string, opts: JudgeOptions, env: NodeJS.ProcessEnv, system: string, schema: object): Promise<string | null> {
   // 在空目录里运行，不读工作目录的项目说明，也不留下文件
   const dir = mkdtempSync(join(tmpdir(), 'ahub-judge-'));
   const schemaFile = join(dir, 'schema.json');
-  writeFileSync(schemaFile, JSON.stringify(SCHEMA));
-  const { cmd, args } = judgeCommand(opts, schemaFile);
-  const input = opts.harness === 'codex' ? `${SYSTEM}\n\n${prompt}` : prompt;
+  writeFileSync(schemaFile, JSON.stringify(schema));
+  const { cmd, args } = judgeCommand(opts, schemaFile, system, schema);
+  const input = opts.harness === 'codex' ? `${system}\n\n${prompt}` : prompt;
   try {
     const out = await new Promise<string | null>((done) => {
       let stdout = '';
@@ -148,7 +159,7 @@ export async function runJudge(prompt: string, opts: JudgeOptions, env: NodeJS.P
       child.stdin.on('error', () => undefined);
       child.stdin.end(input);
     });
-    return out === null ? null : parseVerdict(out);
+    return out;
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -164,4 +175,78 @@ export function applyVerdict(decision: SessionDecision, verdict: JudgeVerdict | 
     action: verdict.decision,
     reason: `小模型判断${what}会话 ${short(decision.session!.id)}：${verdict.reason || '未说明'}；${rule}`,
   };
+}
+
+// ───────────── 领取判断 ─────────────
+// 智能领取第二期：匹配度落在灰区（刚过门槛）的任务，唤起 harness 前先让小模型看一眼任务适不适合这个 agent，
+// 不适合就直接让出，省一次唤起；小模型没给出判断时照常唤起，由 harness 自己看。
+
+export interface ClaimVerdict {
+  decision: 'claim' | 'pass';
+  reason: string;
+}
+
+const CLAIM_SCHEMA = {
+  type: 'object',
+  properties: {
+    decision: { type: 'string', enum: ['claim', 'pass'] },
+    reason: { type: 'string' },
+  },
+  required: ['decision', 'reason'],
+  additionalProperties: false,
+};
+
+const CLAIM_SYSTEM =
+  '你帮一个多 agent 协作平台的值守程序判断：任务池里的这个任务适不适合交给这个 agent 领取。适合（claim）就唤起它去领；明显不适合（能力、平台、环境对不上，或者别人显然更合适）就让出（pass）给下一个候选。拿不准时选 claim，让 agent 自己看。只根据给出的信息判断，用一句中文说明理由。';
+
+export interface ClaimJudgeInput {
+  agent: { name: string; platform: string; tags: string[]; cwd: string };
+  task: { id: string; title: string; description?: string; acceptance?: string[]; required_tags?: string[]; parent?: string | null };
+  fit: { score: number; rank: number; of: number; reasons: string[]; warnings: string[] };
+  active: number;
+}
+
+/** 这个任务要不要先问小模型 */
+export function shouldJudgeClaim(gray: boolean, opts: JudgeOptions) {
+  if (opts.mode === 'off') return false;
+  if (opts.harness === 'codex' && !opts.model) return false;
+  return opts.mode === 'always' || gray;
+}
+
+export function claimPrompt(x: ClaimJudgeInput) {
+  const t = x.task;
+  return [
+    '## Agent',
+    `- 名字：${x.agent.name}，平台：${x.agent.platform}`,
+    `- 能力标签：${x.agent.tags.join('、') || '无'}`,
+    `- 工作目录：${x.agent.cwd}`,
+    `- 手上进行中的任务：${x.active} 个`,
+    '',
+    `## 任务 ${t.id}：${t.title}`,
+    t.description ? t.description.slice(0, 3000) : '（没有描述）',
+    t.acceptance?.length ? `验收标准：\n${t.acceptance.map((a) => `- ${a}`).join('\n')}` : '',
+    t.required_tags?.length ? `所需能力：${t.required_tags.join('、')}` : '',
+    t.parent ? `父任务：${t.parent}` : '',
+    '',
+    `## 平台算的匹配度：${x.fit.score}，在 ${x.fit.of} 个候选里排第 ${x.fit.rank}`,
+    ...x.fit.reasons.map((r) => `- ${r}`),
+    ...x.fit.warnings.map((w) => `- 注意：${w}`),
+    '',
+    '请判断领取（claim）还是让出（pass），以 JSON 回答：{"decision":"claim"|"pass","reason":"一句话理由"}',
+  ]
+    .filter((l) => l !== '')
+    .join('\n');
+}
+
+export function parseClaimVerdict(stdout: string): ClaimVerdict | null {
+  return parseOutput(stdout, (v) => {
+    const o = v as Partial<ClaimVerdict> | null;
+    if (!o || (o.decision !== 'claim' && o.decision !== 'pass')) return null;
+    return { decision: o.decision, reason: cleanReason(o.reason) };
+  });
+}
+
+export async function runClaimJudge(input: ClaimJudgeInput, opts: JudgeOptions, env: NodeJS.ProcessEnv): Promise<ClaimVerdict | null> {
+  const out = await runModel(claimPrompt(input), opts, env, CLAIM_SYSTEM, CLAIM_SCHEMA);
+  return out === null ? null : parseClaimVerdict(out);
 }
