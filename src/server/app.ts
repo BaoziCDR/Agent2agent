@@ -330,6 +330,10 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
         return `已让出 ${x.task}。${x.remaining ? `还有 ${x.remaining} 个 agent 可以领取它。` : '没有其他 agent 可以自动领取了，已提醒负责人。'}\n`;
       },
     );
+    // 创建子任务的 agent 验收、退回、取消自己拆出来的子任务（规则见 hub.reviewer）
+    action('/api/v1/tasks/:id/approve', (a, id, b) => hub.approve(id, str(b.comment), { kind: 'agent', agent: a }), taskDone('验收通过'));
+    action('/api/v1/tasks/:id/reject', (a, id, b) => hub.reject(id, str(b.reason) ?? '', { kind: 'agent', agent: a }), taskDone('退回'));
+    action('/api/v1/tasks/:id/cancel', (a, id, b) => hub.cancel(id, str(b.reason), { kind: 'agent', agent: a }), taskDone('取消'));
     action('/api/v1/tasks/:id/accept', (a, id) => hub.accept(a, id), taskDone('接受'));
     action('/api/v1/tasks/:id/decline', (a, id, b) => hub.decline(a, id, str(b.reason) ?? ''), taskDone('拒绝'));
     action(

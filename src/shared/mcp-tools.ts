@@ -265,6 +265,22 @@ export function createHubMcpServer(call: HubCall, opts: ToolOptions = {}): McpSe
   );
 
   server.registerTool(
+    'hub_review_subtask',
+    {
+      title: '验收、退回或取消自己拆出的子任务',
+      description:
+        '你创建的子任务提交后，由你验收（approve）或退回修改（reject，必须写意见）；还没人开工（待领取、已指派）时可以取消（cancel）。指派给你自己的子任务不能自己验收，父任务最终仍由负责人验收。',
+      inputSchema: {
+        task: z.string().describe('子任务编号'),
+        action: z.enum(['approve', 'reject', 'cancel']),
+        text: z.string().optional().describe('验收评语、退回的修改意见或取消理由'),
+      },
+    },
+    async ({ task, action, text }) =>
+      reply(call('POST', `/api/v1/tasks/${enc(task)}/${action}?format=md`, action === 'approve' ? { comment: text } : { reason: text })),
+  );
+
+  server.registerTool(
     'hub_release',
     {
       title: '放弃任务',

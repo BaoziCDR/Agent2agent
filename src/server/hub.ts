@@ -1081,6 +1081,8 @@ export class Hub {
       case 'task.overdue':
         return true;
       case 'task.status_changed':
+        // 你拆的子任务提交了，等你验收（指派给你自己的不算，由负责人验收）
+        if (e.data.to === 'review' && e.data.creator === me && e.data.assignee !== me) return true;
         // 被退回修改，或者别人（通常是负责人回答了问题）解除了你的阻塞
         return (
           e.data.assignee === me &&
@@ -2372,6 +2374,8 @@ export class Hub {
         from: t.status,
         to,
         assignee: assignee === null ? null : agentCode(assignee),
+        // agent 拆的子任务记下创建者：提交待验收时唤起它来验收
+        ...(updated.parent_id !== null && updated.created_by !== 'owner' ? { creator: updated.created_by } : {}),
         ...extra.data,
       },
       summary: extra.summary,
@@ -2671,43 +2675,59 @@ export class Hub {
     );
   }
 
-  approve(code: string, comment?: string): TaskView {
+  /**
+   * 验收、退回、取消通常由负责人做；agent 拆出来的子任务，创建它的 agent 也可以验收、退回，
+   * 在还没人开工（待领取、已指派）时取消。指派给自己的子任务不能自己验收。父任务最终仍由负责人验收。
+   */
+  private reviewer(actor: Actor, t: TaskRow, code: string, what: '验收' | '退回' | '取消'): { by: string; who: string } {
+    if (actor.kind === 'owner') return { by: 'owner', who: '负责人' };
+    const me = agentCode(actor.agent.id);
+    if (t.parent_id === null || t.created_by !== me) throw forbidden(`只有负责人或创建这个子任务的 agent 可以${what} ${code}`);
+    if (what !== '取消' && t.assignee_id === actor.agent.id) throw forbidden(`${code} 指派给了你自己，不能自己${what}，请等负责人处理`);
+    if (what === '取消' && !['open', 'assigned'].includes(t.status)) throw forbidden(`${code} 已经有人开工了，只有负责人可以取消`);
+    return { by: me, who: `${actor.agent.name}（${me}）` };
+  }
+
+  approve(code: string, comment?: string, actor: Actor = { kind: 'owner' }): TaskView {
     const t = this.requireTask(code);
     if (t.status !== 'review') throw conflict(`${code} 不在待验收状态`);
+    const { by, who } = this.reviewer(actor, t, code, '验收');
     return this.write(() => {
-      if (comment?.trim()) this.addComment('owner', t, comment);
-      const updated = this.setStatus(this.taskById(t.id), 'owner', 'completed', {
+      if (comment?.trim()) this.addComment(by, t, comment);
+      const updated = this.setStatus(this.taskById(t.id), by, 'completed', {
         lease: null,
-        summary: `负责人验收通过了 ${code}「${t.title}」`,
+        summary: `${who}验收通过了 ${code}「${t.title}」`,
       });
       return this.taskView(updated);
     });
   }
 
-  reject(code: string, reason: string): TaskView {
+  reject(code: string, reason: string, actor: Actor = { kind: 'owner' }): TaskView {
     const t = this.requireTask(code);
     if (t.status !== 'review') throw conflict(`${code} 不在待验收状态`);
     if (!reason?.trim()) throw invalid('请写明修改意见');
+    const { by, who } = this.reviewer(actor, t, code, '退回');
     const assignee = t.assignee_id ? this.requireAgentRow(agentCode(t.assignee_id)) : null;
     return this.write(() => {
-      this.addComment('owner', t, `验收未通过：${reason}`);
-      const updated = this.setStatus(this.taskById(t.id), 'owner', 'working', {
+      this.addComment(by, t, `验收未通过：${reason}`);
+      const updated = this.setStatus(this.taskById(t.id), by, 'working', {
         lease: assignee ? this.lease(assignee) : null,
-        summary: `负责人退回了 ${code}：${reason}`,
+        summary: `${who}退回了 ${code}：${reason}`,
         data: { reason },
       });
       return this.taskView(updated);
     });
   }
 
-  cancel(code: string, reason?: string): TaskView {
+  cancel(code: string, reason?: string, actor: Actor = { kind: 'owner' }): TaskView {
     const t = this.requireTask(code);
     if (['completed', 'canceled'].includes(t.status)) throw conflict(`${code} 已经${STATUS_LABELS[t.status]}`);
+    const { by, who } = this.reviewer(actor, t, code, '取消');
     return this.write(() =>
       this.taskView(
-        this.setStatus(t, 'owner', 'canceled', {
+        this.setStatus(t, by, 'canceled', {
           lease: null,
-          summary: `负责人取消了 ${code}「${t.title}」${reason ? `：${reason}` : ''}`,
+          summary: `${who}取消了 ${code}「${t.title}」${reason ? `：${reason}` : ''}`,
           data: { reason: reason ?? '' },
         }),
       ),
