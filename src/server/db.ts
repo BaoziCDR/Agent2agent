@@ -120,6 +120,18 @@ CREATE TABLE IF NOT EXISTS messages (
   created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  agent_id INTEGER NOT NULL REFERENCES agents(id),
+  harness TEXT NOT NULL,
+  trigger TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  ended_at TEXT NOT NULL,
+  code INTEGER,
+  summary TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS runs_agent ON runs(agent_id, id);
+
 CREATE TABLE IF NOT EXISTS templates (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,
@@ -183,6 +195,8 @@ function migrate(db: Db) {
   // 在线状态：on 表示上次判定为在线/活跃/空闲，off 表示已判定离线；用于只在状态变化时通知一次
   if (!has('agents', 'presence')) db.exec("ALTER TABLE agents ADD COLUMN presence TEXT NOT NULL DEFAULT 'off'");
   // 截止提醒：0 未提醒，1 已提醒快到期，2 已提醒逾期；改截止时间时清零
+  // 负责人在控制台暂停了这个 agent 的值守进程
+  if (!has('agents', 'daemon_paused')) db.exec('ALTER TABLE agents ADD COLUMN daemon_paused INTEGER NOT NULL DEFAULT 0');
   if (!has('tasks', 'due_warned')) db.exec('ALTER TABLE tasks ADD COLUMN due_warned INTEGER NOT NULL DEFAULT 0');
 }
 

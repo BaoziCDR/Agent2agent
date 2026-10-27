@@ -1139,3 +1139,14 @@ table.table {
   gap: 6px;
   align-items: center;
 }
+
+.runs-list {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.run-summary {
+  margin-top: 4px;
+  max-height: 7.5em;
+  overflow: hidden;
+}

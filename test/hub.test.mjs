@@ -247,6 +247,27 @@ test('前置任务：不能形成循环依赖', () => {
   assert.deepEqual(hub.getTask(c.id).depends_on, [a.id, b.id]);
 });
 
+test('值守管理：暂停/恢复/唤醒、运行记录，控制事件不进 harness 收件箱', () => {
+  const { hub, join } = setup();
+  const a = join('甲');
+  assert.throws(() => hub.controlDaemon(a.agent.id, 'wake'), /值守进程不在线/);
+  hub.markDaemon(a.row.id, 1);
+  assert.equal(hub.agentView(a.row).daemon, true);
+  const before = hub.inbox(a.row).last_seq;
+  assert.equal(hub.controlDaemon(a.agent.id, 'pause').daemon_paused, true);
+  assert.throws(() => hub.controlDaemon(a.agent.id, 'wake'), /已暂停/);
+  assert.equal(hub.controlDaemon(a.agent.id, 'resume').daemon_paused, false);
+  hub.controlDaemon(a.agent.id, 'wake');
+  const inbox = hub.inbox(a.row, { since: before });
+  assert.equal(inbox.events.length, 0);
+  assert.ok(inbox.last_seq > before);
+  assert.equal(hub.eventsForAgent(a.row, before, 50).events.filter((e) => e.type === 'agent.control').length, 3);
+  for (let i = 0; i < 105; i++) hub.recordRun(a.row, { code: i % 2, trigger: `第 ${i} 次`, harness: 'codex' });
+  const runs = hub.listRuns(a.agent.id, 200);
+  assert.equal(runs.length, 100);
+  assert.equal(runs[0].trigger, '第 104 次');
+});
+
 test('乐观锁：版本号不一致时拒绝修改', () => {
   const { hub, p1 } = setup();
   const t = hub.createTask({ kind: 'owner' }, { project: p1.id, title: 'x' });
