@@ -117,12 +117,13 @@ test('拒绝指派会回到任务池；只有负责人能改派', () => {
   assert.ok(hub.inbox(b.row).events.some((e) => e.summary.includes('改派走了')));
 });
 
-test('子任务：只能为自己负责的任务创建，直接发布并指派', () => {
+test('子任务：自己负责的任务下直接发布并指派；别人的任务下只能指派给自己', () => {
   const { hub, p1, join } = setup();
   const a = join('甲');
   const b = join('乙');
   const parent = hub.createTask({ kind: 'owner' }, { project: p1.id, title: '父任务' });
-  assert.throws(() => hub.createTask({ kind: 'agent', agent: a.row }, { parent: parent.id, title: '子' }), /自己负责/);
+  assert.throws(() => hub.createTask({ kind: 'agent', agent: a.row }, { parent: parent.id, title: '子', assignee: b.agent.id }), /只能建指派给自己的子任务/);
+  assert.equal(hub.createTask({ kind: 'agent', agent: a.row }, { parent: parent.id, title: '我来做一部分' }).assignee, a.agent.id);
   assert.throws(() => hub.createTask({ kind: 'agent', agent: a.row }, { project: p1.id, title: '顶层' }), /只能创建子任务/);
   hub.claim(a.row, parent.id);
   const sub = hub.createTask({ kind: 'agent', agent: a.row }, { parent: parent.id, title: '子', assignee: b.agent.id });
