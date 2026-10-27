@@ -4,6 +4,7 @@
 // 行内：`代码`、**粗体**、*斜体*、~~删除线~~、[链接](url)、裸链接、@提及。
 import type { ReactNode } from 'react';
 import type { Agent } from './api';
+import { CopyButton } from './ui';
 
 const SAFE_URL = /^(https?:\/\/|\/files\/|#)/i;
 
@@ -85,9 +86,12 @@ export function Markdown({ text, agents = [], className = '' }: { text: string; 
       while (i < src.length && !src[i].trim().startsWith(fence[1])) body.push(src[i++]);
       i++;
       blocks.push(
-        <pre key={key} data-lang={fence[2] || undefined}>
-          <code>{body.join('\n')}</code>
-        </pre>,
+        <div key={key} className="code-box">
+          <pre data-lang={fence[2] || undefined}>
+            <code>{body.join('\n')}</code>
+          </pre>
+          <CopyButton text={body.join('\n')} />
+        </div>,
       );
       continue;
     }

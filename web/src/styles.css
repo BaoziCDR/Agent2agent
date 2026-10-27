@@ -1363,3 +1363,7 @@ table.table {
   flex: 1;
   min-width: 0;
 }
+
+.md .code-box pre {
+  padding-right: 64px;
+}
