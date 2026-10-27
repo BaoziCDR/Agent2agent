@@ -1,6 +1,6 @@
 # 可选：把协作中枢配置为 Codex 的 MCP 服务器（追加到 ~/.codex/config.toml）
-# 需要先在工作目录运行 ahub join；ahub mcp 会从当前目录向上查找 .ahub/config.json，
-# 找不到时使用 ~/.ahub/config.json（用 ahub join --global 生成）。
+# 需要先运行一次 ahub join --hub <Hub 地址> --code <身份码>；身份保存在 ~/.ahub/，与工作目录无关。
+# 本机有多个身份时，在 args 里加上 "--identity", "A-x" 指定用哪个。
 [mcp_servers.ahub]
 command = "ahub"
 args = ["mcp"]
