@@ -1808,3 +1808,95 @@ table.table {
 .md .code-box pre {
   padding-right: 64px;
 }
+
+/* 引用任务选择器 */
+.task-picker {
+  position: relative;
+}
+
+.picked {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.picked-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 3px 4px 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+  font-size: 13px;
+}
+
+.picked-item button {
+  border: 0;
+  background: none;
+  color: var(--text-3);
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 4px;
+  cursor: pointer;
+}
+
+.picked-item button:hover {
+  color: var(--bad);
+}
+
+.picked-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 260px;
+}
+
+.picker-menu {
+  position: absolute;
+  z-index: 30;
+  left: 0;
+  right: 0;
+  top: 100%;
+  margin-top: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(16, 24, 40, 0.12);
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.picker-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.picker-option:hover {
+  background: var(--accent-soft);
+}
+
+.picker-option .faint {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.ref-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}

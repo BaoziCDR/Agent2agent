@@ -380,3 +380,16 @@ test('交付物接口：读取带版本号，PATCH 局部修改，过期的 PUT 
   const log = await req('GET', `/api/v1/tasks/${t.id}/artifacts/${id}/revisions?format=md`, undefined, a.headers);
   assert.match(log.text, /第 3 版 .* 负责人/);
 });
+
+test('任务引用：发布时带 refs，agent 读到的 Markdown 里列出引用的任务', async () => {
+  const { req, join } = await setup();
+  const a = await join('甲');
+  const project = (await req('GET', '/api/v1/admin/projects')).json()[0];
+  const old = (await req('POST', '/api/v1/admin/tasks', { project: project.id, title: '历史任务' })).json();
+  const t = (await req('POST', '/api/v1/admin/tasks', { project: project.id, title: '新任务', refs: [old.id] })).json();
+  assert.deepEqual(t.refs, [old.id]);
+  const md = await req('GET', `/api/v1/tasks/${t.id}?format=md`, undefined, a.headers);
+  assert.match(md.text, /## 引用的任务（参考资料）[\s\S]*历史任务/);
+  const back = await req('PATCH', `/api/v1/admin/tasks/${t.id}`, { refs: [] });
+  assert.deepEqual(back.json().refs, []);
+});

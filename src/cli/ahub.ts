@@ -22,7 +22,8 @@ Agent：
                                        同步收件箱（每轮开始时运行）
   ahub wait [--timeout 600]            阻塞等待与你相关的新事件，然后输出收件箱（只等一次，别循环）
   ahub tasks [--project P-1] [--status open,working] [--mine]
-  ahub task <任务>                     任务详情
+                                       同项目的任何任务都能查，历史任务用 --status completed,canceled
+  ahub task <任务>                     任务详情（含引用的任务、交付物、讨论；不限状态）
   ahub claim <任务>                    领取
   ahub accept <任务> | decline <任务> <理由>
   ahub progress <任务> <百分比> <一句话进展> [--notes 工作笔记]
@@ -41,7 +42,7 @@ Agent：
   ahub artifact log <任务> <编号>      查看修改记录
   ahub members [--project P-1]         查看项目成员和编号（用于 @）
   ahub search <关键字> [--project P-1] 按编号、标题、描述、笔记、评论搜索任务
-  ahub subtask <父任务> <标题> [--desc 描述] [--assignee A-3] [--tags a,b] [--priority P1] [--accept "标准1;标准2"] [--due 2026-11-01T18:00+08:00]
+  ahub subtask <父任务> <标题> [--desc 描述] [--assignee A-3] [--tags a,b] [--priority P1] [--accept "标准1;标准2"] [--due 2026-11-01T18:00+08:00] [--ref P1-T2 ...]
   ahub msg <A-3|owner> <内容>          私信
   ahub invite <用途> [--task P1-T3 | --project P-1] [--name 建议名字] [--tags a,b] [--harness codex|claude]
                                        （需负责人授权）找不到合适的 agent 时创建一次性邀请，并 @负责人 去运行它
@@ -196,6 +197,7 @@ async function main(argv: string[]) {
       'new-session': { type: 'boolean' },
       'dry-run': { type: 'boolean' },
       target: { type: 'string' },
+      ref: { type: 'string', multiple: true },
       force: { type: 'boolean' },
       rev: { type: 'string' },
       out: { type: 'string' },
@@ -510,6 +512,7 @@ async function main(argv: string[]) {
         priority: v.priority,
         acceptance: v.accept ? v.accept.split(/[;；]/).map((s) => s.trim()).filter(Boolean) : undefined,
         due_at: v.due,
+        refs: list(v.ref),
       };
       console.log(ok(await api(cfg, 'POST', '/api/v1/tasks', body, { ack: true })));
       return;

@@ -464,3 +464,38 @@ test('交付物迁移：老数据补上版本号、提交轮次和第 1 版记�
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM artifact_revisions').get().n, 3);
   db.close();
 });
+
+test('任务引用：同项目任意状态可引用，详情列出引用和被引用，指派提醒里带上参考任务', () => {
+  const { hub, p1, join } = setup();
+  const a = join('甲');
+  const old = hub.createTask({ kind: 'owner' }, { project: p1.id, title: '旧方案', assignee: a.agent.id });
+  hub.accept(a.row, old.id);
+  hub.submit(a.row, old.id, { summary: '旧方案文档' });
+  hub.approve(old.id);
+  const canceled = hub.createTask({ kind: 'owner' }, { project: p1.id, title: '废弃的尝试' });
+  hub.cancel(canceled.id, '不做了');
+
+  const t = hub.createTask({ kind: 'owner' }, { project: p1.id, title: '新方案', assignee: a.agent.id, refs: [old.id, canceled.id, old.id] });
+  assert.deepEqual(t.refs, [old.id, canceled.id]);
+  const d = hub.getTask(t.id);
+  assert.deepEqual(d.ref_tasks.map((r) => [r.id, r.status]), [[old.id, 'completed'], [canceled.id, 'canceled']]);
+  assert.deepEqual(hub.getTask(old.id).referenced_by.map((r) => r.id), [t.id]);
+  const assigned = hub.inbox(a.row).needs_action.find((e) => e.type === 'task.assigned' && e.summary.includes('新方案'));
+  assert.match(assigned.summary, new RegExp(`参考任务：${old.id}、${canceled.id}`));
+
+  // 其他项目的任务、引用自己都不行
+  const p2 = hub.createProject({ name: '项目二' });
+  const other = hub.createTask({ kind: 'owner' }, { project: p2.id, title: '别的项目' });
+  assert.throws(() => hub.createTask({ kind: 'owner' }, { project: p1.id, title: 'x', refs: [other.id] }), /同一个项目/);
+  assert.throws(() => hub.updateTask(t.id, { refs: [t.id] }), /不能引用自己/);
+  assert.deepEqual(hub.updateTask(t.id, { refs: [canceled.id] }).refs, [canceled.id]);
+
+  // agent 不用被引用也能查看同项目的历史任务（已完成、已取消）
+  assert.equal(hub.getTaskFor({ kind: 'agent', agent: a.row }, canceled.id).status, 'canceled');
+  const history = hub.listTasks({ kind: 'agent', agent: a.row }, { status: 'completed,canceled' }).map((x) => x.id);
+  assert.deepEqual(history, [old.id, canceled.id]);
+  // agent 拆子任务时也能引用
+  hub.accept(a.row, t.id);
+  const sub = hub.createTask({ kind: 'agent', agent: a.row }, { parent: t.id, title: '子任务', refs: [old.id] });
+  assert.deepEqual(sub.refs, [old.id]);
+});

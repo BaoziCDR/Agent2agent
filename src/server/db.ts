@@ -205,6 +205,8 @@ function migrate(db: Db) {
   if (!has('agents', 'can_invite')) db.exec('ALTER TABLE agents ADD COLUMN can_invite INTEGER NOT NULL DEFAULT 0');
   if (!has('invites', 'created_by')) db.exec("ALTER TABLE invites ADD COLUMN created_by TEXT NOT NULL DEFAULT 'owner'");
   if (!has('tasks', 'due_warned')) db.exec('ALTER TABLE tasks ADD COLUMN due_warned INTEGER NOT NULL DEFAULT 0');
+  // 任务可以引用同项目的其他任务（任意状态），作为参考资料
+  if (!has('tasks', 'refs')) db.exec("ALTER TABLE tasks ADD COLUMN refs TEXT NOT NULL DEFAULT '[]'");
   // 交付物可修改：rev 是当前版本号，round 是第几次提交；每个版本的内容存在 artifact_revisions
   if (!has('artifacts', 'rev')) {
     db.exec('ALTER TABLE artifacts ADD COLUMN rev INTEGER NOT NULL DEFAULT 1');

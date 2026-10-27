@@ -73,6 +73,7 @@ interface TaskRow {
   created_by: string;
   parent_id: number | null;
   depends_on: string;
+  refs: string;
   required_tags: string;
   progress: number;
   progress_note: string;
@@ -160,6 +161,8 @@ export interface TaskView {
   created_by: string;
   parent: string | null;
   depends_on: string[];
+  /** 引用的同项目任务（参考资料，任意状态） */
+  refs: string[];
   required_tags: string[];
   progress: number;
   progress_note: string;
@@ -178,9 +181,21 @@ export interface TaskView {
 
 export interface TaskDetail extends TaskView {
   subtasks: TaskView[];
+  /** 引用的任务和引用了本任务的任务，带标题和状态方便直接展示 */
+  ref_tasks: TaskBrief[];
+  referenced_by: TaskBrief[];
   comments: { id: number; author: string; author_name: string; parts: Part[]; created_at: string }[];
   artifacts: ArtifactView[];
   progress_log: { author: string; percent: number; note: string; created_at: string }[];
+}
+
+export interface TaskBrief {
+  id: string;
+  title: string;
+  status: TaskStatus;
+  status_label: string;
+  assignee: string | null;
+  assignee_name: string | null;
 }
 
 export interface ArtifactView {
@@ -1270,6 +1285,39 @@ export class Hub {
     return (id !== null && this.agentName(id)) || actor;
   }
 
+  private codeOf(id: number) {
+    const d = this.taskById(id);
+    return taskCode(d.project_id, d.num);
+  }
+
+  private brief(t: TaskRow): TaskBrief {
+    return {
+      id: taskCode(t.project_id, t.num),
+      title: t.title,
+      status: t.status,
+      status_label: STATUS_LABELS[t.status],
+      assignee: t.assignee_id === null ? null : agentCode(t.assignee_id),
+      assignee_name: this.agentName(t.assignee_id),
+    };
+  }
+
+  /** 校验引用：同一个项目、不能引用自己，去重后返回内部编号。 */
+  private resolveRefs(codes: string[], projectId: number, self?: number): number[] {
+    const ids = codes.map((c) => {
+      const d = this.requireTask(c);
+      if (d.project_id !== projectId) throw invalid(`只能引用同一个项目的任务（${c} 不在 ${projectCode(projectId)}）`);
+      if (d.id === self) throw invalid('任务不能引用自己');
+      return d.id;
+    });
+    return [...new Set(ids)];
+  }
+
+  /** 指派、发布时附在摘要后面，值守唤醒的提示词里就能看到要参考哪些任务。 */
+  private refNote(t: TaskRow) {
+    const refs = json<number[]>(t.refs, []);
+    return refs.length ? `（参考任务：${refs.map((id) => this.codeOf(id)).join('、')}）` : '';
+  }
+
   taskView(t: TaskRow): TaskView {
     const deps = json<number[]>(t.depends_on, []).map((id) => {
       const d = this.taskById(id);
@@ -1290,6 +1338,7 @@ export class Hub {
       created_by: t.created_by,
       parent: parent ? taskCode(parent.project_id, parent.num) : null,
       depends_on: deps,
+      refs: json<number[]>(t.refs, []).map((id) => this.codeOf(id)),
       required_tags: json<string[]>(t.required_tags, []),
       progress: t.progress,
       progress_note: t.progress_note,
@@ -1321,6 +1370,12 @@ export class Hub {
     return {
       ...this.taskView(t),
       subtasks: subtasks.map((s) => this.taskView(s)),
+      ref_tasks: json<number[]>(t.refs, []).map((id) => this.brief(this.taskById(id))),
+      referenced_by: (
+        this.db
+          .prepare('SELECT * FROM tasks WHERE project_id = ? AND EXISTS (SELECT 1 FROM json_each(tasks.refs) WHERE value = ?) ORDER BY num')
+          .all(t.project_id, t.id) as unknown as TaskRow[]
+      ).map((r) => this.brief(r)),
       comments: comments.map((c) => ({
         id: c.id,
         author: c.author,
@@ -1396,6 +1451,7 @@ export class Hub {
       assignee?: string | null;
       parent?: string | null;
       depends_on?: string[];
+      refs?: string[];
       required_tags?: string[];
       due_at?: string | null;
       draft?: boolean;
@@ -1438,6 +1494,7 @@ export class Hub {
       if (d.project_id !== projectId) throw invalid('依赖的任务必须在同一个项目');
       return d.id;
     });
+    const refs = this.resolveRefs(input.refs ?? [], projectId);
     const status: TaskStatus = input.draft && actor.kind === 'owner' ? 'draft' : assignee ? 'assigned' : 'open';
     const creator = actor.kind === 'owner' ? 'owner' : agentCode(actor.agent.id);
 
@@ -1450,8 +1507,8 @@ export class Hub {
       const r = this.db
         .prepare(
           `INSERT INTO tasks (project_id, num, title, description, acceptance, status, priority, assignee_id, created_by,
-            parent_id, depends_on, required_tags, due_at, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            parent_id, depends_on, refs, required_tags, due_at, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           projectId,
@@ -1465,6 +1522,7 @@ export class Hub {
           creator,
           parent?.id ?? null,
           JSON.stringify(deps),
+          JSON.stringify(refs),
           JSON.stringify(input.required_tags ?? []),
           input.due_at ?? parent?.due_at ?? null,
           now,
@@ -1478,8 +1536,8 @@ export class Hub {
         audience: status === 'draft' ? [] : null,
         data: { title, status, priority, parent: input.parent ?? null, required_tags: input.required_tags ?? [] },
         summary: parent
-          ? `${who}为 ${input.parent} 创建了子任务 ${code}「${title}」`
-          : `${who}发布了任务 ${code}「${title}」`,
+          ? `${who}为 ${input.parent} 创建了子任务 ${code}「${title}」${this.refNote(t)}`
+          : `${who}发布了任务 ${code}「${title}」${this.refNote(t)}`,
       });
       if (assignee) {
         const to = agentCode(assignee.id);
@@ -1487,7 +1545,7 @@ export class Hub {
           task: t,
           audience: [to],
           data: { assignee: to, title },
-          summary: `${who}把 ${code}「${title}」指派给了你`,
+          summary: `${who}把 ${code}「${title}」指派给了你${this.refNote(t)}`,
         });
       }
       return this.taskView(t);
@@ -1518,6 +1576,7 @@ export class Hub {
       priority?: string;
       required_tags?: string[];
       depends_on?: string[];
+      refs?: string[];
       due_at?: string | null;
       version?: number;
     },
@@ -1538,10 +1597,11 @@ export class Hub {
               return d.id;
             }),
           );
+    const refs = input.refs === undefined ? t.refs : JSON.stringify(this.resolveRefs(input.refs, t.project_id, t.id));
     return this.write(() => {
       this.db
         .prepare(
-          `UPDATE tasks SET title = ?, description = ?, acceptance = ?, priority = ?, required_tags = ?, depends_on = ?, due_at = ?,
+          `UPDATE tasks SET title = ?, description = ?, acceptance = ?, priority = ?, required_tags = ?, depends_on = ?, refs = ?, due_at = ?,
             due_warned = CASE WHEN due_at IS ? THEN due_warned ELSE 0 END, updated_at = ?, version = version + 1 WHERE id = ?`,
         )
         .run(
@@ -1551,6 +1611,7 @@ export class Hub {
           priority,
           input.required_tags === undefined ? t.required_tags : JSON.stringify(input.required_tags),
           deps,
+          refs,
           due === undefined ? t.due_at : due,
           due === undefined ? t.due_at : due,
           this.iso(),
@@ -1664,7 +1725,7 @@ export class Hub {
           task: updated,
           audience: [agentCode(agent.id)],
           data: { assignee: agentCode(agent.id), title: t.title, message: message ?? '' },
-          summary: `负责人把 ${code}「${t.title}」指派给了你${message ? `：${message}` : ''}`,
+          summary: `负责人把 ${code}「${t.title}」指派给了你${this.refNote(t)}${message ? `：${message}` : ''}`,
         });
       }
       if (prev !== null && prev !== agent?.id) {
@@ -1690,7 +1751,7 @@ export class Hub {
           task: updated,
           audience: [agentCode(t.assignee_id)],
           data: { assignee: agentCode(t.assignee_id), title: t.title },
-          summary: `负责人把 ${code}「${t.title}」指派给了你`,
+          summary: `负责人把 ${code}「${t.title}」指派给了你${this.refNote(t)}`,
         });
       }
       return this.taskView(updated);
@@ -2607,6 +2668,7 @@ function fieldLabel(f: string) {
       priority: '优先级',
       required_tags: '能力标签',
       depends_on: '依赖',
+      refs: '引用的任务',
       due_at: '截止时间',
     } as Record<string, string>
   )[f] ?? f;

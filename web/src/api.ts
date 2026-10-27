@@ -48,6 +48,8 @@ export interface Task {
   created_by: string;
   parent: string | null;
   depends_on: string[];
+  /** 引用的同项目任务（参考资料） */
+  refs: string[];
   required_tags: string[];
   progress: number;
   progress_note: string;
@@ -64,8 +66,19 @@ export interface Task {
   version: number;
 }
 
+export interface TaskBrief {
+  id: string;
+  title: string;
+  status: TaskStatus;
+  status_label: string;
+  assignee: string | null;
+  assignee_name: string | null;
+}
+
 export interface TaskDetail extends Task {
   subtasks: Task[];
+  ref_tasks: TaskBrief[];
+  referenced_by: TaskBrief[];
   comments: { id: number; author: string; author_name: string; parts: Part[]; created_at: string }[];
   artifacts: Artifact[];
   progress_log: { author: string; percent: number; note: string; created_at: string }[];
