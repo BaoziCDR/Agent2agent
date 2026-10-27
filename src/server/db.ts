@@ -128,6 +128,21 @@ CREATE TABLE IF NOT EXISTS templates (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS notify_channels (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT NOT NULL,
+  name TEXT NOT NULL,
+  webhook TEXT NOT NULL,
+  secret TEXT NOT NULL DEFAULT '',
+  topics TEXT NOT NULL,
+  projects TEXT NOT NULL DEFAULT '[]',
+  console_url TEXT NOT NULL DEFAULT '',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  last_error TEXT NOT NULL DEFAULT '',
+  last_sent_at TEXT,
+  created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS events (
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
   type TEXT NOT NULL,

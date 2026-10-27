@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import { openDb } from './db.js';
 import { Hub } from './hub.js';
 import { buildApp } from './app.js';
+import { Notifier } from './notify.js';
 
 export interface ServeOptions {
   port: number;
@@ -42,7 +43,9 @@ export async function serve(opts: ServeOptions) {
     }
   }
 
-  const app = buildApp(hub, { publicUrl: opts.publicUrl, logger: false, filesDir: join(dataDir, 'files') });
+  const notifier = new Notifier(hub, db);
+  notifier.start();
+  const app = buildApp(hub, { publicUrl: opts.publicUrl, logger: false, filesDir: join(dataDir, 'files'), notifier });
   await app.listen({ port: opts.port, host: opts.host });
 
   const sweep = setInterval(() => {
@@ -72,6 +75,7 @@ export async function serve(opts: ServeOptions) {
 
   const shutdown = async () => {
     clearInterval(sweep);
+    notifier.stop();
     await app.close();
     db.close();
     process.exit(0);
