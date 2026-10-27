@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { type Actor, type AgentRow, Hub, HubError, agentCode } from './hub.js';
 import { renderInbox, renderJoin, renderMe, renderSearch, renderTask, renderTaskList } from './format.js';
 import { handleMcpRequest } from './mcp-http.js';
+import { NOTIFY_TOPICS, type Notifier } from './notify.js';
 import type { HubEvent, Part } from '../shared/model.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -21,6 +22,8 @@ export interface AppOptions {
   maxWaitSeconds?: number;
   /** 上传文件的保存目录；不设置时不提供上传 */
   filesDir?: string;
+  /** 外部通知（钉钉机器人）；不设置时不提供通知设置接口 */
+  notifier?: Notifier;
 }
 
 declare module 'fastify' {
@@ -403,6 +406,25 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
       });
     });
 
+    const notifier = opts.notifier;
+    if (notifier) {
+      const channelInput = (b: B) => ({
+        name: str(b.name),
+        kind: str(b.kind),
+        webhook: str(b.webhook),
+        secret: b.secret === null ? '-' : str(b.secret),
+        topics: strArr(b.topics),
+        projects: strArr(b.projects),
+        console_url: str(b.console_url),
+        enabled: typeof b.enabled === 'boolean' ? b.enabled : undefined,
+      });
+      const cid = (req: FastifyRequest) => Number((req.params as { id: string }).id);
+      admin.get(`${A}/notify/channels`, async () => ({ channels: notifier.list(), topics: NOTIFY_TOPICS }));
+      admin.post(`${A}/notify/channels`, async (req) => notifier.create(channelInput((req.body ?? {}) as B)));
+      admin.patch(`${A}/notify/channels/:id`, async (req) => notifier.update(cid(req), channelInput((req.body ?? {}) as B)));
+      admin.delete(`${A}/notify/channels/:id`, async (req) => notifier.remove(cid(req)));
+      admin.post(`${A}/notify/channels/:id/test`, async (req) => notifier.test(cid(req)));
+    }
     admin.get(`${A}/templates`, async () => hub.listTemplates());
     const templateInput = (b: B) => ({
       name: str(b.name),
