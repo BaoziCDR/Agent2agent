@@ -799,6 +799,46 @@ export class Hub {
     return result;
   }
 
+  // ───────────── 任务模板 ─────────────
+
+  listTemplates(): TemplateView[] {
+    const rows = this.db.prepare('SELECT * FROM templates ORDER BY name').all() as { id: number; name: string; body: string; updated_at: string }[];
+    return rows.map((r) => ({ id: r.id, name: r.name, ...json<TemplateBody>(r.body, EMPTY_TEMPLATE), updated_at: r.updated_at }));
+  }
+
+  /** 新建或覆盖同名模板 */
+  saveTemplate(input: Partial<Omit<TemplateBody, 'priority'>> & { priority?: string; name?: string; id?: number }): TemplateView {
+    const name = input.name?.trim();
+    if (!name) throw invalid('模板名称不能为空');
+    const priority = (input.priority ?? 'P2').toUpperCase() as Priority;
+    if (!PRIORITIES.includes(priority)) throw invalid('优先级只能是 P0–P3');
+    const body: TemplateBody = {
+      title: input.title?.trim() ?? '',
+      description: input.description ?? '',
+      acceptance: input.acceptance ?? [],
+      priority,
+      required_tags: input.required_tags ?? [],
+      subtasks: (input.subtasks ?? []).map((s) => s.trim()).filter(Boolean).slice(0, 50),
+      chain: !!input.chain,
+    };
+    const now = this.iso();
+    const clash = this.db.prepare('SELECT id FROM templates WHERE name = ?').get(name) as { id: number } | undefined;
+    const id = input.id ?? clash?.id;
+    if (id !== undefined) {
+      if (clash && clash.id !== id) throw conflict(`已经有名为「${name}」的模板`);
+      const r = this.db.prepare('UPDATE templates SET name = ?, body = ?, updated_at = ? WHERE id = ?').run(name, JSON.stringify(body), now, id);
+      if (r.changes === 0) throw notFound(`模板 ${id}`);
+    } else {
+      this.db.prepare('INSERT INTO templates (name, body, created_at, updated_at) VALUES (?, ?, ?, ?)').run(name, JSON.stringify(body), now, now);
+    }
+    return this.listTemplates().find((t) => t.name === name)!;
+  }
+
+  deleteTemplate(id: number) {
+    if (this.db.prepare('DELETE FROM templates WHERE id = ?').run(id).changes === 0) throw notFound(`模板 ${id}`);
+    return { ok: true };
+  }
+
   // ───────────── 邀请与加入 ─────────────
 
   createInvite(input: { project: string; tags?: string[]; max_uses?: number; hours?: number; note?: string }) {
@@ -2030,6 +2070,20 @@ function snippet(text: string, kw: string, around = 30) {
   const end = Math.min(flat.length, i + kw.length + around);
   return `${start > 0 ? '…' : ''}${flat.slice(start, end)}${end < flat.length ? '…' : ''}`;
 }
+
+export interface TemplateBody {
+  title: string;
+  description: string;
+  acceptance: string[];
+  priority: Priority;
+  required_tags: string[];
+  subtasks: string[]; // 子任务标题，每项一个
+  chain: boolean; // 子任务是否按顺序依次进行（后一个依赖前一个）
+}
+
+export type TemplateView = TemplateBody & { id: number; name: string; updated_at: string };
+
+const EMPTY_TEMPLATE: TemplateBody = { title: '', description: '', acceptance: [], priority: 'P2', required_tags: [], subtasks: [], chain: false };
 
 function excerpt(text: string, n = 60) {
   const s = text.replace(/\s+/g, ' ').trim();
