@@ -6,7 +6,6 @@ import { Overview } from './pages/Overview';
 import { Board } from './pages/Board';
 import { NewTask } from './pages/NewTask';
 import { Agents } from './pages/Agents';
-import { Invite } from './pages/Invite';
 import { Messages } from './pages/Messages';
 import { GlobalSearch } from './search';
 import { Stats } from './pages/Stats';
@@ -15,12 +14,15 @@ import { Feed } from './pages/Feed';
 import { Projects } from './pages/Projects';
 import { TaskDrawer } from './pages/TaskDrawer';
 
+const InviteRoute = () => <Agents startInvite />;
+
 const PAGES = [
   { id: 'overview', label: '总览' },
   { id: 'board', label: '任务看板' },
   { id: 'new', label: '发布任务' },
   { id: 'agents', label: 'Agent' },
-  { id: 'invite', label: '邀请 Agent' },
+  // 旧地址：邀请已并入「Agent」页，保留这个入口直接打开邀请弹窗，不在导航里显示
+  { id: 'invite', label: '邀请 Agent', hidden: true },
   { id: 'messages', label: '私信与广播' },
   { id: 'feed', label: '实时动态' },
   { id: 'stats', label: '统计' },
@@ -202,7 +204,7 @@ export function App() {
     board: Board,
     new: NewTask,
     agents: Agents,
-    invite: Invite,
+    invite: InviteRoute,
     messages: Messages,
     feed: Feed,
     stats: Stats,
@@ -263,8 +265,8 @@ export function App() {
           </button>
         </header>
         <nav className="sidebar">
-          {PAGES.map((p) => (
-            <button key={p.id} className={`nav-item ${route.page === p.id ? 'active' : ''}`} onClick={() => go(p.id)}>
+          {PAGES.filter((p) => !('hidden' in p)).map((p) => (
+            <button key={p.id} className={`nav-item ${route.page === p.id || (p.id === 'agents' && route.page === 'invite') ? 'active' : ''}`} onClick={() => go(p.id)}>
               <span>{p.label}</span>
               {p.id === 'overview' && reviewCount > 0 && <span className="badge warn">{reviewCount}</span>}
             </button>
