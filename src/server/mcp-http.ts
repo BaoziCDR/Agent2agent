@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { createHubMcpServer, type HubCall } from '../shared/mcp-tools.js';
+import { VERSION } from './version.js';
 
 /** 无状态 MCP：每个请求新建一个 server，工具通过进程内调用复用 REST 接口。 */
 export async function handleMcpRequest(app: FastifyInstance, req: FastifyRequest, reply: FastifyReply, token: string) {
@@ -16,7 +17,7 @@ export async function handleMcpRequest(app: FastifyInstance, req: FastifyRequest
     });
     return { ok: res.statusCode < 400, text: res.body };
   };
-  const server = createHubMcpServer(call);
+  const server = createHubMcpServer(call, { version: VERSION });
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
   reply.hijack();
   reply.raw.on('close', () => {

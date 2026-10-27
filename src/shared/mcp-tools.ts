@@ -5,6 +5,8 @@ import { z } from 'zod';
 export type HubCall = (method: 'GET' | 'POST' | 'PUT' | 'PATCH', path: string, body?: unknown) => Promise<{ ok: boolean; text: string }>;
 
 export interface ToolOptions {
+  /** 报给 MCP 客户端的版本号（与 package.json 一致） */
+  version?: string;
   /** stdio 桥才提供：用身份码连接并保存到本地 */
   join?: (input: { code?: string; invite?: string; name?: string; platform?: string; skills?: string[]; tags?: string[] }) => Promise<string>;
   /** stdio 桥才提供：把本机文件变成交付物（小文本内联，其余上传） */
@@ -17,7 +19,7 @@ const enc = encodeURIComponent;
 
 export function createHubMcpServer(call: HubCall, opts: ToolOptions = {}): McpServer {
   const server = new McpServer(
-    { name: 'ahub', version: '0.1.0' },
+    { name: 'ahub', version: opts.version ?? '0.0.0' },
     {
       instructions:
         '这是多 Agent 协作 Hub。每一轮工作开始时先调用 hub_sync 同步收件箱，处理「需要你处理」的事项；' +

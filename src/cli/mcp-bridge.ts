@@ -3,6 +3,7 @@ import { createHubMcpServer, type HubCall } from '../shared/mcp-tools.js';
 import { type CliConfig, identityFor, saveConfig, setCurrent } from './config.js';
 import { AuthError, hubFetch, identityCode, openSession } from './auth.js';
 import { fileArtifact, uploadFile } from './files.js';
+import { VERSION } from '../server/version.js';
 
 const LAST_SEQ_RE = /本次读到第 (\d+) 号事件/;
 
@@ -36,6 +37,7 @@ export async function runStdioBridge(cfg: CliConfig, configPath: string | null) 
   };
 
   const server = createHubMcpServer(call, {
+    version: VERSION,
     fileArtifact: (path) => fileArtifact(cfg, path),
     uploadFile: async (path) => (await uploadFile(cfg, path)).id,
     join: async (input) => {
