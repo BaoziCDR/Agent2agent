@@ -177,8 +177,17 @@ export function Board() {
     for (const t of tasks ?? []) if (t.parent) m.set(t.parent, (m.get(t.parent) ?? 0) + 1);
     return m;
   }, [tasks]);
-  const active =
-    !!f.query.trim() || !!f.assignee || f.priorities.length > 0 || f.topOnly || !!range || (f.showArchived && !!f.archiveKind);
+  // 生效的筛选条数：手机上筛选栏折叠时显示在「筛选」按钮上
+  const activeCount = [
+    !!f.query.trim(),
+    !!f.assignee,
+    f.priorities.length > 0,
+    f.topOnly,
+    !!range,
+    f.showArchived && !!f.archiveKind,
+  ].filter(Boolean).length;
+  const active = activeCount > 0;
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const total = (tasks ?? []).filter((t) => f.showArchived || t.status !== 'archived').length;
   const act = async (t: Task, verb: string, body: Record<string, unknown> = {}, done?: string) => {
     try {
@@ -242,12 +251,20 @@ export function Board() {
               关系图
             </button>
           </div>
+          <button
+            className={`btn filter-toggle ${filtersOpen ? 'on' : ''}`}
+            aria-expanded={filtersOpen}
+            aria-controls="board-filters"
+            onClick={() => setFiltersOpen((v) => !v)}
+          >
+            筛选{activeCount + (f.showArchived ? 1 : 0) > 0 && <span className="badge accent">{activeCount + (f.showArchived ? 1 : 0)}</span>}
+          </button>
           <button className="btn primary" onClick={() => go('new')}>
             发布任务
           </button>
         </div>
       </div>
-      <div className="filter-bar" role="search" aria-label="筛选任务">
+      <div id="board-filters" className={`filter-bar ${filtersOpen ? '' : 'collapsed'}`} role="search" aria-label="筛选任务">
         <input
           className="input"
           style={{ width: 170 }}
