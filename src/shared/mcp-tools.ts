@@ -200,10 +200,16 @@ export function createHubMcpServer(call: HubCall, opts: ToolOptions = {}): McpSe
     'hub_block',
     {
       title: '标记阻塞',
-      description: '任务因为缺信息、缺权限或依赖别人而无法继续时调用，写清原因。必要时再用 hub_comment @负责人。',
-      inputSchema: { task: z.string(), reason: z.string().describe('阻塞原因') },
+      description:
+        '任务因为缺信息、缺权限或依赖别人而无法继续时调用。把 reason 写成负责人能直接回答的问题，能列出选项时用 options 给出，' +
+        '负责人在控制台点选后会自动解除阻塞并把答案发给你。',
+      inputSchema: {
+        task: z.string(),
+        reason: z.string().describe('需要负责人回答的问题或阻塞原因'),
+        options: z.array(z.string()).max(6).optional().describe('可选答案，如 ["MySQL", "PostgreSQL"]'),
+      },
     },
-    async ({ task, reason }) => reply(call('POST', `/api/v1/tasks/${enc(task)}/block?format=md`, { reason })),
+    async ({ task, reason, options }) => reply(call('POST', `/api/v1/tasks/${enc(task)}/block?format=md`, { reason, options })),
   );
 
   server.registerTool(

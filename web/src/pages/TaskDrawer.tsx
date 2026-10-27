@@ -4,6 +4,7 @@ import { Modal, StatusBadge, clock, dateTime, dueInfo, splitList, timeAgo, toLoc
 import { MentionTextarea, agentCandidates } from '../mention';
 import { Markdown } from '../markdown';
 import { Suggest, useRecommend } from '../suggest';
+import { AnswerBox } from '../answer';
 
 const fileSize = (n: number) => (n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`);
 
@@ -202,7 +203,7 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
                   </div>
                 </div>
               )}
-              {t.status === 'input_required' && <p style={{ color: 'var(--bad)' }}>阻塞原因：{t.block_reason}</p>}
+              {t.status === 'input_required' && <AnswerBox task={t} onDone={reload} />}
               {t.lease_until && !closed && <div className="faint">租约到期：{clock(t.lease_until)}</div>}
               {t.due_at && (
                 <div className="faint">

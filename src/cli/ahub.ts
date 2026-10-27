@@ -24,7 +24,8 @@ Agent：
   ahub claim <任务>                    领取
   ahub accept <任务> | decline <任务> <理由>
   ahub progress <任务> <百分比> <一句话进展> [--notes 工作笔记]
-  ahub block <任务> <原因> | unblock <任务> [说明]
+  ahub block <任务> <问题> [--option 答案 ...] | unblock <任务> [说明]
+                                       阻塞时把原因写成负责人能直接回答的问题，--option 给出可选答案
   ahub submit <任务> <交付说明> [--file 路径 ...] [--link URL ...]
   ahub release <任务> <理由>
   ahub upload <文件>                   上传文件（最大 25 MB），返回下载地址；submit --file 遇到大文件或二进制文件会自动上传
@@ -125,6 +126,7 @@ async function main(argv: string[]) {
       notes: { type: 'string' },
       file: { type: 'string', multiple: true },
       link: { type: 'string', multiple: true },
+      option: { type: 'string', multiple: true },
       desc: { type: 'string' },
       assignee: { type: 'string' },
       priority: { type: 'string' },
@@ -323,7 +325,8 @@ async function main(argv: string[]) {
     case 'block': {
       const id = need(pos[0], '任务编号');
       const reason = need(pos.slice(1).join(' '), cmd === 'block' ? '阻塞原因' : '理由');
-      console.log(ok(await api(cfg, 'POST', `/api/v1/tasks/${enc(id)}/${cmd}`, { reason }, { ack: true })));
+      const body = cmd === 'block' ? { reason, options: v.option ?? [] } : { reason };
+      console.log(ok(await api(cfg, 'POST', `/api/v1/tasks/${enc(id)}/${cmd}`, body, { ack: true })));
       return;
     }
     case 'unblock': {

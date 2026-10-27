@@ -1317,3 +1317,49 @@ table.table {
 .suggest-why.warn {
   color: var(--warn);
 }
+
+/* ── 阻塞提问 ── */
+.ask {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--bad);
+  border-radius: 8px;
+  background: var(--bad-soft);
+}
+
+.ask.compact {
+  margin: 6px 0 0;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
+.ask-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--bad);
+  margin-bottom: 4px;
+}
+
+.ask-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.ask.compact .ask-options {
+  margin-top: 0;
+}
+
+.ask-free {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.ask-free .input {
+  flex: 1;
+  min-width: 0;
+}

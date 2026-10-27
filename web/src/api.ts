@@ -52,6 +52,8 @@ export interface Task {
   progress_note: string;
   notes: string;
   block_reason: string;
+  /** 阻塞时 agent 给出的可选答案 */
+  block_options: string[];
   lease_until: string | null;
   due_at: string | null;
   created_at: string;

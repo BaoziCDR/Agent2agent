@@ -77,6 +77,7 @@ interface TaskRow {
   progress_note: string;
   notes: string;
   block_reason: string;
+  block_options: string;
   lease_until: string | null;
   lease_warned: number;
   due_warned: number;
@@ -160,6 +161,8 @@ export interface TaskView {
   progress_note: string;
   notes: string;
   block_reason: string;
+  /** 阻塞时给负责人的可选答案 */
+  block_options: string[];
   lease_until: string | null;
   due_at: string | null;
   created_at: string;
@@ -616,7 +619,12 @@ export class Hub {
       case 'task.overdue':
         return true;
       case 'task.status_changed':
-        return e.data.assignee === me && e.data.from === 'review' && e.data.to === 'working';
+        // 被退回修改，或者别人（通常是负责人回答了问题）解除了你的阻塞
+        return (
+          e.data.assignee === me &&
+          e.data.to === 'working' &&
+          (e.data.from === 'review' || (e.data.from === 'input_required' && e.actor !== me))
+        );
       case 'comment.created':
       case 'task.unlocked':
         return e.data.assignee === me;
@@ -1185,6 +1193,7 @@ export class Hub {
       progress_note: t.progress_note,
       notes: t.notes,
       block_reason: t.block_reason,
+      block_options: t.status === 'input_required' ? json<string[]>(t.block_options, []) : [],
       lease_until: t.lease_until,
       due_at: t.due_at,
       created_at: t.created_at,
@@ -1680,21 +1689,46 @@ export class Hub {
     });
   }
 
-  block(agent: AgentRow, code: string, reason: string): TaskView {
+  /**
+   * 标记阻塞。reason 最好写成一个负责人能直接回答的问题；options 是可选答案，
+   * 负责人在控制台点一个就会解除阻塞并把答案发回给 agent。
+   */
+  block(agent: AgentRow, code: string, reason: string, options: string[] = []): TaskView {
     const t = this.requireTask(code);
     this.requireAssignee(agent, t, code);
     if (t.status !== 'working') throw conflict(`只有进行中的任务可以标记阻塞`);
     if (!reason?.trim()) throw invalid('请说明阻塞的原因');
+    const opts = [...new Set(options.map((o) => o.trim()).filter(Boolean))];
+    if (opts.length > 6) throw invalid('可选答案最多 6 个');
+    if (opts.some((o) => o.length > 100)) throw invalid('每个可选答案不超过 100 个字');
     const me = agentCode(agent.id);
-    return this.write(() =>
-      this.taskView(
-        this.setStatus(t, me, 'input_required', {
-          block_reason: reason,
-          summary: `${agent.name}（${me}）标记 ${code} 阻塞：${reason}`,
-          data: { reason },
+    return this.write(() => {
+      this.db.prepare('UPDATE tasks SET block_options = ? WHERE id = ?').run(JSON.stringify(opts), t.id);
+      return this.taskView(
+        this.setStatus(this.taskById(t.id), me, 'input_required', {
+          block_reason: reason.trim(),
+          summary: `${agent.name}（${me}）标记 ${code} 阻塞：${reason.trim()}${opts.length ? `（可选：${opts.join(' / ')}）` : ''}`,
+          data: { reason: reason.trim(), options: opts },
         }),
-      ),
-    );
+      );
+    });
+  }
+
+  /** 负责人回答阻塞提问：答案作为评论留在任务里，同时解除阻塞并唤起负责的 agent。 */
+  answer(code: string, answer: string): TaskView {
+    const t = this.requireTask(code);
+    if (t.status !== 'input_required') throw conflict(`${code} 没有处于阻塞状态`);
+    const text = answer?.trim();
+    if (!text) throw invalid('请填写回答');
+    return this.write(() => {
+      this.addComment('owner', t, `**回答**「${excerpt(t.block_reason, 80)}」：${text}`);
+      return this.taskView(
+        this.setStatus(this.taskById(t.id), 'owner', 'working', {
+          summary: `负责人回答了 ${code} 的问题：${text}`,
+          data: { answer: text, question: t.block_reason },
+        }),
+      );
+    });
   }
 
   unblock(actor: Actor, code: string, note?: string): TaskView {
