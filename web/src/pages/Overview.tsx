@@ -1,5 +1,5 @@
 import { get, type Overview as OverviewData } from '../api';
-import { StatusBadge, clock, presence, PRESENCE_LABEL, timeAgo, useData, useHub, agentLabel } from '../ui';
+import { StatusBadge, clock, dueInfo, presence, PRESENCE_LABEL, timeAgo, useData, useHub, agentLabel } from '../ui';
 
 export function Overview() {
   const { project, projects, agents, events, openTask, go } = useHub();
@@ -8,7 +8,7 @@ export function Overview() {
   const scopedAgents = project ? agents.filter((a) => a.projects.some((p) => p.id === project)) : agents;
   // 只看面向全体或负责人的事件；发给某个 agent 的定向事件（如「指派给了你」）在实时动态页里看
   const feed = events
-    .filter((e) => (!project || e.project === project || e.project === null) && !(e.audience && e.audience.length > 0))
+    .filter((e) => (!project || e.project === project || e.project === null) && (e.type === 'task.overdue' || !(e.audience && e.audience.length > 0)))
     .slice(0, 12);
 
   if (projects.length === 0) {
@@ -46,6 +46,10 @@ export function Overview() {
           <div className="stat-label">可能失联</div>
           <div className="stat-value">{c?.lost ?? '–'}</div>
         </div>
+        <div className={`card stat ${c?.overdue ? 'bad' : ''}`}>
+          <div className="stat-label">已逾期</div>
+          <div className="stat-value">{c?.overdue ?? '–'}</div>
+        </div>
         <div className="card stat">
           <div className="stat-label">待领取</div>
           <div className="stat-value">{c?.open ?? '–'}</div>
@@ -76,7 +80,11 @@ export function Overview() {
                       {t.status === 'review' && `${t.assignee_name ?? ''} 已提交，等待验收`}
                       {t.status === 'input_required' && `阻塞原因：${t.block_reason}`}
                       {t.status === 'draft' && `${t.created_by === 'owner' ? '你' : t.created_by} 的草稿，尚未发布`}
-                      {t.status === 'working' && `${t.assignee_name ?? ''} 很久没有上报进度，可能已失联`}
+                      {t.status === 'working' && t.lease_until && new Date(t.lease_until) < new Date() && `${t.assignee_name ?? ''} 很久没有上报进度，可能已失联`}
+                      {(() => {
+                        const d = dueInfo(t);
+                        return d?.cls === 'bad' && <span className="due bad">{t.status === 'working' || t.status === 'input_required' ? ' · ' : ''}{d.text}</span>;
+                      })()}
                     </div>
                   </div>
                 </div>

@@ -58,6 +58,36 @@ export function clock(iso: string): string {
   return today ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
 }
 
+const span = (ms: number) =>
+  ms >= 86400_000 ? `${Math.floor(ms / 86400_000)} 天` : ms >= 3600_000 ? `${Math.floor(ms / 3600_000)} 小时` : `${Math.max(1, Math.floor(ms / 60_000))} 分钟`;
+
+/** 完整日期时间，如 11月1日 18:00 */
+export function dateTime(iso: string): string {
+  const d = new Date(iso);
+  const hm = d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+  const year = d.getFullYear() === new Date().getFullYear() ? '' : `${d.getFullYear()}年`;
+  return `${year}${d.getMonth() + 1}月${d.getDate()}日 ${hm}`;
+}
+
+/** 截止时间的提示：逾期标红，24 小时内到期标黄；已结束或待验收的任务只显示日期。 */
+export function dueInfo(t: { due_at: string | null; status: string }): { text: string; cls: '' | 'warn' | 'bad'; title: string } | null {
+  if (!t.due_at) return null;
+  const title = `截止：${dateTime(t.due_at)}`;
+  if (!['open', 'assigned', 'working', 'input_required'].includes(t.status)) return { text: `${clock(t.due_at)} 截止`, cls: '', title };
+  const left = new Date(t.due_at).getTime() - Date.now();
+  if (left < 0) return { text: `逾期 ${span(-left)}`, cls: 'bad', title };
+  if (left < 86400_000) return { text: `剩 ${span(left)}`, cls: 'warn', title };
+  return { text: `${clock(t.due_at)} 截止`, cls: '', title };
+}
+
+/** ISO 转成 datetime-local 输入框的值 */
+export function toLocalInput(iso: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 export const PRESENCE_LABEL: Record<Presence, string> = { online: '在线', active: '活跃', idle: '空闲', offline: '离线' };
 
 export function presence(a: Agent): Presence {

@@ -30,7 +30,7 @@ Agent：
   ahub upload <文件>                   上传文件（最大 25 MB），返回下载地址；submit --file 遇到大文件或二进制文件会自动上传
   ahub comment <任务> <内容>           可用 @A-3、@成员名字 或 @负责人
   ahub members [--project P-1]         查看项目成员和编号（用于 @）
-  ahub subtask <父任务> <标题> [--desc 描述] [--assignee A-3] [--tags a,b] [--priority P1] [--accept "标准1;标准2"]
+  ahub subtask <父任务> <标题> [--desc 描述] [--assignee A-3] [--tags a,b] [--priority P1] [--accept "标准1;标准2"] [--due 2026-11-01T18:00+08:00]
   ahub msg <A-3|owner> <内容>          私信
   ahub use <项目>                      设置当前目录的默认项目
   ahub stream                          持续输出实时事件（SSE）
@@ -128,6 +128,7 @@ async function main(argv: string[]) {
       assignee: { type: 'string' },
       priority: { type: 'string' },
       accept: { type: 'string' },
+      due: { type: 'string' },
       port: { type: 'string' },
       host: { type: 'string' },
       data: { type: 'string' },
@@ -357,6 +358,7 @@ async function main(argv: string[]) {
         required_tags: list(v.tags),
         priority: v.priority,
         acceptance: v.accept ? v.accept.split(/[;；]/).map((s) => s.trim()).filter(Boolean) : undefined,
+        due_at: v.due,
       };
       console.log(ok(await api(cfg, 'POST', '/api/v1/tasks', body, { ack: true })));
       return;

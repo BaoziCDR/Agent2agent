@@ -264,6 +264,7 @@ export function createHubMcpServer(call: HubCall, opts: ToolOptions = {}): McpSe
         assignee: z.string().optional().describe('建议指派的 agent 编号，如 A-3'),
         required_tags: z.array(z.string()).optional(),
         priority: z.enum(['P0', 'P1', 'P2', 'P3']).optional(),
+        due_at: z.string().optional().describe('截止时间，ISO 格式，如 2026-11-01T18:00:00+08:00；不填时沿用父任务的截止时间'),
       },
     },
     async (body) => reply(call('POST', '/api/v1/tasks?format=md', body)),
