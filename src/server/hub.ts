@@ -618,6 +618,7 @@ export class Hub {
       case 'task.status_changed':
         return e.data.assignee === me && e.data.from === 'review' && e.data.to === 'working';
       case 'comment.created':
+      case 'task.unlocked':
         return e.data.assignee === me;
       default:
         return false;
@@ -1494,7 +1495,36 @@ export class Hub {
       },
       summary: extra.summary,
     });
+    if (to === 'completed' || to === 'canceled') this.unlockDependents(updated);
     return updated;
+  }
+
+  /**
+   * 一个任务完成（或取消）后，找出以它为前置、且前置现在全部结束的下游任务：
+   * 已有负责人的直接通知负责人（会唤起值守进程）；还在任务池里的通知项目成员可以领取了。
+   */
+  private unlockDependents(t: TaskRow) {
+    const code = taskCode(t.project_id, t.num);
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM tasks WHERE project_id = ? AND status IN ('open', 'assigned', 'working', 'input_required')
+           AND EXISTS (SELECT 1 FROM json_each(tasks.depends_on) WHERE value = ?) ORDER BY num`,
+      )
+      .all(t.project_id, t.id) as unknown as TaskRow[];
+    for (const d of rows) {
+      if (!this.depsDone(d)) continue;
+      const dcode = taskCode(d.project_id, d.num);
+      const how = t.status === 'canceled' ? `前置任务 ${code} 已取消` : `前置任务 ${code}「${excerpt(t.title)}」已完成`;
+      const assignee = d.assignee_id === null ? null : agentCode(d.assignee_id);
+      this.emit('task.unlocked', 'owner', {
+        task: d,
+        audience: assignee ? [assignee] : null,
+        data: { from: code, from_status: t.status, assignee },
+        summary: assignee
+          ? `${how}，${dcode}「${d.title}」的前置任务已全部结束，可以开始了`
+          : `${how}，${dcode}「${d.title}」现在可以领取了`,
+      });
+    }
   }
 
   private lease(agent: AgentRow) {

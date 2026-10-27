@@ -73,6 +73,7 @@ export type EventType =
   | 'task.lease_expiring'
   | 'task.due_soon'
   | 'task.overdue'
+  | 'task.unlocked'
   | 'task.deliverable'
   | 'comment.created'
   | 'message.direct'

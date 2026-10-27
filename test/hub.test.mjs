@@ -341,3 +341,28 @@ test('指派推荐：能力匹配、手上任务少、做过类似任务的排�
   assert.equal(busy[0].id, a.agent.id);
   assert.ok(busy[1].warnings.some((w) => w.includes('手上 3 个任务')));
 });
+
+test('前置任务结束后通知下游：有负责人的唤起负责人，任务池里的通知可以领取', () => {
+  const { hub, p1, join } = setup();
+  const a = join('甲');
+  const b = join('乙');
+  const up = hub.createTask({ kind: 'owner' }, { project: p1.id, title: '设计接口', assignee: a.agent.id });
+  const up2 = hub.createTask({ kind: 'owner' }, { project: p1.id, title: '准备数据' });
+  const down = hub.createTask({ kind: 'owner' }, { project: p1.id, title: '实现接口', assignee: b.agent.id, depends_on: [up.id, up2.id] });
+  const pool = hub.createTask({ kind: 'owner' }, { project: p1.id, title: '写文档', depends_on: [up.id] });
+  hub.accept(a.row, up.id);
+  hub.submit(a.row, up.id, { summary: '好了' });
+  hub.approve(up.id);
+  const unlocked = () => hub.eventsForOwner({ limit: 50 }).filter((e) => e.type === 'task.unlocked');
+  // down 还差 up2，不通知；pool 只依赖 up，通知全员可以领取
+  assert.deepEqual(unlocked().map((e) => e.task), [pool.id]);
+  assert.equal(unlocked()[0].audience, null);
+  assert.match(unlocked()[0].summary, /现在可以领取/);
+  hub.cancel(up2.id, '不需要了');
+  const ev = unlocked().find((e) => e.task === down.id);
+  assert.deepEqual(ev.audience, [b.agent.id]);
+  assert.match(ev.summary, /前置任务 P1-T2 已取消，P1-T3「实现接口」的前置任务已全部结束，可以开始了/);
+  // 对乙来说这是需要处理的事项
+  assert.ok(hub.inbox(b.row).needs_action.some((e) => e.type === 'task.unlocked' && e.task === down.id));
+  assert.ok(!hub.inbox(a.row).needs_action.some((e) => e.type === 'task.unlocked'));
+});
