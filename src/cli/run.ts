@@ -89,6 +89,8 @@ interface RunState {
   /** 旧版只记一个 Claude 会话；保留它，升级后并入 sessions */
   claude_session?: string;
   sessions?: SessionRecord[];
+  /** 已经处理到的事件号（和 Hub 地址一起记），重启后接着往下处理，不再为处理过的事项唤起 */
+  handled?: { hub: string; seq: number };
 }
 
 /** 从 harness 输出里解析出的会话号、总结和用量 */
@@ -163,8 +165,19 @@ function harnessEnv(prompt: string): NodeJS.ProcessEnv {
   return env;
 }
 
+/** 唤起提示和插话里的一条事项：私信、评论、@ 带上全文（摘要只有前 60 个字，agent 又没有别的办法读到私信全文） */
+export function eventText(e: HubEvent, max = 2000): string {
+  const data = (e as { data?: Record<string, unknown> }).data;
+  const full = e.type === 'message.direct' ? data?.body : e.type === 'mention' || e.type === 'comment.created' ? data?.text : undefined;
+  const cut = e.summary.indexOf('：');
+  if (typeof full !== 'string' || !full.trim() || cut < 0) return e.summary;
+  const body = full.trim().length > max ? `${full.trim().slice(0, max)}…（太长已截断，用 \`ahub task\` 读评论全文）` : full.trim();
+  if (!body.includes('\n') && body.length <= 60) return e.summary;
+  return `${e.summary.slice(0, cut)}：\n${body.split('\n').map((l) => `  > ${l}`).join('\n')}`;
+}
+
 export function buildPrompt(cfg: CliConfig, reasons: HubEvent[], open: OpenTask[], resumed = false, capacity?: number): string {
-  const items = [...reasons.map((e) => `- ${e.summary}`), ...open.map((t) => `- ${t.kind ?? '任务池里有可领取的任务'}：${t.id}「${t.title}」`)];
+  const items = [...reasons.map((e) => `- ${eventText(e)}`), ...open.map((t) => `- ${t.kind ?? '任务池里有可领取的任务'}：${t.id}「${t.title}」`)];
   if (open.some((t) => !t.mine)) {
     // 领不领由会话自己判断；不适合就让出，下一位合适的 agent 会马上被唤起
     items.push(
@@ -191,7 +204,7 @@ export function buildPrompt(cfg: CliConfig, reasons: HubEvent[], open: OpenTask[
     ...(reasons.some((e) => e.task) || open.length ? ['这是一个新会话，之前的对话不在上下文里：继续已有的任务前，先 `ahub task <任务>` 读工作笔记和进展记录。', ''] : []),
     '请按协作中枢的工作循环处理：',
     '1. 先运行 `ahub inbox` 同步，看清「需要你处理」的事项和你手上的任务。',
-    '2. 处理这些事项：被指派就 `ahub accept` 或 `ahub decline <任务> "理由"`；被 @ 或收到私信就用 `ahub comment` / `ahub msg` 回复；被退回就按意见修改。',
+    '2. 处理这些事项：被指派就 `ahub accept` 或 `ahub decline <任务> "理由"`；被 @ 或收到私信，需要你回答或去做事才用 `ahub comment` / `ahub msg` 回复，只是告知就不回；被退回就按意见修改。进度写进 `ahub progress`，不要用 @ 别人来汇报，也不要发「收到」「好的」这类确认（规则见接入说明第 6 节第 8 条）。',
     '   负责人评论或 @你 要求改交付物时，不用等退回：`ahub artifact show <任务> <编号>` 读当前版本，再用 `ahub artifact patch`（局部）或 `ahub artifact put`（整份）修改；提示版本冲突就重新 show 后再改。',
     '3. 只做你已接受或已领取的任务。开工前 `ahub task <任务>` 读完描述、验收标准和工作笔记；任务引用了其他任务（上面写着「参考任务」或详情里的「引用的任务」）时，也用 `ahub task` 读一遍。需要参考同项目的历史任务时，可以 `ahub tasks --status completed,canceled` 或 `ahub search 关键字` 查找，不限状态。要改代码仓库时，在任务专属的 git worktree（`.ahub/worktrees/<任务号>`，已存在就复用）里改，不动主工作区；任务完成或取消后清理它。规范见接入说明第 4 节。',
     '4. 结束前对每个动过的任务运行 `ahub progress <任务> <百分比> "进展" --notes "工作笔记"`；做完就 `ahub submit`。做不了就 `ahub block` 或 `ahub release`。',
@@ -259,7 +272,13 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
   }
   const sessions = () => (state.sessions ??= []);
 
-  let handled = 0; // 已经为之唤起过的最大事件号，避免 harness 没确认时反复唤起
+  // 已经为之唤起过的最大事件号，避免 harness 没确认时反复唤起；跑完一轮才写进状态文件，中途被打断的重启后还会再处理
+  let handled = state.handled && state.handled.hub === cfg.hub ? state.handled.seq : 0;
+  const saveHandled = () => {
+    if (state.handled && state.handled.hub === cfg.hub && state.handled.seq >= handled) return;
+    state.handled = { hub: cfg.hub ?? '', seq: handled };
+    saveState();
+  };
   let running = false;
   let again = false;
   let timer: NodeJS.Timeout | null = null;
@@ -284,7 +303,7 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
     }
     const items = inbox.needs_action.filter((e) => e.seq > handled && !queued.has(e.seq));
     if (file !== spool || !items.length) return;
-    queueItems(file, items.map((e) => ({ seq: e.seq, summary: e.summary })));
+    queueItems(file, items.map((e) => ({ seq: e.seq, summary: eventText(e) })));
     for (const e of items) queued.add(e.seq);
     log(`运行中来了 ${items.length} 条新事项，等 harness 下一次调用工具时带进去`);
   };
@@ -390,6 +409,7 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
     }
     if (!reasons.length && !open.length) {
       handled = top;
+      saveHandled();
       return;
     }
     const now = Date.now();
@@ -407,6 +427,7 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
     running = true;
     try {
       await wake(reasons, open);
+      saveHandled();
     } finally {
       running = false;
     }
