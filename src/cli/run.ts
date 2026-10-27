@@ -1,7 +1,23 @@
 import { spawn } from 'node:child_process';
-import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import type { CliConfig } from './config.js';
+import {
+  type SessionDecision,
+  type SessionRecord,
+  type SessionSettings,
+  type WakeInfo,
+  FOLLOWUP_EVENTS,
+  contextRatio,
+  decideSession,
+  parseClaudeOutput,
+  parseCodexOutput,
+  parseCodexRollout,
+  recordSession,
+  scoreSession,
+  short,
+} from './session.js';
 
 /** 值守模式：保持实时连接，收到需要处理的事项时用无界面模式唤起 agent harness。 */
 
@@ -22,8 +38,12 @@ export interface RunOptions {
   debounceSeconds: number;
   /** 任务池里出现可领取的新任务时也唤起 */
   wakeOnOpen: boolean;
-  /** 每次唤起都开新会话，不续用上次的会话 */
-  newSession: boolean;
+  /** 续用还是新开会话的策略和阈值，见 session.ts */
+  session: SessionSettings;
+  /** 读不到上下文窗口时按多大算（token） */
+  contextWindow: number;
+  /** 提示词缓存有效期（分钟）；不填时 Claude 按用量里的缓存类型判断，Codex 按 5 */
+  cacheTtlMinutes?: number;
   /** 只打印将要执行的命令，不真正唤起 */
   dryRun: boolean;
 }
@@ -49,24 +69,62 @@ interface Inbox {
 type OpenTask = { id: string; title: string; kind?: string; mine?: boolean };
 
 interface RunState {
+  /** 旧版只记一个 Claude 会话；保留它，升级后并入 sessions */
   claude_session?: string;
+  sessions?: SessionRecord[];
+}
+
+/** 从 harness 输出里解析出的会话号、总结和用量 */
+type Parsed = { sessionId?: string; result?: string; contextTokens?: number; contextWindow?: number; cacheTtlMinutes?: number; cost?: number; cacheHit?: number };
+
+/** GET /api/v1/tasks/:id 里会话决策用到的字段 */
+interface TaskDetailLite {
+  id: string;
+  status: string;
+  parent: string | null;
+  depends_on?: string[];
+  refs?: string[];
+  subtasks?: { id: string; status: string }[];
+  ref_tasks?: { id: string; status: string }[];
+  referenced_by?: { id: string; status: string }[];
+}
+
+/** 在 Codex 的会话目录里找这个会话的记录文件，读出当前上下文大小；找不到就返回空 */
+export function codexRolloutUsage(id: string, home = process.env.CODEX_HOME || join(homedir(), '.codex')): { contextTokens?: number; contextWindow?: number } {
+  const root = join(home, 'sessions');
+  try {
+    // 目录按 年/月/日 排，从最新的往回找几天
+    const days: string[] = [];
+    for (const y of readdirSync(root).sort().reverse())
+      for (const m of readdirSync(join(root, y)).sort().reverse())
+        for (const d of readdirSync(join(root, y, m)).sort().reverse()) if (days.push(join(root, y, m, d)) >= 7) break;
+    for (const dir of days.slice(0, 7)) {
+      const f = readdirSync(dir).find((n) => n.endsWith(`${id}.jsonl`));
+      if (f) return parseCodexRollout(readFileSync(join(dir, f), 'utf8'));
+    }
+  } catch {
+    // 没有会话目录
+  }
+  return {};
 }
 
 const log = (msg: string) => console.log(`[${new Date().toLocaleTimeString('zh-CN', { hour12: false })}] ${msg}`);
 
 /** 默认参数：让 harness 能在工作目录里改文件，并能运行 ahub 访问 Hub。 */
-export function harnessCommand(opts: RunOptions, resume: RunState): { cmd: string; args: string[] } {
+export function harnessCommand(opts: RunOptions, resumeId?: string): { cmd: string; args: string[] } {
   if (opts.harness === 'claude') {
     // stream-json 边跑边输出，值守进程才能据此判断它还在干活；最后一行仍是带 session_id 的结果
     const args = ['-p', '--output-format', 'stream-json', '--verbose'];
-    if (!opts.newSession && resume.claude_session) args.push('--resume', resume.claude_session);
+    if (resumeId) args.push('--resume', resumeId);
     args.push(...(opts.harnessArgs ?? ['--permission-mode', 'acceptEdits', '--allowedTools', 'Bash(ahub:*)']));
     return { cmd: 'claude', args };
   }
   if (opts.harness === 'codex') {
     // codex exec 默认只读沙箱且不能联网；放开工作目录写入和网络，才能运行 ahub
-    const args = ['exec'];
+    // --json 输出事件流，才能拿到会话号；续用时用 exec resume <会话号>
+    const args = ['exec', '--json'];
     args.push(...(opts.harnessArgs ?? ['--sandbox', 'workspace-write', '-c', 'sandbox_workspace_write.network_access=true', '--skip-git-repo-check']));
+    if (resumeId) args.push('resume', resumeId);
     args.push('-'); // 从标准输入读提示词
     return { cmd: 'codex', args };
   }
@@ -81,13 +139,25 @@ function harnessEnv(prompt: string): NodeJS.ProcessEnv {
   return env;
 }
 
-export function buildPrompt(cfg: CliConfig, reasons: HubEvent[], open: OpenTask[]): string {
+export function buildPrompt(cfg: CliConfig, reasons: HubEvent[], open: OpenTask[], resumed = false): string {
+  const items = [...reasons.map((e) => `- ${e.summary}`), ...open.map((t) => `- ${t.kind ?? '任务池里有可领取的任务'}：${t.id}「${t.title}」`)];
+  if (resumed) {
+    // 续用会话时工作循环已经在上下文里，只给新事项，省 token 也更容易命中缓存
+    return [
+      '值守进程又唤醒了你（续用本会话），新的事项：',
+      '',
+      ...items,
+      '',
+      '先运行 `ahub inbox` 同步，会话里记得的状态可能已经过时；需要时用 `ahub task <任务>` 重读最新的描述、评论和工作笔记。然后按之前的工作循环处理，结束前对动过的任务上报进度或提交。',
+      '处理完就结束本轮，不要运行 `ahub wait`；用一两句话总结你做了什么。',
+    ].join('\n');
+  }
   const lines = [
     `你是协作中枢（ahub）里的 agent ${cfg.name ?? ''}（${cfg.agent ?? ''}），值守进程刚刚因为下面的事项唤醒了你：`,
     '',
-    ...reasons.map((e) => `- ${e.summary}`),
-    ...open.map((t) => `- ${t.kind ?? '任务池里有可领取的任务'}：${t.id}「${t.title}」`),
+    ...items,
     '',
+    ...(reasons.some((e) => e.task) || open.length ? ['这是一个新会话，之前的对话不在上下文里：继续已有的任务前，先 `ahub task <任务>` 读工作笔记和进展记录。', ''] : []),
     '请按协作中枢的工作循环处理：',
     '1. 先运行 `ahub inbox` 同步，看清「需要你处理」的事项和你手上的任务。',
     '2. 处理这些事项：被指派就 `ahub accept` 或 `ahub decline <任务> "理由"`；被 @ 或收到私信就用 `ahub comment` / `ahub msg` 回复；被退回就按意见修改。',
@@ -110,6 +180,15 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
   const logDir = join(stateDir, 'run-logs');
   const state: RunState = existsSync(statePath) ? JSON.parse(readFileSync(statePath, 'utf8')) : {};
   const saveState = () => writeFileSync(statePath, JSON.stringify(state, null, 2) + '\n');
+  if (state.claude_session && !state.sessions?.some((s) => s.id === state.claude_session)) {
+    // 旧版留下的 Claude 会话：不知道处理过哪些任务，按无关会话记下，之后只在共用策略下续用
+    const at = new Date().toISOString();
+    state.sessions = [
+      { id: state.claude_session, harness: 'claude', tasks: [], created_at: at, last_used_at: at, runs: 1, context_tokens: 0, context_window: opts.contextWindow, cache_ttl_minutes: 60, outcomes: [true] },
+      ...(state.sessions ?? []),
+    ];
+  }
+  const sessions = () => (state.sessions ??= []);
   const cwd = resolve(opts.cwd);
 
   let handled = 0; // 已经为之唤起过的最大事件号，避免 harness 没确认时反复唤起
@@ -192,14 +271,75 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
     }
   };
 
+  /** 读任务关系，给会话决策用；读不到就只按同一任务匹配 */
+  const wakeInfo = async (tasks: string[], reasons: HubEvent[]): Promise<WakeInfo> => {
+    const info: WakeInfo = {
+      tasks,
+      relations: tasks.map((id) => ({ id, family: [], links: [] })),
+      followups: [...new Set(reasons.filter((e) => e.task && FOLLOWUP_EVENTS.has(e.type)).map((e) => e.task!))],
+      closed: [],
+    };
+    const status = new Map<string, string>();
+    const get = async (id: string) => (await api('GET', `/api/v1/tasks/${encodeURIComponent(id)}`)) as TaskDetailLite;
+    try {
+      for (const rel of info.relations.slice(0, 8)) {
+        let t: TaskDetailLite;
+        try {
+          t = await get(rel.id);
+        } catch (err) {
+          if (/^HTTP 4/.test((err as Error).message)) continue; // 任务不存在或看不到，只按同一任务匹配它
+          throw err;
+        }
+        status.set(t.id, t.status);
+        for (const x of [...(t.subtasks ?? []), ...(t.ref_tasks ?? []), ...(t.referenced_by ?? [])]) status.set(x.id, x.status);
+        rel.family = [t.parent, ...(t.subtasks ?? []).map((x) => x.id)].filter((x): x is string => !!x);
+        rel.links = [...(t.refs ?? []), ...(t.depends_on ?? []), ...(t.referenced_by ?? []).map((x) => x.id)];
+      }
+      // 只查和本次有关的会话里的任务状态，用来判断「旧任务都结束了」
+      const related = sessions().filter((s) => scoreSession(s, info, Date.now()));
+      const unknown = [...new Set(related.flatMap((s) => s.tasks))].filter((t) => !status.has(t)).slice(0, 20);
+      for (const id of unknown) {
+        try {
+          status.set(id, (await get(id)).status);
+        } catch {
+          // 任务被删了或没有权限，就当作未结束
+        }
+      }
+    } catch {
+      info.offline = true;
+    }
+    info.closed = [...status].filter(([, s]) => s === 'completed' || s === 'canceled').map(([id]) => id);
+    return info;
+  };
+
   const wake = async (reasons: HubEvent[], open: OpenTask[]) => {
-    const prompt = buildPrompt(cfg, reasons, open);
-    const { cmd, args } = harnessCommand(opts, state);
     const note = [...reasons.map((e) => e.summary), ...open.map((t) => `${t.kind ? t.kind.replace(/的任务$/, '') : '可领取'} ${t.id}`)].join('；').slice(0, 280);
     log(`唤起 ${opts.harness}：${note}`);
+    const tasks = [...new Set([...reasons.map((e) => e.task).filter((t): t is string => !!t), ...open.map((t) => t.id)])];
+    let decision: SessionDecision | null = null;
+    if (opts.harness !== 'custom') {
+      const info = await wakeInfo(tasks, reasons);
+      decision = decideSession(sessions(), opts.harness, info, opts.session);
+      log(`会话：${decision.action === 'reuse' ? '续用' : '新开'}，${decision.reason}${info.offline ? '（读不到 Hub 上的任务关系，只按同一任务匹配）' : ''}`);
+    }
+    const resumeId = decision?.action === 'reuse' ? decision.session!.id : undefined;
+    const why = decision ? (decision.action === 'reuse' ? decision.reason : `新开会话：${decision.reason}`) : '';
+    const first = await attempt(reasons, open, note, tasks, resumeId, why);
+    if (first === 'resume-failed' && resumeId && !stopping) {
+      // 会话不存在或续用参数不被支持：标记后立即新开一次，不算进每小时次数
+      const s = state.sessions!.find((x) => x.id === resumeId);
+      if (s) (s.broken = true), saveState();
+      log(`续用会话 ${short(resumeId)} 失败，改为新开会话重试`);
+      await attempt(reasons, open, note, tasks, undefined, `续用会话 ${short(resumeId)} 失败，已改为新开会话`);
+    }
+  };
+
+  const attempt = async (reasons: HubEvent[], open: OpenTask[], note: string, tasks: string[], resumeId: string | undefined, why: string) => {
+    const prompt = buildPrompt(cfg, reasons, open, !!resumeId);
+    const { cmd, args } = harnessCommand(opts, resumeId);
     if (opts.dryRun) {
       log(`（试运行）${cmd} ${args.join(' ')}\n${prompt}`);
-      return;
+      return 'ok';
     }
     await report('working', note);
     // 在这次要处理的评论、私信和任务下打上 👌，控制台能看到谁接手了；跑完再改成 ✅ 或 ⚠️
@@ -212,7 +352,7 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
     mkdirSync(logDir, { recursive: true });
     const logFile = join(logDir, `${new Date().toISOString().replace(/[:.]/g, '-')}.log`);
     const out = createWriteStream(logFile);
-    out.write(`$ ${cmd} ${args.join(' ')}\n\n${prompt}\n\n----\n`);
+    out.write(`$ ${cmd} ${args.join(' ')}\n# 会话：${why || '—'}\n\n${prompt}\n\n----\n`);
     let stdout = '';
     let killed = '';
     const code = await new Promise<number | null>((done) => {
@@ -272,26 +412,52 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
       child.stdin.on('error', () => undefined);
       child.stdin.end(prompt);
     });
-    let summary = '';
-    if (opts.harness === 'claude') {
-      try {
-        const r = JSON.parse(stdout.trim().split('\n').pop() ?? '{}') as { session_id?: string; result?: string };
-        if (r.session_id) {
-          state.claude_session = r.session_id;
-          saveState();
-        }
-        summary = r.result ?? '';
-      } catch {
-        // 不是 JSON 就当作普通输出
-      }
-    }
-    summary = (summary || stdout).trim().split('\n').filter(Boolean).pop() ?? '';
+    const parsed: Parsed = opts.harness === 'claude' ? parseClaudeOutput(stdout) : opts.harness === 'codex' ? parseCodexOutput(stdout) : {};
+    let summary = parsed.result ?? '';
+    // Codex 的输出是事件流，取不到总结时不拿原始 JSON 充数
+    summary = (summary || (opts.harness === 'codex' ? '' : stdout)).trim().split('\n').filter(Boolean).pop() ?? '';
     if (killed) {
       out.write(`\n----\n${killed}\n`);
       summary = `${killed}。${summary}`.slice(0, 2000);
     }
+    const sid = parsed.sessionId;
+    if (resumeId && code !== 0 && !killed && !sid && !parsed.result) {
+      out.write(`\n----\n续用会话失败\n`);
+      out.end();
+      return 'resume-failed';
+    }
     out.end();
     log(`${code === 0 ? '完成' : `退出码 ${code}`}，日志：${logFile}`);
+    let sessionNote = why;
+    if (opts.harness === 'claude' || opts.harness === 'codex') {
+      const id = sid ?? (code === 0 ? resumeId : undefined);
+      let usage = parsed;
+      if (opts.harness === 'codex' && id) {
+        const r = codexRolloutUsage(id);
+        if (r.contextTokens !== undefined) usage = { ...usage, ...r };
+      }
+      if (id) {
+        state.sessions = recordSession(
+          sessions(),
+          { id, previousId: resumeId, harness: opts.harness, tasks, ok: code === 0 && !killed, contextTokens: usage.contextTokens, contextWindow: usage.contextWindow, cacheTtlMinutes: usage.cacheTtlMinutes, summary },
+          { contextWindow: opts.contextWindow, cacheTtlMinutes: opts.cacheTtlMinutes ?? (opts.harness === 'claude' ? 60 : 5) },
+        );
+        if (opts.harness === 'claude') state.claude_session = id;
+        saveState();
+        const rec = state.sessions[0];
+        const stats = [
+          `会话 ${short(id)}`,
+          `上下文 ${Math.round(contextRatio(rec) * 100)}%（${Math.round(rec.context_tokens / 1000)}k / ${Math.round(rec.context_window / 1000)}k${usage.contextTokens === undefined ? '，估算' : ''}）`,
+          usage.cacheHit !== undefined ? `缓存命中 ${Math.round(usage.cacheHit * 100)}%` : '',
+          usage.cost !== undefined ? `费用 $${usage.cost.toFixed(3)}` : '',
+        ].filter(Boolean);
+        sessionNote = [why, stats.join('，')].filter(Boolean).join('。');
+      } else if (resumeId) {
+        // 没拿到会话号又出了错：这个会话不再续用
+        const s = sessions().find((x) => x.id === resumeId);
+        if (s) (s.broken = true), (s.outcomes = [...s.outcomes, false].slice(-3)), saveState();
+      }
+    }
     await api('POST', '/api/v1/me/receipts', {
       state: code === 0 ? 'done' : 'failed',
       note: code === 0 ? '' : killed || `运行失败（退出码 ${code}）`,
@@ -304,7 +470,9 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
       ended_at: new Date().toISOString(),
       code,
       summary: code === 0 ? summary : `${summary}\n（本机日志：${logFile}）`.trim(),
+      session: sessionNote,
     }).catch(() => undefined);
+    return 'ok';
   };
 
   const control = (raw: string) => {

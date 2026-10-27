@@ -59,6 +59,10 @@ Agent：
            [--hub URL --invite 邀请码 --name 名字]  在还没加入过的目录一步完成加入并开始值守
            [--cwd 目录] [--max-runs 10] [--idle-timeout 15] [--run-timeout 240] [--wake-on-open] [--new-session]
            [--harness-arg 参数 ...] [--cmd "自定义命令"] [--dry-run]
+           [--session-policy smart|task|shared|new]  续用还是新开会话：smart 按任务关系、上下文、缓存打分（默认）；
+                                         task 只续用同一任务的会话；shared 共用一个会话；new 每次新开（同 --new-session）
+           [--reuse-threshold 25] [--gray-band 10] [--context-max-ratio 0.6] [--context-window 200000]
+           [--session-max-age 72] [--session-max-runs 30] [--cache-ttl 分钟]
 
 配置保存在当前目录的 .ahub/config.json（加 --global 则保存到用户主目录）。
 也可用环境变量 AHUB_URL、AHUB_TOKEN 覆盖。`;
@@ -197,6 +201,14 @@ async function main(argv: string[]) {
       debounce: { type: 'string' },
       'wake-on-open': { type: 'boolean' },
       'new-session': { type: 'boolean' },
+      'session-policy': { type: 'string' },
+      'reuse-threshold': { type: 'string' },
+      'gray-band': { type: 'string' },
+      'context-max-ratio': { type: 'string' },
+      'context-window': { type: 'string' },
+      'session-max-age': { type: 'string' },
+      'session-max-runs': { type: 'string' },
+      'cache-ttl': { type: 'string' },
       'dry-run': { type: 'boolean' },
       target: { type: 'string' },
       ref: { type: 'string', multiple: true },
@@ -615,6 +627,17 @@ async function main(argv: string[]) {
           console.log(`已安装接入说明 skill：${path}`);
         }
       }
+      const policy = v['new-session'] ? 'new' : (v['session-policy'] ?? 'smart');
+      if (!['smart', 'task', 'shared', 'new'].includes(policy)) die('--session-policy 只能是 smart、task、shared 或 new');
+      const num = (key: string, def: number, min = 0) => {
+        const raw = (v as Record<string, unknown>)[key];
+        if (raw === undefined) return def;
+        const n = Number(raw);
+        if (!Number.isFinite(n) || n < min) die(`--${key} 需要一个不小于 ${min} 的数字`);
+        return n;
+      };
+      const ratio = num('context-max-ratio', 0.6, 0.05);
+      if (ratio > 1) die('--context-max-ratio 是上下文窗口的比例，填 0 到 1 之间的数，例如 0.6');
       const { runDaemon } = await import('./run.js');
       await runDaemon(runCfg, runPath, {
         harness,
@@ -626,7 +649,16 @@ async function main(argv: string[]) {
         idleMinutes: Number(v['idle-timeout'] ?? 15) || 15,
         debounceSeconds: Number(v.debounce ?? 5) || 5,
         wakeOnOpen: !!v['wake-on-open'],
-        newSession: !!v['new-session'],
+        session: {
+          policy: policy as 'smart' | 'task' | 'shared' | 'new',
+          threshold: num('reuse-threshold', 25),
+          grayBand: num('gray-band', 10),
+          contextMaxRatio: ratio,
+          maxAgeHours: num('session-max-age', 72, 1),
+          maxRuns: num('session-max-runs', 30, 1),
+        },
+        contextWindow: num('context-window', 200_000, 1000),
+        cacheTtlMinutes: v['cache-ttl'] === undefined ? undefined : num('cache-ttl', 5, 1),
         dryRun: !!v['dry-run'],
       });
       return;

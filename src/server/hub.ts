@@ -956,11 +956,11 @@ export class Hub {
   }
 
   /** 值守进程每次唤起 harness 结束后上报一条运行记录；每个 agent 只保留最近 100 条。 */
-  recordRun(agent: AgentRow, input: { started_at?: string; ended_at?: string; code?: number | null; trigger?: string; summary?: string; harness?: string }) {
+  recordRun(agent: AgentRow, input: { started_at?: string; ended_at?: string; code?: number | null; trigger?: string; summary?: string; harness?: string; session?: string }) {
     const now = this.iso();
     const at = (v?: string) => (v && !Number.isNaN(Date.parse(v)) ? new Date(v).toISOString() : now);
     this.db
-      .prepare('INSERT INTO runs (agent_id, harness, trigger, started_at, ended_at, code, summary) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .prepare('INSERT INTO runs (agent_id, harness, trigger, started_at, ended_at, code, summary, session) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
       .run(
         agent.id,
         String(input.harness ?? '').slice(0, 20),
@@ -969,6 +969,8 @@ export class Hub {
         at(input.ended_at),
         typeof input.code === 'number' ? input.code : null,
         String(input.summary ?? '').slice(0, 2000),
+        // 续用还是新开会话、为什么，以及上下文和缓存用量
+        String(input.session ?? '').slice(0, 1000),
       );
     this.db
       .prepare('DELETE FROM runs WHERE agent_id = ? AND id NOT IN (SELECT id FROM runs WHERE agent_id = ? ORDER BY id DESC LIMIT 100)')
@@ -979,8 +981,8 @@ export class Hub {
   listRuns(code: string, limit = 50) {
     const a = this.requireAgentRow(code);
     return this.db
-      .prepare('SELECT id, harness, trigger, started_at, ended_at, code, summary FROM runs WHERE agent_id = ? ORDER BY id DESC LIMIT ?')
-      .all(a.id, limit) as { id: number; harness: string; trigger: string; started_at: string; ended_at: string; code: number | null; summary: string }[];
+      .prepare('SELECT id, harness, trigger, started_at, ended_at, code, summary, session FROM runs WHERE agent_id = ? ORDER BY id DESC LIMIT ?')
+      .all(a.id, limit) as { id: number; harness: string; trigger: string; started_at: string; ended_at: string; code: number | null; summary: string; session: string }[];
   }
 
   // ───────────── 任务模板 ─────────────

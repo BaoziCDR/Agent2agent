@@ -149,6 +149,8 @@ export interface Run {
   ended_at: string;
   code: number | null;
   summary: string;
+  /** 续用还是新开会话、为什么，以及用量 */
+  session?: string;
 }
 
 export interface Template {

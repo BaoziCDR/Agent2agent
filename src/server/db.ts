@@ -219,6 +219,7 @@ function migrate(db: Db) {
   if (!has('invites', 'created_by')) db.exec("ALTER TABLE invites ADD COLUMN created_by TEXT NOT NULL DEFAULT 'owner'");
   if (!has('tasks', 'due_warned')) db.exec('ALTER TABLE tasks ADD COLUMN due_warned INTEGER NOT NULL DEFAULT 0');
   // 邀请码可以预设 agent 名称，加入时不写 --name 就用它
+  if (!has('runs', 'session')) db.exec("ALTER TABLE runs ADD COLUMN session TEXT NOT NULL DEFAULT ''");
   if (!has('invites', 'agent_name')) db.exec("ALTER TABLE invites ADD COLUMN agent_name TEXT NOT NULL DEFAULT ''");
   // 任务可以引用同项目的其他任务（任意状态），作为参考资料
   if (!has('tasks', 'refs')) db.exec("ALTER TABLE tasks ADD COLUMN refs TEXT NOT NULL DEFAULT '[]'");
