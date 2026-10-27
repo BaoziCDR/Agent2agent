@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { type Actor, type AgentRow, Hub, HubError, agentCode } from './hub.js';
 import { renderInbox, renderJoin, renderMe, renderSearch, renderTask, renderTaskList } from './format.js';
 import { handleMcpRequest } from './mcp-http.js';
+import { renderReport, tasksCsv } from './report.js';
 import { NOTIFY_TOPICS, type Notifier } from './notify.js';
 import type { HubEvent, Part } from '../shared/model.js';
 
@@ -378,6 +379,15 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
     admin.get(`${A}/search`, async (req) => {
       const q = req.query as Q;
       return hub.search({ kind: 'owner' }, q.q ?? '', q.project);
+    });
+    admin.get(`${A}/export/report`, async (req, reply) => {
+      const q = req.query as Q;
+      const md = renderReport(hub, { project: q.project, days: Math.min(Math.max(Number(q.days) || 7, 1), 90) });
+      return reply.type('text/markdown; charset=utf-8').send(md);
+    });
+    admin.get(`${A}/export/tasks.csv`, async (req, reply) => {
+      const csv = tasksCsv(hub, (req.query as Q).project);
+      return reply.type('text/csv; charset=utf-8').send(csv);
     });
     admin.get(`${A}/stats`, async (req) => {
       const q = req.query as Q;

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { get } from '../api';
+import { download, get } from '../api';
 import { useData, useHub } from '../ui';
 
 interface StatsData {
@@ -20,13 +20,18 @@ interface StatsData {
 
 const RANGES = [7, 14, 30];
 
+const stamp = () => new Date().toLocaleDateString('sv').replaceAll('-', '');
+
 const hours = (h: number | null) => (h === null ? '–' : h < 1 ? `${Math.max(1, Math.round(h * 60))} 分钟` : h < 48 ? `${h} 小时` : `${Math.round(h / 24)} 天`);
 
 export function Stats() {
-  const { project, projects } = useHub();
+  const { project, projects, toast } = useHub();
   const [days, setDays] = useState(14);
   const { data } = useData(() => get<StatsData>(`/stats?days=${days}${project ? `&project=${project}` : ''}`), [project, days]);
   const t = data?.totals;
+  const q = project ? `&project=${project}` : '';
+  const exportFile = (path: string, name: string) =>
+    download(path, `${project ? `${project}-` : ''}${name}`).catch((err) => toast((err as Error).message, true));
   return (
     <div style={{ maxWidth: 1100 }}>
       <div className="btn-row" style={{ justifyContent: 'space-between', marginBottom: 14 }}>
@@ -36,12 +41,28 @@ export function Stats() {
             {project ? projects.find((p) => p.id === project)?.name : '全部项目'} · 最近 {days} 天
           </p>
         </div>
-        <div className="tabs" style={{ marginBottom: 0, borderBottom: 'none' }}>
-          {RANGES.map((d) => (
-            <button key={d} className={`tab ${days === d ? 'active' : ''}`} onClick={() => setDays(d)}>
-              {d} 天
-            </button>
-          ))}
+        <div className="btn-row">
+          <div className="tabs" style={{ marginBottom: 0, borderBottom: 'none' }}>
+            {RANGES.map((d) => (
+              <button key={d} className={`tab ${days === d ? 'active' : ''}`} onClick={() => setDays(d)}>
+                {d} 天
+              </button>
+            ))}
+          </div>
+          <button
+            className="btn small"
+            title={`最近 ${days} 天的完成情况、进行中、待验收、阻塞和逾期任务，Markdown 格式，可直接贴到周报或文档里`}
+            onClick={() => exportFile(`/export/report?days=${days}${q}`, `ahub-report-${stamp()}.md`)}
+          >
+            导出报告
+          </button>
+          <button
+            className="btn small"
+            title="当前范围内的全部任务，Excel 可直接打开"
+            onClick={() => exportFile(`/export/tasks.csv${q ? `?${q.slice(1)}` : ''}`, `ahub-tasks-${stamp()}.csv`)}
+          >
+            导出 CSV
+          </button>
         </div>
       </div>
 
