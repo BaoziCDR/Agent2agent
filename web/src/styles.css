@@ -446,6 +446,8 @@ pre {
 .column {
   flex: 1 1 0;
   min-width: 172px;
+  /* 列少（空列都收窄）时不把卡片拉得很宽，多出的宽度留白 */
+  max-width: 320px;
   scroll-snap-align: start;
   background: var(--panel-2);
   border-radius: var(--radius);
@@ -2301,11 +2303,10 @@ table.table {
 
 @media (max-width: 960px) {
   .column {
-    min-width: 78vw;
+    min-width: min(78vw, 320px);
   }
   .column.col-empty {
-    min-width: 40vw;
-    width: 40vw;
+    min-width: 112px;
   }
 }
 
