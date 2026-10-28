@@ -5,6 +5,7 @@
 import type { ReactNode } from 'react';
 import type { Agent } from './api';
 import { CopyButton } from './ui';
+import { t } from './i18n';
 
 const SAFE_URL = /^(https?:\/\/|\/files\/|#)/i;
 
@@ -42,9 +43,9 @@ function inline(text: string, agents: Agent[], key = 'i'): ReactNode[] {
       );
     else {
       const code = /^@A-\d+$/i.test(s) ? s.slice(1).toUpperCase() : null;
-      const name = code ? agents.find((a) => a.id === code)?.name : '负责人';
+      const name = code ? agents.find((a) => a.id === code)?.name : t('负责人');
       out.push(
-        <span key={k} className="mention" title={code ?? '负责人'}>
+        <span key={k} className="mention" title={code ?? t('负责人')}>
           @{name ?? s.slice(1)}
         </span>,
       );

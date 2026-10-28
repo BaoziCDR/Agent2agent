@@ -5,20 +5,21 @@ import type { Db } from './db.js';
 import { json } from './db.js';
 import { HubError, type Hub } from './hub.js';
 import type { HubEvent } from '../shared/model.js';
+import { msg, summaryOf, tr } from '../i18n/index.js';
 
 export const NOTIFY_KINDS = ['dingtalk'] as const;
 
 /** 可订阅的事件类别 */
 export const NOTIFY_TOPICS: Record<string, string> = {
-  review: '提交待验收',
-  blocked: '任务阻塞',
-  message: '@负责人 与私信',
-  overdue: '任务逾期',
-  lost: '任务可能失联',
-  stalled: '任务疑似原地打转',
-  unclaimed: '没有 agent 愿意领取',
-  offline: 'Agent 下线',
-  done: '任务验收通过',
+  review: msg('提交待验收'),
+  blocked: msg('任务阻塞'),
+  message: msg('@负责人 与私信'),
+  overdue: msg('任务逾期'),
+  lost: msg('任务可能失联'),
+  stalled: msg('任务疑似原地打转'),
+  unclaimed: msg('没有 agent 愿意领取'),
+  offline: msg('Agent 下线'),
+  done: msg('任务验收通过'),
 };
 
 const DEFAULT_TOPICS = ['review', 'blocked', 'message', 'overdue', 'lost', 'stalled', 'unclaimed', 'offline'];
@@ -149,8 +150,8 @@ export class Notifier {
   /** 发一条测试消息，返回钉钉的结果 */
   async test(id: number) {
     const row = this.row(id);
-    const err = await this.post(row, '协作中枢：测试消息', '#### 协作中枢已连接\n\n这是一条测试消息。之后负责人需要关注的事件会推送到这里。');
-    if (err) throw new HubError(502, 'notify_failed', `发送失败：${err}`);
+    const err = await this.post(row, tr('协作中枢：测试消息'), tr('#### 协作中枢已连接\n\n这是一条测试消息。之后负责人需要关注的事件会推送到这里。'));
+    if (err) throw new HubError(502, 'notify_failed', tr('发送失败：{err}', { err }));
     return { ok: true };
   }
 
@@ -197,14 +198,14 @@ export class Notifier {
       });
       const body = (await res.json().catch(() => ({}))) as { errcode?: number; errmsg?: string };
       if (!res.ok) error = `HTTP ${res.status}`;
-      else if (body.errcode) error = `钉钉返回 ${body.errcode}：${body.errmsg ?? ''}`;
+      else if (body.errcode) error = tr('钉钉返回 {errcode}：{v}', { errcode: body.errcode, v: body.errmsg ?? '' });
     } catch (err) {
       error = (err as Error).message;
     }
     this.db
       .prepare('UPDATE notify_channels SET last_error = ?, last_sent_at = CASE WHEN ? = \'\' THEN ? ELSE last_sent_at END WHERE id = ?')
       .run(error, error, new Date().toISOString(), row.id);
-    if (error) console.error(`钉钉通知「${row.name}」发送失败：${error}`);
+    if (error) console.error(tr('钉钉通知「{name}」发送失败：{error}', { name: row.name, error }));
     return error || null;
   }
 
@@ -212,7 +213,7 @@ export class Notifier {
 
   private row(id: number): ChannelRow {
     const r = this.db.prepare('SELECT * FROM notify_channels WHERE id = ?').get(id) as ChannelRow | undefined;
-    if (!r) throw new HubError(404, 'not_found', `找不到通知渠道 ${id}`);
+    if (!r) throw new HubError(404, 'not_found', tr('找不到通知渠道 {id}', { id }));
     return r;
   }
 
@@ -238,14 +239,14 @@ export class Notifier {
 
   private validate(input: ChannelInput, prev: ChannelRow | null) {
     const kind = input.kind ?? prev?.kind ?? 'dingtalk';
-    if (!(NOTIFY_KINDS as readonly string[]).includes(kind)) throw invalid('目前只支持钉钉机器人（dingtalk）');
-    const name = (input.name ?? prev?.name ?? '').trim() || '钉钉群';
+    if (!(NOTIFY_KINDS as readonly string[]).includes(kind)) throw invalid(tr('目前只支持钉钉机器人（dingtalk）'));
+    const name = (input.name ?? prev?.name ?? '').trim() || tr('钉钉群');
     const webhook = (input.webhook ?? prev?.webhook ?? '').trim();
-    if (!/^https?:\/\/\S+$/.test(webhook)) throw invalid('请填写机器人的 Webhook 地址，形如 https://oapi.dingtalk.com/robot/send?access_token=…');
+    if (!/^https?:\/\/\S+$/.test(webhook)) throw invalid(tr('请填写机器人的 Webhook 地址，形如 https://oapi.dingtalk.com/robot/send?access_token=…'));
     // 留空表示不改；传 null 或空串的显式清除用 secret: '-'
     const secret = input.secret === undefined || input.secret === '' ? (prev?.secret ?? '') : input.secret === '-' ? '' : input.secret.trim();
     const topics = (input.topics ?? json<string[]>(prev?.topics, DEFAULT_TOPICS)).filter((t) => t in NOTIFY_TOPICS);
-    if (!topics.length) throw invalid('至少选择一类要推送的事件');
+    if (!topics.length) throw invalid(tr('至少选择一类要推送的事件'));
     const projects = (input.projects ?? json<string[]>(prev?.projects, [])).map((p) => p.toUpperCase());
     const console_url = (input.console_url ?? prev?.console_url ?? '').trim().replace(/\/+$/, '');
     const enabled = input.enabled ?? (prev ? !!prev.enabled : true);
@@ -267,16 +268,16 @@ const TOPIC_ICONS: Record<string, string> = {
 export function renderMessage(events: HubEvent[], consoleUrl: string) {
   const link = (e: HubEvent) => {
     if (!consoleUrl) return '';
-    if (e.task) return ` [查看](${consoleUrl}/#/board/${e.task})`;
-    if (e.type === 'message.direct') return ` [查看](${consoleUrl}/#/messages)`;
-    if (e.type === 'agent.offline') return ` [查看](${consoleUrl}/#/agents)`;
+    if (e.task) return tr(' [查看]({consoleUrl}/#/board/{task})', { consoleUrl, task: e.task });
+    if (e.type === 'message.direct') return tr(' [查看]({consoleUrl}/#/messages)', { consoleUrl });
+    if (e.type === 'agent.offline') return tr(' [查看]({consoleUrl}/#/agents)', { consoleUrl });
     return '';
   };
   const shown = events.slice(-10);
   const first = shown[0];
   const title =
-    events.length === 1 ? `协作中枢：${NOTIFY_TOPICS[topicOf(first)!]}` : `协作中枢：${events.length} 条新动态`;
-  const lines = shown.map((e) => `- ${TOPIC_ICONS[topicOf(e)!] ?? ''} ${e.summary.replace(/\n+/g, ' ').slice(0, 200)}${link(e)}`);
-  if (events.length > shown.length) lines.unshift(`- ……前面还有 ${events.length - shown.length} 条，见控制台实时动态`);
+    events.length === 1 ? tr('协作中枢：{v}', { v: tr(NOTIFY_TOPICS[topicOf(first)!]) }) : tr('协作中枢：{n} 条新动态', { n: events.length });
+  const lines = shown.map((e) => `- ${TOPIC_ICONS[topicOf(e)!] ?? ''} ${summaryOf(e).replace(/\n+/g, ' ').slice(0, 200)}${link(e)}`);
+  if (events.length > shown.length) lines.unshift(tr('- ……前面还有 {v} 条，见控制台实时动态', { v: events.length - shown.length }));
   return { title, text: `#### ${title}\n\n${lines.join('\n')}` };
 }

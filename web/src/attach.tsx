@@ -1,12 +1,13 @@
 import { useRef, useState } from 'react';
 import { type Part, type Uploaded, uploadFile } from './api';
 import { useHub } from './ui';
+import { t } from './i18n';
 
 export const fileSize = (n: number) => (n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`);
 
 /** 截图粘贴进来通常都叫 image.png，加上时间区分 */
 export const renameScreenshot = (f: File) =>
-  f.name === 'image.png' ? new File([f], `截图-${new Date().toLocaleTimeString('sv').replaceAll(':', '')}.png`, { type: f.type }) : f;
+  f.name === 'image.png' ? new File([f], `${t('截图')}-${new Date().toLocaleTimeString('sv').replaceAll(':', '')}.png`, { type: f.type }) : f;
 
 /** 任务里已有的附件（/files/<编号>）换成可以继续编辑的上传记录 */
 export const fromParts = (parts: Part[]): Uploaded[] =>
@@ -19,7 +20,7 @@ export function useAttachments(limit: number, what: string, initial: Uploaded[] 
   const [uploading, setUploading] = useState(0);
   const attach = async (list: File[]) => {
     if (!list.length) return;
-    if (files.length + list.length > limit) return toast(`${what}最多带 ${limit} 个附件`, true);
+    if (files.length + list.length > limit) return toast(t('{what}最多带 {limit} 个附件', { what, limit }), true);
     setUploading((n) => n + list.length);
     for (const f of list) {
       try {
@@ -45,12 +46,12 @@ export function AttachmentChips({ files, uploading, onRemove }: { files: Uploade
         <span key={f.id} className="file-chip">
           {f.name}
           <span className="faint">{fileSize(f.size)}</span>
-          <button type="button" className="chip-x" aria-label={`移除 ${f.name}`} onClick={() => onRemove(f.id)}>
+          <button type="button" className="chip-x" aria-label={t('移除 {name}', { name: f.name })} onClick={() => onRemove(f.id)}>
             ×
           </button>
         </span>
       ))}
-      {uploading > 0 && <span className="faint">正在上传 {uploading} 个文件…</span>}
+      {uploading > 0 && <span className="faint">{t('正在上传 {n} 个文件…', { n: uploading })}</span>}
     </div>
   );
 }
@@ -84,9 +85,9 @@ export function AttachmentField({ id, state, hint }: { id: string; state: Return
     >
       <div className="attach-bar">
         <button id={id} type="button" className="btn small" onClick={() => input.current?.click()}>
-          添加附件
+          {t('添加附件')}
         </button>
-        <span className="faint">{hint ?? '也可以把文件拖到这里，或点一下这里再粘贴截图；每个最大 25 MB'}</span>
+        <span className="faint">{hint ?? t('也可以把文件拖到这里，或点一下这里再粘贴截图；每个最大 25 MB')}</span>
       </div>
       <AttachmentChips files={state.files} uploading={state.uploading} onRemove={state.remove} />
       <input

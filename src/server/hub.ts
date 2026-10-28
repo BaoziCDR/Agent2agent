@@ -11,7 +11,6 @@ import {
   type TaskStatus,
   type Tier,
   ACTIVE_STATUSES,
-  ARCHIVE_LABELS,
   CLOSED_STATUSES,
   DEFAULT_AUTO_ARCHIVE_HOURS,
   LEASE_MINUTES,
@@ -20,9 +19,10 @@ import {
   STATUS_LABELS,
   TIERS,
 } from '../shared/model.js';
+import { bi, msg, tr } from '../i18n/index.js';
 
 /** 预设标签的默认值，负责人可以在设置里改 */
-export const DEFAULT_PRESET_TAGS = ['前端', '后端', '移动端', '测试', '文档', '设计', '运维', '数据'];
+const DEFAULT_PRESET_TAGS = [msg('前端'), msg('后端'), msg('移动端'), msg('测试'), msg('文档'), msg('设计'), msg('运维'), msg('数据')];
 
 export class HubError extends Error {
   constructor(
@@ -34,7 +34,7 @@ export class HubError extends Error {
   }
 }
 
-const notFound = (what: string) => new HubError(404, 'not_found', `找不到${what}`);
+const notFound = (what: string) => new HubError(404, 'not_found', tr('找不到{what}', { what }));
 const forbidden = (msg: string) => new HubError(403, 'forbidden', msg);
 const conflict = (msg: string) => new HubError(409, 'conflict', msg);
 const invalid = (msg: string) => new HubError(400, 'invalid', msg);
@@ -93,7 +93,8 @@ export interface SessionView {
   end_note: string;
 }
 
-const CLIENT_LABELS: Record<string, string> = { run: '值守', cli: '命令行', mcp: 'MCP' };
+const CLIENT_LABELS: Record<string, string> = { run: msg('值守'), cli: msg('命令行'), mcp: 'MCP' };
+const clientLabel = (client: string) => (CLIENT_LABELS[client] ? tr(CLIENT_LABELS[client]) : client);
 
 interface ProjectRow {
   id: number;
@@ -148,6 +149,7 @@ interface EventRow {
   audience: string | null;
   data: string;
   summary: string;
+  summary_en: string | null;
 }
 
 export interface AgentView {
@@ -369,8 +371,8 @@ export interface InboxResult {
 
 /** 状态的中文名；归档的带上归档方式，如「已归档（自动）」 */
 export function statusLabel(t: { status: TaskStatus; archive_kind?: ArchiveKind | null }): string {
-  if (t.status !== 'archived') return STATUS_LABELS[t.status];
-  return `${STATUS_LABELS.archived}（${ARCHIVE_LABELS[t.archive_kind ?? 'manual'].slice(0, 2)}）`;
+  if (t.status !== 'archived') return tr(STATUS_LABELS[t.status]);
+  return tr('{archived}（{v}）', { archived: tr(STATUS_LABELS.archived), v: t.archive_kind === 'auto' ? tr('自动') : tr('手动') });
 }
 
 export const projectCode = (id: number) => `P-${id}`;
@@ -528,10 +530,10 @@ export class Hub {
   /** 身份对应的 agent 已被停用或删除时，给出具体原因，方便命令行清掉失效的本地配置。 */
   private inactiveError(row: AgentRow): HubError | null {
     if (row.status === 'active') return null;
-    const who = `${row.name}（${agentCode(row.id)}）`;
+    const who = tr('{name}（{agentCode}）', { name: row.name, agentCode: agentCode(row.id) });
     return row.status === 'deleted'
-      ? new HubError(401, 'agent_deleted', `身份 ${who}已被负责人删除`)
-      : new HubError(401, 'agent_disabled', `身份 ${who}已被负责人停用`);
+      ? new HubError(401, 'agent_deleted', tr('身份 {who}已被负责人删除', { who }))
+      : new HubError(401, 'agent_disabled', tr('身份 {who}已被负责人停用', { who }));
   }
 
   // ───────────── 授权 ID（连接） ─────────────
@@ -546,7 +548,7 @@ export class Hub {
     return {
       id: `as_${r.token_hash.slice(0, 8)}`,
       client: r.client,
-      client_label: CLIENT_LABELS[r.client] ?? r.client,
+      client_label: clientLabel(r.client),
       host: r.host,
       cwd: r.cwd,
       ip: r.ip,
@@ -559,8 +561,8 @@ export class Hub {
   }
 
   private describeSession(r: SessionRow) {
-    const where = [r.host, CLIENT_LABELS[r.client] ?? r.client, r.cwd].filter(Boolean).join('，');
-    return where ? `${where}` : '另一处';
+    const where = [r.host, clientLabel(r.client), r.cwd].filter(Boolean).join(tr('，'));
+    return where ? `${where}` : tr('另一处');
   }
 
   /**
@@ -585,7 +587,7 @@ export class Hub {
     const ip = input.ip ?? '';
     const now = this.now().getTime();
     const fails = this.failedLogins.get(ip);
-    if (fails && now - fails.at < 60_000 && fails.n >= 10) throw new HubError(429, 'too_many_attempts', '身份码错误次数太多，请一分钟后再试');
+    if (fails && now - fails.at < 60_000 && fails.n >= 10) throw new HubError(429, 'too_many_attempts', tr('身份码错误次数太多，请一分钟后再试'));
     let agent = this.agentByCode(input.code ?? '');
     let issued: string | null = null;
     if (!agent && /^[A-Z0-9]{3}-?[A-Z0-9]{3}$/i.test((input.code ?? '').trim())) {
@@ -600,12 +602,12 @@ export class Hub {
     }
     if (!agent) {
       this.failedLogins.set(ip, { n: (fails && now - fails.at < 60_000 ? fails.n : 0) + 1, at: fails && now - fails.at < 60_000 ? fails.at : now });
-      throw new HubError(401, 'invalid_code', '身份码无效：请检查是否抄错，或向负责人确认这个身份码没有被重置');
+      throw new HubError(401, 'invalid_code', tr('身份码无效：请检查是否抄错，或向负责人确认这个身份码没有被重置'));
     }
     const inactive = this.inactiveError(agent);
     if (inactive) throw inactive;
     const name = input.name?.trim();
-    if (!agent.name && !name) throw invalid('这个身份还没有名字：第一次连接时请用 --name 给自己起一个简短、能区分的名字');
+    if (!agent.name && !name) throw invalid(tr('这个身份还没有名字：第一次连接时请用 --name 给自己起一个简短、能区分的名字'));
     const client = ['run', 'cli', 'mcp'].includes(input.client ?? '') ? input.client! : 'cli';
     const host = String(input.host ?? '').slice(0, 80);
     const cwd = String(input.cwd ?? '').slice(0, 300);
@@ -624,12 +626,12 @@ export class Hub {
           throw new HubError(
             409,
             'already_online',
-            `${a.name || agentCode(a.id)}（${agentCode(a.id)}）已经在线：${this.describeSession(old)}，最后活动 ${old.last_seen_at.slice(11, 19)}。` +
-              '同一身份码同时只能有一个连接。确认要在这里接手，请加 --takeover 顶掉原来的连接。',
+            tr('{v}（{agentCode}）已经在线：{v2}，最后活动 {last_seen_at}。', { v: a.name || agentCode(a.id), agentCode: agentCode(a.id), v2: this.describeSession(old), last_seen_at: old.last_seen_at.slice(11, 19) }) +
+              tr('同一身份码同时只能有一个连接。确认要在这里接手，请加 --takeover 顶掉原来的连接。'),
           );
         else {
           replaced = old;
-          this.closeSession(old, 'replaced', [host, CLIENT_LABELS[client]].filter(Boolean).join('，'), { quiet: true });
+          this.closeSession(old, 'replaced', [host, CLIENT_LABELS[client] && clientLabel(client)].filter(Boolean).join(tr('，')), { quiet: true });
         }
       }
       const token = newToken('as');
@@ -642,14 +644,15 @@ export class Hub {
         .prepare(`UPDATE agents SET name = ?, platform = ?, last_seen_at = ?, presence = 'on' WHERE id = ?`)
         .run(a.name, first && input.platform ? input.platform : a.platform, at, a.id);
       const me = agentCode(a.id);
-      const where = [host, CLIENT_LABELS[client]].filter(Boolean).join('，');
+      const where = [host, CLIENT_LABELS[client] && clientLabel(client)].filter(Boolean).join(tr('，'));
       if (replaced || !wasOnline) {
         this.emit('agent.online', me, {
           audience: [],
           data: { agent: me, client, host, replaced: replaced ? this.describeSession(replaced) : null },
-          summary: replaced
-            ? `${a.name}（${me}）在${where || '另一处'}重新上线，原来在${this.describeSession(replaced)}的连接已断开`
-            : `${a.name}（${me}）上线了${where ? `（${where}）` : ''}`,
+          summary: () =>
+          (replaced
+            ? tr('{name}（{me}）在{v}重新上线，原来在{v2}的连接已断开', { name: a.name, me, v: where || tr('另一处'), v2: this.describeSession(replaced) })
+            : tr('{name}（{me}）上线了{v}', { name: a.name, me, v: where ? tr('（{where}）', { where }) : '' })),
         });
       }
       return { session: token, code: issued, agent: this.agentView(this.requireAgentRow(me)) };
@@ -668,9 +671,9 @@ export class Hub {
         throw new HubError(
           401,
           'session_required',
-          '这是身份码，不是授权 ID：请先用身份码换取授权 ID（POST /api/v1/sessions）。用的是 ahub 命令行的话，请升级到和 Hub 同一版本：npm install -g <Hub 地址>/ahub.tgz',
+          tr('这是身份码，不是授权 ID：请先用身份码换取授权 ID（POST /api/v1/sessions）。用的是 ahub 命令行的话，请升级到和 Hub 同一版本：npm install -g <Hub 地址>/ahub.tgz'),
         );
-      throw new HubError(401, 'unauthorized', '缺少或无效的授权 ID');
+      throw new HubError(401, 'unauthorized', tr('缺少或无效的授权 ID'));
     }
     const agent = this.db.prepare('SELECT * FROM agents WHERE id = ?').get(s.agent_id) as unknown as AgentRow;
     const inactive = this.inactiveError(agent);
@@ -690,11 +693,11 @@ export class Hub {
   private endedError(s: SessionRow): HubError {
     switch (s.end_reason) {
       case 'revoked':
-        return new HubError(401, 'session_revoked', `负责人已强制你下线${s.end_note ? `：${s.end_note}` : ''}。不要自动重连，等负责人重新启动你`);
+        return new HubError(401, 'session_revoked', tr('负责人已强制你下线{v}。不要自动重连，等负责人重新启动你', { v: s.end_note ? tr('：{end_note}', { end_note: s.end_note }) : '' }));
       case 'replaced':
-        return new HubError(401, 'session_replaced', `这个身份已经在别处上线（${s.end_note || '另一处'}），这里的连接已断开`);
+        return new HubError(401, 'session_replaced', tr('这个身份已经在别处上线（{v}），这里的连接已断开', { v: s.end_note || tr('另一处') }));
       default:
-        return new HubError(401, 'session_expired', '授权 ID 已过期（长时间没有活动或已交还），请用身份码重新连接');
+        return new HubError(401, 'session_expired', tr('授权 ID 已过期（长时间没有活动或已交还），请用身份码重新连接'));
     }
   }
 
@@ -707,7 +710,7 @@ export class Hub {
     const a = this.db.prepare('SELECT * FROM agents WHERE id = ?').get(s.agent_id) as unknown as AgentRow;
     this.db.prepare("UPDATE agents SET presence = 'off' WHERE id = ?").run(a.id);
     this.activity.delete(a.id);
-    this.settleReceipts(a, 'stopped', { note: reason === 'revoked' ? '被负责人强制下线，处理中断' : '已下线，处理中断' });
+    this.settleReceipts(a, 'stopped', { note: reason === 'revoked' ? tr('被负责人强制下线，处理中断') : tr('已下线，处理中断') });
     if (opts.quiet || a.status !== 'active') return;
     const me = agentCode(a.id);
     const tasks = this.agentView(a).active_tasks;
@@ -715,11 +718,12 @@ export class Hub {
       audience: [],
       data: { agent: me, last_seen_at: a.last_seen_at, active_tasks: tasks, reason },
       summary:
-        (reason === 'revoked'
-          ? `负责人强制 ${a.name}（${me}）下线${note ? `：${note}` : ''}`
+        () =>
+          ((reason === 'revoked'
+          ? tr('负责人强制 {name}（{me}）下线{v}', { name: a.name, me, v: note ? tr('：{note}', { note }) : '' })
           : reason === 'released'
-            ? `${a.name}（${me}）下线了`
-            : `${a.name}（${me}）很久没有出现，已离线`) + (tasks.length ? `；手上还有 ${tasks.join('、')}` : ''),
+            ? tr('{name}（{me}）下线了', { name: a.name, me })
+            : tr('{name}（{me}）很久没有出现，已离线', { name: a.name, me })) + (tasks.length ? tr('；手上还有 {tasks}', { tasks: tasks.join(tr('、')) }) : '')),
     });
   }
 
@@ -731,11 +735,11 @@ export class Hub {
   setPresenceSettings(input: { idle_minutes?: number; stream_grace_minutes?: number }) {
     const check = (v: number | undefined, min: number, max: number, what: string) => {
       if (v === undefined) return undefined;
-      if (!Number.isInteger(v) || v < min || v > max) throw invalid(`${what}要在 ${min} 到 ${max} 分钟之间`);
+      if (!Number.isInteger(v) || v < min || v > max) throw invalid(tr('{what}要在 {min} 到 {max} 分钟之间', { what, min, max }));
       return v;
     };
-    const idle = check(input.idle_minutes, 5, 1440, '空闲超时');
-    const grace = check(input.stream_grace_minutes, 1, 60, '值守断线宽限');
+    const idle = check(input.idle_minutes, 5, 1440, tr('空闲超时'));
+    const grace = check(input.stream_grace_minutes, 1, 60, tr('值守断线宽限'));
     const put = this.db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
     if (idle !== undefined) {
       put.run('presence_idle_minutes', String(idle));
@@ -758,7 +762,7 @@ export class Hub {
   kickAgent(code: string, note = '') {
     const a = this.requireAgentRow(code);
     const s = this.activeSession(a.id);
-    if (!s) throw conflict(`${a.name}（${code}）当前不在线`);
+    if (!s) throw conflict(tr('{name}（{code}）当前不在线', { name: a.name, code }));
     this.write(() => this.closeSession(s, 'revoked', note.trim().slice(0, 200), { quiet: false }));
     return this.agentView(this.requireAgentRow(code));
   }
@@ -781,7 +785,7 @@ export class Hub {
         this.emit('agent.online', agentCode(agent.id), {
           audience: [],
           data: { agent: agentCode(agent.id) },
-          summary: `${agent.name}（${agentCode(agent.id)}）上线了`,
+          summary: () => tr('{name}（{agentCode}）上线了', { name: agent.name, agentCode: agentCode(agent.id) }),
         });
       });
       agent.presence = 'on';
@@ -871,7 +875,7 @@ export class Hub {
         const s = this.activeSession(a.id);
         if (s) this.closeSession(s, 'expired', '', { quiet: true });
         this.db.prepare("UPDATE agents SET presence = 'off' WHERE id = ?").run(a.id);
-        this.settleReceipts(a, 'stopped', { note: '值守进程断开，处理中断' });
+        this.settleReceipts(a, 'stopped', { note: tr('值守进程断开，处理中断') });
         if (a.status !== 'active') continue; // 被停用的不必再通知
         const tasks = this.agentView(a).active_tasks;
         const lost = this.streamLostAt.has(a.id);
@@ -879,8 +883,9 @@ export class Hub {
           audience: [],
           data: { agent: agentCode(a.id), last_seen_at: a.last_seen_at, active_tasks: tasks, reason: lost ? 'disconnected' : 'silent' },
           summary:
-            `${a.name}（${agentCode(a.id)}）${lost ? '断开了连接' : '很久没有出现'}，已离线` +
-            (tasks.length ? `；手上还有 ${tasks.join('、')}` : ''),
+            () =>
+          (tr('{name}（{agentCode}）{v}，已离线', { name: a.name, agentCode: agentCode(a.id), v: lost ? tr('断开了连接') : tr('很久没有出现') }) +
+            (tasks.length ? tr('；手上还有 {tasks}', { tasks: tasks.join(tr('、')) }) : '')),
         });
       }
     });
@@ -894,19 +899,20 @@ export class Hub {
     const at = this.iso();
     if (state === 'working') this.activity.set(agent.id, { state, note, at });
     else this.activity.delete(agent.id);
-    const who = `${agent.name}（${agentCode(agent.id)}）`;
+    const who = tr('{name}（{agentCode}）', { name: agent.name, agentCode: agentCode(agent.id) });
     this.write(() => {
       // 值守进程退出时，还挂着「处理中」的回执改成中断
-      if (state === 'stopped') this.settleReceipts(agent, 'stopped', { note: '值守进程已退出，处理中断' });
+      if (state === 'stopped') this.settleReceipts(agent, 'stopped', { note: tr('值守进程已退出，处理中断') });
       this.emit('agent.activity', agentCode(agent.id), {
         audience: [],
         data: { agent: agentCode(agent.id), state, note },
         summary:
-          state === 'working'
-            ? `${who}被唤醒：${note || '处理新事项'}`
+          () =>
+          (state === 'working'
+            ? tr('{who}被唤醒：{v}', { who, v: note || tr('处理新事项') })
             : state === 'stopped'
-              ? `${who}的值守进程已退出`
-              : `${who}处理完毕，回到待命${note ? `：${note}` : ''}`,
+              ? tr('{who}的值守进程已退出', { who })
+              : tr('{who}处理完毕，回到待命{v}', { who, v: note ? tr('：{note}', { note }) : '' })),
       });
     });
     return { ok: true };
@@ -922,16 +928,18 @@ export class Hub {
       task?: TaskRow | null;
       audience?: string[] | null;
       data?: Record<string, unknown>;
-      summary: string;
+      /** 一句话描述。传函数时按中文、英文各求值一次，分别存下来 */
+      summary: string | (() => string);
     },
   ): HubEvent {
     const at = this.iso();
     const projectId = opts.project ?? opts.task?.project_id ?? null;
     const audience = opts.audience === undefined ? null : opts.audience;
     const data = opts.data ?? {};
+    const summary = typeof opts.summary === 'function' ? bi(opts.summary) : { zh: opts.summary, en: opts.summary };
     const r = this.db
       .prepare(
-        'INSERT INTO events (type, at, actor, project_id, task_id, audience, data, summary) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO events (type, at, actor, project_id, task_id, audience, data, summary, summary_en) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         type,
@@ -941,7 +949,8 @@ export class Hub {
         opts.task?.id ?? null,
         audience === null ? null : JSON.stringify(audience),
         JSON.stringify(data),
-        opts.summary,
+        summary.zh,
+        summary.en,
       );
     const event: HubEvent = {
       seq: Number(r.lastInsertRowid),
@@ -952,7 +961,8 @@ export class Hub {
       task: opts.task ? taskCode(opts.task.project_id, opts.task.num) : null,
       audience,
       data,
-      summary: opts.summary,
+      summary: summary.zh,
+      summary_en: summary.en,
     };
     this.pending.push(event);
     return event;
@@ -976,6 +986,7 @@ export class Hub {
       audience: json<string[] | null>(row.audience, null),
       data: json(row.data, {}),
       summary: row.summary,
+      summary_en: row.summary_en ?? row.summary,
     };
   }
 
@@ -1176,15 +1187,15 @@ export class Hub {
         if (!m || !this.tagsMatch(t, [...json<string[]>(m.tags, []), ...json<string[]>(row.skills, [])])) continue;
       }
       // 在线、有值守是参加排名的前提，人人都有，不再写进理由
-      const x = { ...r, reasons: r.reasons.filter((y) => !/^(在线|最近活跃|有值守进程)/.test(y)), warnings: [...r.warnings], agentId: id };
+      const x = { ...r, reasons: r.reasons.filter((y) => !/^(在线|最近活跃|有值守进程|Online|Recently active|Daemon running)/.test(y)), warnings: [...r.warnings], agentId: id };
       if (this.activity.get(id)?.state === 'working') {
         x.score -= 15;
-        x.warnings.push('正在处理别的事');
+        x.warnings.push(tr('正在处理别的事'));
       }
       const rel = related.get(id);
       if (rel) {
         x.score += 15;
-        x.reasons.push(`做过相关任务 ${rel}`);
+        x.reasons.push(tr('做过相关任务 {rel}', { rel }));
       }
       x.score = Math.max(0, Math.min(100, x.score));
       out.push(x);
@@ -1203,7 +1214,7 @@ export class Hub {
       rank: i + 1,
       of: ranking.length + (passed ? 1 : 0),
       reasons: mine?.reasons ?? [],
-      warnings: passed ? ['你已经让出过这个任务'] : (mine?.warnings ?? []),
+      warnings: passed ? [tr('你已经让出过这个任务')] : (mine?.warnings ?? []),
       open_since,
       passed,
     };
@@ -1213,8 +1224,8 @@ export class Hub {
   pass(agent: AgentRow, code: string, reason: string): { ok: true; task: string; remaining: number } {
     const t = this.requireTask(code);
     this.assertVisible({ kind: 'agent', agent }, t);
-    if (t.status !== 'open') throw conflict(`${code} 当前状态是「${STATUS_LABELS[t.status]}」，只有待领取的任务可以让出`);
-    if (!reason?.trim()) throw invalid('请说明为什么不适合你，负责人和其他 agent 会看到');
+    if (t.status !== 'open') throw conflict(tr('{code} 当前状态是「{v}」，只有待领取的任务可以让出', { code, v: tr(STATUS_LABELS[t.status]) }));
+    if (!reason?.trim()) throw invalid(tr('请说明为什么不适合你，负责人和其他 agent 会看到'));
     const me = agentCode(agent.id);
     return this.write(() => {
       this.db
@@ -1223,7 +1234,7 @@ export class Hub {
       this.emit('task.passed', me, {
         task: t,
         data: { agent: me, reason: reason.trim() },
-        summary: `${agent.name}（${me}）让出了 ${code}「${t.title}」：${excerpt(reason.trim())}`,
+        summary: () => tr('{name}（{me}）让出了 {code}「{title}」：{excerpt}', { name: agent.name, me, code, title: t.title, excerpt: excerpt(reason.trim()) }),
       });
       const remaining = this.claimRanking(t).length;
       if (remaining === 0) {
@@ -1231,7 +1242,7 @@ export class Hub {
           task: t,
           audience: [],
           data: { passes: (this.db.prepare('SELECT COUNT(*) AS n FROM task_passes WHERE task_id = ?').get(t.id) as { n: number }).n },
-          summary: `没有 agent 愿意领取 ${code}「${t.title}」：能自动领取的 agent 都让出了，可以看看让出理由，修改任务或直接指派`,
+          summary: () => tr('没有 agent 愿意领取 {code}「{title}」：能自动领取的 agent 都让出了，可以看看让出理由，修改任务或直接指派', { code, title: t.title }),
         });
       }
       return { ok: true as const, task: code, remaining };
@@ -1262,12 +1273,13 @@ export class Hub {
   /** 创建 agent（邀请码）时可选的预设标签；负责人在设置里维护 */
   presetTags(): string[] {
     const row = this.db.prepare("SELECT value FROM settings WHERE key = 'preset_tags'").get() as { value: string } | undefined;
-    return row ? json<string[]>(row.value, []) : DEFAULT_PRESET_TAGS;
+    // 没改过预设标签时按请求方的语言给默认值
+    return row ? json<string[]>(row.value, []) : DEFAULT_PRESET_TAGS.map((t) => tr(t));
   }
 
   setPresetTags(tags: string[]): string[] {
     const clean = [...new Set(tags.map((t) => String(t).trim()).filter(Boolean))].slice(0, 50);
-    if (clean.some((t) => t.length > 20)) throw invalid('每个标签最多 20 个字');
+    if (clean.some((t) => t.length > 20)) throw invalid(tr('每个标签最多 20 个字'));
     this.db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('preset_tags', ?)").run(JSON.stringify(clean));
     return clean;
   }
@@ -1315,11 +1327,12 @@ export class Hub {
         task: updated,
         audience: t.status === 'draft' ? [] : null,
         data: { fields: pick.length ? ['required_tags'] : [], auto_tags: pick, reason, ...(failed ? { error: failed } : {}) },
-        summary: failed
-          ? `自动给 ${code} 打标签失败（${excerpt(failed)}），先不限定能力标签`
+        summary: () =>
+          (failed
+          ? tr('自动给 {code} 打标签失败（{excerpt}），先不限定能力标签', { code, excerpt: excerpt(failed) })
           : pick.length
-            ? `自动给 ${code} 打了能力标签：${pick.join('、')}${reason ? `（${excerpt(reason)}）` : ''}`
-            : `${code} 不需要特定能力标签，所有项目成员都可以领取`,
+            ? tr('自动给 {code} 打了能力标签：{pick}{v}', { code, pick: pick.join(tr('、')), v: reason ? tr('（{excerpt}）', { excerpt: excerpt(reason) }) : '' })
+            : tr('{code} 不需要特定能力标签，所有项目成员都可以领取', { code })),
       });
     });
     return this.taskView(this.taskById(t.id));
@@ -1344,7 +1357,7 @@ export class Hub {
 
   createProject(input: { name: string; description?: string }): ProjectView {
     const name = input.name?.trim();
-    if (!name) throw invalid('项目名称不能为空');
+    if (!name) throw invalid(tr('项目名称不能为空'));
     return this.write(() => {
       const r = this.db
         .prepare('INSERT INTO projects (name, description, created_at) VALUES (?, ?, ?)')
@@ -1354,7 +1367,7 @@ export class Hub {
         project: id,
         audience: [],
         data: { name },
-        summary: `负责人创建了项目 ${projectCode(id)}「${name}」`,
+        summary: () => tr('负责人创建了项目 {projectCode}「{name}」', { projectCode: projectCode(id), name }),
       });
       return this.projectView(this.requireProject(projectCode(id)));
     });
@@ -1362,7 +1375,7 @@ export class Hub {
 
   updateProject(code: string, input: { name?: string; description?: string; status?: string }): ProjectView {
     const p = this.requireProject(code);
-    if (input.status && !['active', 'archived'].includes(input.status)) throw invalid('项目状态只能是 active 或 archived');
+    if (input.status && !['active', 'archived'].includes(input.status)) throw invalid(tr('项目状态只能是 active 或 archived'));
     return this.write(() => {
       this.db
         .prepare('UPDATE projects SET name = ?, description = ?, status = ? WHERE id = ?')
@@ -1371,7 +1384,8 @@ export class Hub {
       this.emit('project.updated', 'owner', {
         project: p.id,
         data: { fields: changed },
-        summary: input.description !== undefined ? `负责人更新了项目 ${code} 的项目说明` : `负责人更新了项目 ${code}`,
+        summary: () =>
+          (input.description !== undefined ? tr('负责人更新了项目 {code} 的项目说明', { code }) : tr('负责人更新了项目 {code}', { code })),
       });
       return this.projectView(this.requireProject(code));
     });
@@ -1380,7 +1394,7 @@ export class Hub {
   requireProject(code: string): ProjectRow {
     const id = parseId(code, 'P');
     const row = id === null ? undefined : (this.db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as ProjectRow | undefined);
-    if (!row) throw notFound(`项目 ${code}`);
+    if (!row) throw notFound(tr('项目 {code}', { code }));
     return row;
   }
 
@@ -1436,7 +1450,7 @@ export class Hub {
     let projects: number[] | null = actor.kind === 'agent' ? this.agentProjects(actor.agent.id).map((p) => Number(p.id.slice(2))) : null;
     if (project) {
       const id = this.requireProject(project).id;
-      if (projects && !projects.includes(id)) throw forbidden(`你不是项目 ${project} 的成员`);
+      if (projects && !projects.includes(id)) throw forbidden(tr('你不是项目 {project} 的成员', { project }));
       projects = [id];
     }
     if (projects && projects.length === 0) return result;
@@ -1499,18 +1513,19 @@ export class Hub {
   /** 负责人暂停、恢复或立即唤醒某个 agent 的值守进程（ahub run）。 */
   controlDaemon(code: string, action: string) {
     const a = this.requireAgentRow(code);
-    if (!['pause', 'resume', 'wake'].includes(action)) throw invalid('操作只能是 pause、resume 或 wake');
+    if (!['pause', 'resume', 'wake'].includes(action)) throw invalid(tr('操作只能是 pause、resume 或 wake'));
     if (action === 'wake') {
-      if (!this.hasDaemon(a.id)) throw conflict(`${a.name} 的值守进程不在线`);
-      if (a.daemon_paused) throw conflict(`${a.name} 的值守进程已暂停，请先恢复`);
+      if (!this.hasDaemon(a.id)) throw conflict(tr('{name} 的值守进程不在线', { name: a.name }));
+      if (a.daemon_paused) throw conflict(tr('{name} 的值守进程已暂停，请先恢复', { name: a.name }));
     }
-    const who = `${a.name}（${agentCode(a.id)}）`;
+    const who = tr('{name}（{agentCode}）', { name: a.name, agentCode: agentCode(a.id) });
     this.write(() => {
       if (action !== 'wake') this.db.prepare('UPDATE agents SET daemon_paused = ? WHERE id = ?').run(action === 'pause' ? 1 : 0, a.id);
       this.emit('agent.control', 'owner', {
         audience: [agentCode(a.id)],
         data: { agent: agentCode(a.id), action },
-        summary: { pause: `负责人暂停了${who}的值守进程`, resume: `负责人恢复了${who}的值守进程`, wake: `负责人让${who}立即检查一遍收件箱` }[action]!,
+        summary: () =>
+          ({ pause: tr('负责人暂停了{who}的值守进程', { who }), resume: tr('负责人恢复了{who}的值守进程', { who }), wake: tr('负责人让{who}立即检查一遍收件箱', { who }) }[action]!),
       });
     });
     return this.agentView(this.requireAgentRow(code));
@@ -1556,9 +1571,9 @@ export class Hub {
   /** 新建或覆盖同名模板 */
   saveTemplate(input: Partial<Omit<TemplateBody, 'priority'>> & { priority?: string; name?: string; id?: number }): TemplateView {
     const name = input.name?.trim();
-    if (!name) throw invalid('模板名称不能为空');
+    if (!name) throw invalid(tr('模板名称不能为空'));
     const priority = (input.priority ?? 'P2').toUpperCase() as Priority;
-    if (!PRIORITIES.includes(priority)) throw invalid('优先级只能是 P0–P3');
+    if (!PRIORITIES.includes(priority)) throw invalid(tr('优先级只能是 P0–P3'));
     const body: TemplateBody = {
       title: input.title?.trim() ?? '',
       description: input.description ?? '',
@@ -1572,9 +1587,9 @@ export class Hub {
     const clash = this.db.prepare('SELECT id FROM templates WHERE name = ?').get(name) as { id: number } | undefined;
     const id = input.id ?? clash?.id;
     if (id !== undefined) {
-      if (clash && clash.id !== id) throw conflict(`已经有名为「${name}」的模板`);
+      if (clash && clash.id !== id) throw conflict(tr('已经有名为「{name}」的模板', { name }));
       const r = this.db.prepare('UPDATE templates SET name = ?, body = ?, updated_at = ? WHERE id = ?').run(name, JSON.stringify(body), now, id);
-      if (r.changes === 0) throw notFound(`模板 ${id}`);
+      if (r.changes === 0) throw notFound(tr('模板 {id}', { id }));
     } else {
       this.db.prepare('INSERT INTO templates (name, body, created_at, updated_at) VALUES (?, ?, ?, ?)').run(name, JSON.stringify(body), now, now);
     }
@@ -1582,7 +1597,7 @@ export class Hub {
   }
 
   deleteTemplate(id: number) {
-    if (this.db.prepare('DELETE FROM templates WHERE id = ?').run(id).changes === 0) throw notFound(`模板 ${id}`);
+    if (this.db.prepare('DELETE FROM templates WHERE id = ?').run(id).changes === 0) throw notFound(tr('模板 {id}', { id }));
     return { ok: true };
   }
 
@@ -1612,26 +1627,26 @@ export class Hub {
     input: { project?: string; task?: string; note: string; name?: string; tags?: string[]; harness?: string },
     hubUrl: string,
   ) {
-    if (!agent.can_invite) throw forbidden('负责人还没有允许你创建邀请');
+    if (!agent.can_invite) throw forbidden(tr('负责人还没有允许你创建邀请'));
     const t = input.task ? this.requireTask(input.task) : null;
     const project = t ? projectCode(t.project_id) : input.project;
-    if (!project) throw invalid('需要指定项目（project）或任务（task）');
+    if (!project) throw invalid(tr('需要指定项目（project）或任务（task）'));
     const p = this.requireProject(project);
-    if (!this.isMember(agent.id, p.id)) throw forbidden(`你不是项目 ${project} 的成员`);
-    if (p.status !== 'active') throw conflict(`项目 ${project} 已归档`);
+    if (!this.isMember(agent.id, p.id)) throw forbidden(tr('你不是项目 {project} 的成员', { project }));
+    if (p.status !== 'active') throw conflict(tr('项目 {project} 已归档', { project }));
     const note = input.note?.trim();
-    if (!note) throw invalid('请说明需要什么样的 agent、用来做什么（note）');
+    if (!note) throw invalid(tr('请说明需要什么样的 agent、用来做什么（note）'));
     const me = agentCode(agent.id);
     // 身份码长期有效，不能写进评论（项目里所有 agent 都看得到）；负责人到控制台复制启动命令
-    const created = this.createAgent({ project, tags: input.tags ?? [], name: input.name, note: `${agent.name}：${note}` }, me);
+    const created = this.createAgent({ project, tags: input.tags ?? [], name: input.name, note: tr('{name}：{note}', { name: agent.name, note }) }, me);
     const id = created.agent.id;
-    const name = created.agent.name || '新 agent';
+    const name = created.agent.name || tr('新 agent');
     const link = `${hubUrl}/#/agents`;
     const text = [
-      `${t ? '@负责人 ' : ''}需要一个新 agent：${note}`,
+      tr('{v}需要一个新 agent：{note}', { v: t ? tr('@负责人 ') : '', note }),
       '',
-      `我新建了身份 ${name}（${id}，项目 ${project}${created.agent.projects[0]?.tags.length ? `，能力标签：${created.agent.projects[0].tags.join('、')}` : ''}），还没有启动。` +
-        `请到控制台「Agent」页复制它的启动命令，在合适的目录运行：${link}`,
+      tr('我新建了身份 {name}（{id}，项目 {project}{v}），还没有启动。', { name, id, project, v: created.agent.projects[0]?.tags.length ? tr('，能力标签：{tags}', { tags: created.agent.projects[0].tags.join(tr('、')) }) : '' }) +
+        tr('请到控制台「Agent」页复制它的启动命令，在合适的目录运行：{link}', { link }),
     ].join('\n');
     if (t) this.comment({ kind: 'agent', agent }, input.task!, text);
     else this.message({ kind: 'agent', agent }, 'owner', text);
@@ -1680,7 +1695,7 @@ export class Hub {
 
   revokeInvite(code: string) {
     const r = this.db.prepare('UPDATE invites SET revoked = 1 WHERE code = ?').run(code.toUpperCase());
-    if (r.changes === 0) throw notFound(`邀请码 ${code}`);
+    if (r.changes === 0) throw notFound(tr('邀请码 {code}', { code }));
   }
 
   /**
@@ -1703,19 +1718,19 @@ export class Hub {
     const inv = this.db.prepare('SELECT * FROM invites WHERE code = ?').get(code) as
       | { code: string; project_id: number; tags: string; max_uses: number; uses: number; expires_at: string; revoked: number; agent_name: string }
       | undefined;
-    if (!inv) throw invalid('邀请码无效');
-    if (inv.revoked) throw invalid('邀请码已被撤销');
-    if (inv.expires_at < this.iso()) throw invalid('邀请码已过期');
-    if (inv.uses >= inv.max_uses) throw invalid('邀请码已用完');
+    if (!inv) throw invalid(tr('邀请码无效'));
+    if (inv.revoked) throw invalid(tr('邀请码已被撤销'));
+    if (inv.expires_at < this.iso()) throw invalid(tr('邀请码已过期'));
+    if (inv.uses >= inv.max_uses) throw invalid(tr('邀请码已用完'));
     const tier = (input.tier ?? 'L1').toUpperCase() as Tier;
-    if (!TIERS.includes(tier)) throw invalid('tier 只能是 L1、L2、L3、L4');
+    if (!TIERS.includes(tier)) throw invalid(tr('tier 只能是 L1、L2、L3、L4'));
 
     return this.write(() => {
       let agent = existing;
       let identity: string | null = null;
       if (!agent) {
         const name = input.name?.trim() || inv.agent_name;
-        if (!name) throw invalid('请提供 agent 名称（name）：这个邀请码没有预设名称，给自己起一个简短、能区分的名字');
+        if (!name) throw invalid(tr('请提供 agent 名称（name）：这个邀请码没有预设名称，给自己起一个简短、能区分的名字'));
         identity = newIdentityCode();
         const r = this.db
           .prepare(
@@ -1738,7 +1753,7 @@ export class Hub {
       const already = this.db
         .prepare('SELECT 1 FROM memberships WHERE project_id = ? AND agent_id = ?')
         .get(inv.project_id, agent.id);
-      if (already) throw conflict(`你已经是项目 ${projectCode(inv.project_id)} 的成员`);
+      if (already) throw conflict(tr('你已经是项目 {projectCode} 的成员', { projectCode: projectCode(inv.project_id) }));
       const tags = [...new Set([...json<string[]>(inv.tags, []), ...(input.tags ?? [])])];
       this.db
         .prepare('INSERT INTO memberships (project_id, agent_id, tags, joined_at) VALUES (?, ?, ?, ?)')
@@ -1752,7 +1767,7 @@ export class Hub {
       this.emit('agent.joined', me, {
         project: inv.project_id,
         data: { agent: me, name: agent.name, platform: agent.platform, tier: agent.tier, tags },
-        summary: `${agent.name}（${me}）加入了项目 ${projectCode(inv.project_id)}`,
+        summary: () => tr('{name}（{me}）加入了项目 {projectCode}', { name: agent.name, me, projectCode: projectCode(inv.project_id) }),
       });
       const p = this.requireProject(projectCode(inv.project_id));
       const view = this.projectView(p);
@@ -1786,7 +1801,7 @@ export class Hub {
       last_seen_at: a.last_seen_at,
       online: presence === 'online' || presence === 'active',
       presence,
-      presence_label: PRESENCE_LABELS[presence],
+      presence_label: tr(PRESENCE_LABELS[presence]),
       activity: presence === 'online' ? (this.activity.get(a.id) ?? null) : null,
       daemon: this.hasDaemon(a.id),
       daemon_paused: !!a.daemon_paused,
@@ -1819,15 +1834,15 @@ export class Hub {
     input: { status?: string; name?: string; description?: string; skills?: string[]; tier?: string; can_invite?: boolean },
   ) {
     const a = this.requireAgentRow(code);
-    if (actor.kind === 'agent' && actor.agent.id !== a.id) throw forbidden('只能修改自己的资料');
-    if (a.status === 'deleted') throw conflict(`${a.name}（${code}）已被删除`);
+    if (actor.kind === 'agent' && actor.agent.id !== a.id) throw forbidden(tr('只能修改自己的资料'));
+    if (a.status === 'deleted') throw conflict(tr('{name}（{code}）已被删除', { name: a.name, code }));
     if (input.status !== undefined) {
-      if (actor.kind !== 'owner') throw forbidden('只有负责人可以停用或启用 agent');
-      if (!['active', 'disabled'].includes(input.status)) throw invalid('status 只能是 active 或 disabled');
+      if (actor.kind !== 'owner') throw forbidden(tr('只有负责人可以停用或启用 agent'));
+      if (!['active', 'disabled'].includes(input.status)) throw invalid(tr('status 只能是 active 或 disabled'));
     }
-    if (input.can_invite !== undefined && actor.kind !== 'owner') throw forbidden('只有负责人可以授权创建邀请');
+    if (input.can_invite !== undefined && actor.kind !== 'owner') throw forbidden(tr('只有负责人可以授权创建邀请'));
     const tier = input.tier ? (input.tier.toUpperCase() as Tier) : a.tier;
-    if (!TIERS.includes(tier)) throw invalid('tier 只能是 L1、L2、L3、L4');
+    if (!TIERS.includes(tier)) throw invalid(tr('tier 只能是 L1、L2、L3、L4'));
     return this.write(() => {
       this.db
         .prepare('UPDATE agents SET status = ?, name = ?, description = ?, skills = ?, tier = ?, can_invite = ? WHERE id = ?')
@@ -1842,20 +1857,21 @@ export class Hub {
         );
       if (input.status === 'disabled') {
         const s = this.activeSession(a.id);
-        if (s) this.closeSession(s, 'revoked', '身份已被负责人停用', { quiet: true });
+        if (s) this.closeSession(s, 'revoked', tr('身份已被负责人停用'), { quiet: true });
       }
       const who = actor.kind === 'owner' ? 'owner' : agentCode(a.id);
       this.emit('agent.updated', who, {
         audience: [],
         data: { agent: code, ...input },
         summary:
-          input.status === 'disabled'
-            ? `负责人停用了 ${a.name}（${code}）`
+          () =>
+          (input.status === 'disabled'
+            ? tr('负责人停用了 {name}（{code}）', { name: a.name, code })
             : input.status === 'active'
-              ? `负责人启用了 ${a.name}（${code}）`
+              ? tr('负责人启用了 {name}（{code}）', { name: a.name, code })
               : input.can_invite !== undefined
-                ? `负责人${input.can_invite ? '允许' : '取消了'} ${a.name}（${code}）创建邀请`
-                : `${a.name}（${code}）的资料已更新`,
+                ? tr('负责人{v} {name}（{code}）创建邀请', { v: input.can_invite ? tr('允许') : tr('取消了'), name: a.name, code })
+                : tr('{name}（{code}）的资料已更新', { name: a.name, code })),
       });
       return this.agentView(this.requireAgentRow(code));
     });
@@ -1867,8 +1883,8 @@ export class Hub {
    */
   deleteAgent(code: string) {
     const a = this.requireAgentRow(code);
-    if (a.status === 'deleted') throw conflict(`${a.name}（${code}）已经删除过了`);
-    if (a.status !== 'disabled') throw conflict(`请先停用 ${a.name}（${code}）再删除`);
+    if (a.status === 'deleted') throw conflict(tr('{name}（{code}）已经删除过了', { name: a.name, code }));
+    if (a.status !== 'disabled') throw conflict(tr('请先停用 {name}（{code}）再删除', { name: a.name, code }));
     return this.write(() => {
       const open = this.db
         .prepare("SELECT * FROM tasks WHERE assignee_id = ? AND status IN ('assigned','working','input_required') ORDER BY project_id, num")
@@ -1879,7 +1895,7 @@ export class Hub {
         this.setStatus(t, 'owner', 'open', {
           assignee: null,
           lease: null,
-          summary: `${a.name}（${code}）已被删除，${tc}「${t.title}」放回任务池`,
+          summary: () => tr('{name}（{code}）已被删除，{tc}「{title}」放回任务池', { name: a.name, code, tc, title: t.title }),
         });
         released.push(tc);
       }
@@ -1889,7 +1905,7 @@ export class Hub {
       this.emit('agent.updated', 'owner', {
         audience: [],
         data: { agent: code, deleted: true, released },
-        summary: `负责人删除了 ${a.name}（${code}）${released.length ? `，${released.join('、')} 放回了任务池` : ''}`,
+        summary: () => tr('负责人删除了 {name}（{code}）{v}', { name: a.name, code, v: released.length ? tr('，{released} 放回了任务池', { released: released.join(tr('、')) }) : '' }),
       });
       return { deleted: code, released };
     });
@@ -1898,12 +1914,12 @@ export class Hub {
   /** 重置身份码：旧码立即作废，当前连接一并强制下线 */
   resetAgentCode(code: string): string {
     const a = this.requireAgentRow(code);
-    if (a.status === 'deleted') throw conflict(`${a.name}（${code}）已被删除`);
+    if (a.status === 'deleted') throw conflict(tr('{name}（{code}）已被删除', { name: a.name, code }));
     const fresh = newIdentityCode();
     this.write(() => {
       this.db.prepare('UPDATE agents SET token_hash = ?, code = ? WHERE id = ?').run(hashToken(fresh), fresh, a.id);
       const s = this.activeSession(a.id);
-      if (s) this.closeSession(s, 'revoked', '身份码已被负责人重置', { quiet: false });
+      if (s) this.closeSession(s, 'revoked', tr('身份码已被负责人重置'), { quiet: false });
     });
     return fresh;
   }
@@ -1918,7 +1934,7 @@ export class Hub {
    */
   createAgent(input: { project: string; name?: string; tags?: string[]; platform?: string; note?: string }, createdBy = 'owner') {
     const p = this.requireProject(input.project);
-    if (p.status !== 'active') throw conflict(`项目 ${input.project} 已归档`);
+    if (p.status !== 'active') throw conflict(tr('项目 {project} 已归档', { project: input.project }));
     const code = newIdentityCode();
     return this.write(() => {
       const r = this.db
@@ -1930,11 +1946,11 @@ export class Hub {
       const tags = [...new Set(input.tags ?? [])];
       this.db.prepare('INSERT INTO memberships (project_id, agent_id, tags, joined_at) VALUES (?, ?, ?, ?)').run(p.id, id, JSON.stringify(tags), this.iso());
       const me = agentCode(id);
-      const name = inviteName(input.name) || '待命名的 agent';
+      const name = inviteName(input.name) || tr('待命名的 agent');
       this.emit('agent.joined', createdBy, {
         project: p.id,
         data: { agent: me, name, tags, pending: true, created_by: createdBy },
-        summary: `${createdBy === 'owner' ? '负责人' : this.actorName(createdBy)}新建了 ${name}（${me}），加入项目 ${projectCode(p.id)}，等待它第一次连接`,
+        summary: () => tr('{v}新建了 {name}（{me}），加入项目 {projectCode}，等待它第一次连接', { v: createdBy === 'owner' ? tr('负责人') : this.actorName(createdBy), name, me, projectCode: projectCode(p.id) }),
       });
       return { agent: this.agentView(this.requireAgentRow(me)), code };
     });
@@ -1943,16 +1959,16 @@ export class Hub {
   /** 负责人把已有的 agent 加入另一个项目 */
   addAgentToProject(code: string, input: { project: string; tags?: string[] }) {
     const a = this.requireAgentRow(code);
-    if (a.status === 'deleted') throw conflict(`${a.name}（${code}）已被删除`);
+    if (a.status === 'deleted') throw conflict(tr('{name}（{code}）已被删除', { name: a.name, code }));
     const p = this.requireProject(input.project);
-    if (this.isMember(a.id, p.id)) throw conflict(`${a.name}（${code}）已经是项目 ${input.project} 的成员`);
+    if (this.isMember(a.id, p.id)) throw conflict(tr('{name}（{code}）已经是项目 {project} 的成员', { name: a.name, code, project: input.project }));
     return this.write(() => {
       const tags = [...new Set(input.tags ?? [])];
       this.db.prepare('INSERT INTO memberships (project_id, agent_id, tags, joined_at) VALUES (?, ?, ?, ?)').run(p.id, a.id, JSON.stringify(tags), this.iso());
       this.emit('agent.joined', 'owner', {
         project: p.id,
         data: { agent: code, name: a.name, platform: a.platform, tier: a.tier, tags },
-        summary: `负责人把 ${a.name}（${code}）加入了项目 ${projectCode(p.id)}`,
+        summary: () => tr('负责人把 {name}（{code}）加入了项目 {projectCode}', { name: a.name, code, projectCode: projectCode(p.id) }),
       });
       return this.agentView(this.requireAgentRow(code));
     });
@@ -1971,7 +1987,7 @@ export class Hub {
           | TaskRow
           | undefined)
       : undefined;
-    if (!row) throw notFound(`任务 ${code}`);
+    if (!row) throw notFound(tr('任务 {code}', { code }));
     return row;
   }
 
@@ -1986,7 +2002,7 @@ export class Hub {
   }
 
   private actorName(actor: string): string {
-    if (actor === 'owner') return '负责人';
+    if (actor === 'owner') return tr('负责人');
     const id = parseId(actor, 'A');
     return (id !== null && this.agentName(id)) || actor;
   }
@@ -2011,8 +2027,8 @@ export class Hub {
   private resolveRefs(codes: string[], projectId: number, self?: number): number[] {
     const ids = codes.map((c) => {
       const d = this.requireTask(c);
-      if (d.project_id !== projectId) throw invalid(`只能引用同一个项目的任务（${c} 不在 ${projectCode(projectId)}）`);
-      if (d.id === self) throw invalid('任务不能引用自己');
+      if (d.project_id !== projectId) throw invalid(tr('只能引用同一个项目的任务（{c} 不在 {projectCode}）', { c, projectCode: projectCode(projectId) }));
+      if (d.id === self) throw invalid(tr('任务不能引用自己'));
       return d.id;
     });
     return [...new Set(ids)];
@@ -2023,15 +2039,15 @@ export class Hub {
     const refs = json<number[]>(t.refs, []);
     const files = this.attachmentParts(t);
     return (
-      (refs.length ? `（参考任务：${refs.map((id) => this.codeOf(id)).join('、')}）` : '') +
-      (files.length ? `〔附件：${files.map((f) => f.name).join('、')}，可用 ahub download ${this.codeOf(t.id)} 下载〕` : '')
+      (refs.length ? tr('（参考任务：{v}）', { v: refs.map((id) => this.codeOf(id)).join(tr('、')) }) : '') +
+      (files.length ? tr('〔附件：{v}，可用 ahub download {v2} 下载〕', { v: files.map((f) => f.name).join(tr('、')), v2: this.codeOf(t.id) }) : '')
     );
   }
 
   /** 校验附件：去重、最多 10 个，每个都必须是已上传的文件。 */
   private resolveAttachments(fileIds: string[]): string[] {
     const ids = [...new Set(fileIds.map((x) => x.replace(/^\/?files\//, '')))];
-    if (ids.length > MAX_TASK_FILES) throw invalid(`一个任务最多带 ${MAX_TASK_FILES} 个附件`);
+    if (ids.length > MAX_TASK_FILES) throw invalid(tr('一个任务最多带 {MAX_TASK_FILES} 个附件', { MAX_TASK_FILES }));
     for (const id of ids) this.filePart(id);
     return ids;
   }
@@ -2139,7 +2155,7 @@ export class Hub {
     const params: (string | number)[] = [];
     if (filter.project) {
       const p = this.requireProject(filter.project);
-      if (actor.kind === 'agent' && !this.isMember(actor.agent.id, p.id)) throw forbidden(`你不是项目 ${filter.project} 的成员`);
+      if (actor.kind === 'agent' && !this.isMember(actor.agent.id, p.id)) throw forbidden(tr('你不是项目 {project} 的成员', { project: filter.project }));
       where.push('project_id = ?');
       params.push(p.id);
     } else if (actor.kind === 'agent') {
@@ -2171,7 +2187,7 @@ export class Hub {
 
   private assertVisible(actor: Actor, t: TaskRow) {
     if (actor.kind === 'agent' && !this.isMember(actor.agent.id, t.project_id)) {
-      throw forbidden(`你不是项目 ${projectCode(t.project_id)} 的成员`);
+      throw forbidden(tr('你不是项目 {projectCode} 的成员', { projectCode: projectCode(t.project_id) }));
     }
   }
 
@@ -2203,45 +2219,45 @@ export class Hub {
     },
   ): TaskView {
     const title = input.title?.trim();
-    if (!title) throw invalid('任务标题不能为空');
+    if (!title) throw invalid(tr('任务标题不能为空'));
     input = { ...input, due_at: normalizeDue(input.due_at) };
     const priority = (input.priority ?? 'P2').toUpperCase() as Priority;
-    if (!PRIORITIES.includes(priority)) throw invalid('优先级只能是 P0–P3');
+    if (!PRIORITIES.includes(priority)) throw invalid(tr('优先级只能是 P0–P3'));
 
     let projectId: number;
     let parent: TaskRow | null = null;
     if (input.parent) {
       parent = this.requireTask(input.parent);
       projectId = parent.project_id;
-      if (input.project && this.requireProject(input.project).id !== projectId) throw invalid('子任务必须和父任务在同一个项目');
+      if (input.project && this.requireProject(input.project).id !== projectId) throw invalid(tr('子任务必须和父任务在同一个项目'));
     } else if (input.project) {
       projectId = this.requireProject(input.project).id;
     } else {
-      throw invalid('请指定项目（project）或父任务（parent）');
+      throw invalid(tr('请指定项目（project）或父任务（parent）'));
     }
 
     if (actor.kind === 'agent') {
-      if (!parent) throw forbidden('agent 只能创建子任务，请提供 parent');
-      if (!this.isMember(actor.agent.id, projectId)) throw forbidden('你不是该项目的成员');
+      if (!parent) throw forbidden(tr('agent 只能创建子任务，请提供 parent'));
+      if (!this.isMember(actor.agent.id, projectId)) throw forbidden(tr('你不是该项目的成员'));
       if (parent.assignee_id !== actor.agent.id) {
         // 别人负责的任务下也可以建子任务，但只能指派给自己：拆出来的是自己要做的那部分，父任务负责的 agent 会在动态里看到
         const me = agentCode(actor.agent.id);
-        if (input.assignee && this.requireAgentRow(input.assignee).id !== actor.agent.id) throw forbidden(`${input.parent} 不在你名下，只能建指派给自己的子任务`);
+        if (input.assignee && this.requireAgentRow(input.assignee).id !== actor.agent.id) throw forbidden(tr('{parent} 不在你名下，只能建指派给自己的子任务', { parent: input.parent }));
         input = { ...input, assignee: me };
       }
     }
     const project = this.requireProject(projectCode(projectId));
-    if (project.status !== 'active') throw conflict('项目已归档，不能新建任务');
+    if (project.status !== 'active') throw conflict(tr('项目已归档，不能新建任务'));
 
     let assignee: AgentRow | null = null;
     if (input.assignee) {
       assignee = this.requireAgentRow(input.assignee);
-      if (!this.isMember(assignee.id, projectId)) throw invalid(`${input.assignee} 不是项目 ${projectCode(projectId)} 的成员`);
-      if (assignee.status !== 'active') throw invalid(`${input.assignee} 已被停用`);
+      if (!this.isMember(assignee.id, projectId)) throw invalid(tr('{assignee} 不是项目 {projectCode} 的成员', { assignee: input.assignee, projectCode: projectCode(projectId) }));
+      if (assignee.status !== 'active') throw invalid(tr('{assignee} 已被停用', { assignee: input.assignee }));
     }
     const deps = (input.depends_on ?? []).map((c) => {
       const d = this.requireTask(c);
-      if (d.project_id !== projectId) throw invalid('依赖的任务必须在同一个项目');
+      if (d.project_id !== projectId) throw invalid(tr('依赖的任务必须在同一个项目'));
       return d.id;
     });
     const refs = this.resolveRefs(input.refs ?? [], projectId);
@@ -2283,14 +2299,14 @@ export class Hub {
       if (status === 'open') this.db.prepare('UPDATE tasks SET opened_at = ? WHERE id = ?').run(now, Number(r.lastInsertRowid));
       const t = this.taskById(Number(r.lastInsertRowid));
       const code = taskCode(projectId, num);
-      const who = this.actorName(creator);
       this.emit('task.created', creator, {
         task: t,
         audience: status === 'draft' ? [] : null,
         data: { title, status, priority, parent: input.parent ?? null, required_tags: input.required_tags ?? [] },
-        summary: parent
-          ? `${who}为 ${input.parent} 创建了子任务 ${code}「${title}」${this.refNote(t)}`
-          : `${who}发布了任务 ${code}「${title}」${this.refNote(t)}`,
+        summary: () =>
+          (parent
+          ? tr('{who}为 {parent} 创建了子任务 {code}「{title}」{v}', { who: this.actorName(creator), parent: input.parent, code, title, v: this.refNote(t) })
+          : tr('{who}发布了任务 {code}「{title}」{v}', { who: this.actorName(creator), code, title, v: this.refNote(t) })),
       });
       if (assignee) {
         const to = agentCode(assignee.id);
@@ -2298,7 +2314,7 @@ export class Hub {
           task: t,
           audience: [to],
           data: { assignee: to, title },
-          summary: `${who}把 ${code}「${title}」指派给了你${this.refNote(t)}`,
+          summary: () => tr('{who}把 {code}「{title}」指派给了你{v}', { who: this.actorName(creator), code, title, v: this.refNote(t) }),
         });
       }
       return this.taskView(t);
@@ -2336,18 +2352,18 @@ export class Hub {
     },
   ): TaskView {
     const t = this.requireTask(code);
-    if (input.version !== undefined && input.version !== t.version) throw conflict('任务已被其他人修改，请刷新后重试');
+    if (input.version !== undefined && input.version !== t.version) throw conflict(tr('任务已被其他人修改，请刷新后重试'));
     const due = input.due_at === undefined ? undefined : normalizeDue(input.due_at);
     const priority = input.priority ? (input.priority.toUpperCase() as Priority) : t.priority;
-    if (!PRIORITIES.includes(priority)) throw invalid('优先级只能是 P0–P3');
+    if (!PRIORITIES.includes(priority)) throw invalid(tr('优先级只能是 P0–P3'));
     const deps =
       input.depends_on === undefined
         ? t.depends_on
         : JSON.stringify(
             input.depends_on.map((c) => {
               const d = this.requireTask(c);
-              if (d.id === t.id) throw invalid('任务不能依赖自己');
-              if (this.dependsOn(d.id, t.id)) throw invalid(`${c} 已经直接或间接依赖 ${code}，不能形成循环依赖`);
+              if (d.id === t.id) throw invalid(tr('任务不能依赖自己'));
+              if (this.dependsOn(d.id, t.id)) throw invalid(tr('{c} 已经直接或间接依赖 {code}，不能形成循环依赖', { c, code }));
               return d.id;
             }),
           );
@@ -2384,7 +2400,7 @@ export class Hub {
         task: updated,
         audience: t.status === 'draft' ? [] : null,
         data: { fields, assignee: t.assignee_id ? agentCode(t.assignee_id) : null },
-        summary: `负责人修改了 ${code} 的${fields.map(fieldLabel).join('、') || '内容'}`,
+        summary: () => tr('负责人修改了 {code} 的{v}', { code, v: fields.map(fieldLabel).join(tr('、')) || tr('内容') }),
       });
       return this.taskView(updated);
     });
@@ -2400,7 +2416,7 @@ export class Hub {
       block_reason?: string;
       archive?: ArchiveKind;
       audience?: string[] | null;
-      summary: string;
+      summary: string | (() => string);
       data?: Record<string, unknown>;
     },
   ): TaskRow {
@@ -2419,7 +2435,7 @@ export class Hub {
         t.id,
         t.version,
       );
-    if (r.changes === 0) throw conflict('任务刚刚被其他人修改，请重试');
+    if (r.changes === 0) throw conflict(tr('任务刚刚被其他人修改，请重试'));
     if (to === 'open') this.db.prepare('UPDATE tasks SET opened_at = ? WHERE id = ?').run(this.iso(), t.id);
     this.db
       .prepare('UPDATE tasks SET archive_kind = ?, archived_at = ? WHERE id = ?')
@@ -2463,15 +2479,16 @@ export class Hub {
       if (!this.depsDone(d)) continue;
       if (d.status === 'open') this.db.prepare('UPDATE tasks SET opened_at = ? WHERE id = ?').run(this.iso(), d.id);
       const dcode = taskCode(d.project_id, d.num);
-      const how = t.status === 'archived' ? `前置任务 ${code} 已归档` : `前置任务 ${code}「${excerpt(t.title)}」已完成`;
+      const how = t.status === 'archived' ? tr('前置任务 {code} 已归档', { code }) : tr('前置任务 {code}「{excerpt}」已完成', { code, excerpt: excerpt(t.title) });
       const assignee = d.assignee_id === null ? null : agentCode(d.assignee_id);
       this.emit('task.unlocked', 'owner', {
         task: d,
         audience: assignee ? [assignee] : null,
         data: { from: code, from_status: t.status, assignee },
-        summary: assignee
-          ? `${how}，${dcode}「${d.title}」的前置任务已全部结束，可以开始了`
-          : `${how}，${dcode}「${d.title}」现在可以领取了`,
+        summary: () =>
+          (assignee
+          ? tr('{how}，{dcode}「{title}」的前置任务已全部结束，可以开始了', { how, dcode, title: d.title })
+          : tr('{how}，{dcode}「{title}」现在可以领取了', { how, dcode, title: d.title })),
       });
     }
   }
@@ -2481,17 +2498,17 @@ export class Hub {
   }
 
   private requireAssignee(agent: AgentRow, t: TaskRow, code: string) {
-    if (t.assignee_id !== agent.id) throw forbidden(`${code} 不在你名下`);
+    if (t.assignee_id !== agent.id) throw forbidden(tr('{code} 不在你名下', { code }));
   }
 
   assign(code: string, to: string | null, message?: string): TaskView {
     const t = this.requireTask(code);
-    if (CLOSED_STATUSES.includes(t.status)) throw conflict(`${code} 已经${statusLabel(t)}，不能再指派`);
+    if (CLOSED_STATUSES.includes(t.status)) throw conflict(tr('{code} 已经{statusLabel}，不能再指派', { code, statusLabel: statusLabel(t) }));
     let agent: AgentRow | null = null;
     if (to) {
       agent = this.requireAgentRow(to);
-      if (!this.isMember(agent.id, t.project_id)) throw invalid(`${to} 不是项目 ${projectCode(t.project_id)} 的成员`);
-      if (agent.status !== 'active') throw invalid(`${to} 已被停用`);
+      if (!this.isMember(agent.id, t.project_id)) throw invalid(tr('{to} 不是项目 {projectCode} 的成员', { to, projectCode: projectCode(t.project_id) }));
+      if (agent.status !== 'active') throw invalid(tr('{to} 已被停用', { to }));
     }
     return this.write(() => {
       const prev = t.assignee_id;
@@ -2499,7 +2516,8 @@ export class Hub {
       const updated = this.setStatus(t, 'owner', status, {
         assignee: agent?.id ?? null,
         lease: null,
-        summary: agent ? `负责人把 ${code} 指派给了 ${agent.name}（${to}）` : `负责人把 ${code} 放回了任务池`,
+        summary: () =>
+          (agent ? tr('负责人把 {code} 指派给了 {name}（{to}）', { code, name: agent.name, to }) : tr('负责人把 {code} 放回了任务池', { code })),
         data: { previous_assignee: prev === null ? null : agentCode(prev) },
       });
       if (agent) {
@@ -2507,7 +2525,7 @@ export class Hub {
           task: updated,
           audience: [agentCode(agent.id)],
           data: { assignee: agentCode(agent.id), title: t.title, message: message ?? '' },
-          summary: `负责人把 ${code}「${t.title}」指派给了你${this.refNote(t)}${message ? `：${message}` : ''}`,
+          summary: () => tr('负责人把 {code}「{title}」指派给了你{v}{v2}', { code, title: t.title, v: this.refNote(t), v2: message ? tr('：{message}', { message }) : '' }),
         });
       }
       if (prev !== null && prev !== agent?.id) {
@@ -2515,7 +2533,7 @@ export class Hub {
           task: updated,
           audience: [agentCode(prev)],
           data: { fields: ['assignee'] },
-          summary: `负责人把 ${code} 从你名下改派走了，请停止这个任务的工作`,
+          summary: () => tr('负责人把 {code} 从你名下改派走了，请停止这个任务的工作', { code }),
         });
       }
       return this.taskView(updated);
@@ -2524,16 +2542,16 @@ export class Hub {
 
   publish(code: string): TaskView {
     const t = this.requireTask(code);
-    if (t.status !== 'draft') throw conflict(`${code} 不是草稿`);
+    if (t.status !== 'draft') throw conflict(tr('{code} 不是草稿', { code }));
     return this.write(() => {
       const to: TaskStatus = t.assignee_id ? 'assigned' : 'open';
-      const updated = this.setStatus(t, 'owner', to, { summary: `负责人发布了任务 ${code}「${t.title}」` });
+      const updated = this.setStatus(t, 'owner', to, { summary: () => tr('负责人发布了任务 {code}「{title}」', { code, title: t.title }) });
       if (t.assignee_id) {
         this.emit('task.assigned', 'owner', {
           task: updated,
           audience: [agentCode(t.assignee_id)],
           data: { assignee: agentCode(t.assignee_id), title: t.title },
-          summary: `负责人把 ${code}「${t.title}」指派给了你${this.refNote(t)}`,
+          summary: () => tr('负责人把 {code}「{title}」指派给了你{v}', { code, title: t.title, v: this.refNote(t) }),
         });
       }
       return this.taskView(updated);
@@ -2543,20 +2561,20 @@ export class Hub {
   claim(agent: AgentRow, code: string): TaskView {
     const t = this.requireTask(code);
     this.assertVisible({ kind: 'agent', agent }, t);
-    if (t.status !== 'open') throw conflict(`${code} 当前状态是「${STATUS_LABELS[t.status]}」，不能领取`);
-    if (!this.depsDone(t)) throw conflict(`${code} 的前置任务还没完成`);
+    if (t.status !== 'open') throw conflict(tr('{code} 当前状态是「{v}」，不能领取', { code, v: tr(STATUS_LABELS[t.status]) }));
+    if (!this.depsDone(t)) throw conflict(tr('{code} 的前置任务还没完成', { code }));
     const m = this.db.prepare('SELECT tags FROM memberships WHERE project_id = ? AND agent_id = ?').get(t.project_id, agent.id) as {
       tags: string;
     };
     if (!this.tagsMatch(t, [...json<string[]>(m.tags, []), ...json<string[]>(agent.skills, [])])) {
-      throw forbidden(`${code} 需要能力标签：${json<string[]>(t.required_tags, []).join('、')}`);
+      throw forbidden(tr('{code} 需要能力标签：{v}', { code, v: json<string[]>(t.required_tags, []).join(tr('、')) }));
     }
     const me = agentCode(agent.id);
     return this.write(() => {
       const updated = this.setStatus(t, me, 'working', {
         assignee: agent.id,
         lease: this.lease(agent),
-        summary: `${agent.name}（${me}）领取了 ${code}「${t.title}」`,
+        summary: () => tr('{name}（{me}）领取了 {code}「{title}」', { name: agent.name, me, code, title: t.title }),
       });
       return this.taskView(updated);
     });
@@ -2565,13 +2583,13 @@ export class Hub {
   accept(agent: AgentRow, code: string): TaskView {
     const t = this.requireTask(code);
     this.requireAssignee(agent, t, code);
-    if (t.status !== 'assigned') throw conflict(`${code} 当前状态是「${STATUS_LABELS[t.status]}」，无需接受`);
+    if (t.status !== 'assigned') throw conflict(tr('{code} 当前状态是「{v}」，无需接受', { code, v: tr(STATUS_LABELS[t.status]) }));
     const me = agentCode(agent.id);
     return this.write(() =>
       this.taskView(
         this.setStatus(t, me, 'working', {
           lease: this.lease(agent),
-          summary: `${agent.name}（${me}）接受了 ${code}「${t.title}」`,
+          summary: () => tr('{name}（{me}）接受了 {code}「{title}」', { name: agent.name, me, code, title: t.title }),
         }),
       ),
     );
@@ -2580,15 +2598,15 @@ export class Hub {
   decline(agent: AgentRow, code: string, reason: string): TaskView {
     const t = this.requireTask(code);
     this.requireAssignee(agent, t, code);
-    if (t.status !== 'assigned') throw conflict(`只能拒绝尚未接受的指派`);
-    if (!reason?.trim()) throw invalid('请说明拒绝的理由');
+    if (t.status !== 'assigned') throw conflict(tr('只能拒绝尚未接受的指派'));
+    if (!reason?.trim()) throw invalid(tr('请说明拒绝的理由'));
     const me = agentCode(agent.id);
     return this.write(() =>
       this.taskView(
         this.setStatus(t, me, 'open', {
           assignee: null,
           lease: null,
-          summary: `${agent.name}（${me}）拒绝了 ${code}：${reason}`,
+          summary: () => tr('{name}（{me}）拒绝了 {code}：{reason}', { name: agent.name, me, code, reason }),
           data: { reason },
         }),
       ),
@@ -2600,17 +2618,17 @@ export class Hub {
     this.requireAssignee(agent, t, code);
     // 待验收时也可以更新进度和工作笔记（例如补充说明、改了交付物），任务仍是待验收
     if (!['assigned', 'working', 'input_required', 'review'].includes(t.status)) {
-      throw conflict(`${code} 当前状态是「${STATUS_LABELS[t.status]}」，不能上报进度`);
+      throw conflict(tr('{code} 当前状态是「{v}」，不能上报进度', { code, v: tr(STATUS_LABELS[t.status]) }));
     }
     const note = input.note?.trim();
-    if (!note) throw invalid('请用一句话说明当前进展（note）');
+    if (!note) throw invalid(tr('请用一句话说明当前进展（note）'));
     const percent = input.percent === undefined ? t.progress : Math.round(Number(input.percent));
-    if (!Number.isFinite(percent) || percent < 0 || percent > 100) throw invalid('percent 必须是 0–100 的数字');
+    if (!Number.isFinite(percent) || percent < 0 || percent > 100) throw invalid(tr('percent 必须是 0–100 的数字'));
     const me = agentCode(agent.id);
     return this.write(() => {
       let row = t;
       if (t.status === 'assigned') {
-        row = this.setStatus(t, me, 'working', { lease: this.lease(agent), summary: `${agent.name}（${me}）接受了 ${code}「${t.title}」` });
+        row = this.setStatus(t, me, 'working', { lease: this.lease(agent), summary: () => tr('{name}（{me}）接受了 {code}「{title}」', { name: agent.name, me, code, title: t.title }) });
       }
       this.db
         .prepare(
@@ -2626,7 +2644,7 @@ export class Hub {
       this.emit('task.progress', me, {
         task: updated,
         data: { percent, note, assignee: me },
-        summary: `${agent.name}：${code} 进度 ${percent}%，${note}`,
+        summary: () => tr('{name}：{code} 进度 {percent}%，{note}', { name: agent.name, code, percent, note }),
       });
       return this.taskView(updated);
     });
@@ -2639,18 +2657,18 @@ export class Hub {
   block(agent: AgentRow, code: string, reason: string, options: string[] = []): TaskView {
     const t = this.requireTask(code);
     this.requireAssignee(agent, t, code);
-    if (t.status !== 'working') throw conflict(`只有进行中的任务可以标记阻塞`);
-    if (!reason?.trim()) throw invalid('请说明阻塞的原因');
+    if (t.status !== 'working') throw conflict(tr('只有进行中的任务可以标记阻塞'));
+    if (!reason?.trim()) throw invalid(tr('请说明阻塞的原因'));
     const opts = [...new Set(options.map((o) => o.trim()).filter(Boolean))];
-    if (opts.length > 6) throw invalid('可选答案最多 6 个');
-    if (opts.some((o) => o.length > 100)) throw invalid('每个可选答案不超过 100 个字');
+    if (opts.length > 6) throw invalid(tr('可选答案最多 6 个'));
+    if (opts.some((o) => o.length > 100)) throw invalid(tr('每个可选答案不超过 100 个字'));
     const me = agentCode(agent.id);
     return this.write(() => {
       this.db.prepare('UPDATE tasks SET block_options = ? WHERE id = ?').run(JSON.stringify(opts), t.id);
       return this.taskView(
         this.setStatus(this.taskById(t.id), me, 'input_required', {
           block_reason: reason.trim(),
-          summary: `${agent.name}（${me}）标记 ${code} 阻塞：${reason.trim()}${opts.length ? `（可选：${opts.join(' / ')}）` : ''}`,
+          summary: () => tr('{name}（{me}）标记 {code} 阻塞：{reason}{v}', { name: agent.name, me, code, reason: reason.trim(), v: opts.length ? tr('（可选：{opts}）', { opts: opts.join(' / ') }) : '' }),
           data: { reason: reason.trim(), options: opts },
         }),
       );
@@ -2660,14 +2678,14 @@ export class Hub {
   /** 负责人回答阻塞提问：答案作为评论留在任务里，同时解除阻塞并唤起负责的 agent。 */
   answer(code: string, answer: string): TaskView {
     const t = this.requireTask(code);
-    if (t.status !== 'input_required') throw conflict(`${code} 没有处于阻塞状态`);
+    if (t.status !== 'input_required') throw conflict(tr('{code} 没有处于阻塞状态', { code }));
     const text = answer?.trim();
-    if (!text) throw invalid('请填写回答');
+    if (!text) throw invalid(tr('请填写回答'));
     return this.write(() => {
-      this.addComment('owner', t, `**回答**「${excerpt(t.block_reason, 80)}」：${text}`);
+      this.addComment('owner', t, tr('**回答**「{v}」：{text}', { v: excerpt(t.block_reason, 80), text }));
       return this.taskView(
         this.setStatus(this.taskById(t.id), 'owner', 'working', {
-          summary: `负责人回答了 ${code} 的问题：${text}`,
+          summary: () => tr('负责人回答了 {code} 的问题：{text}', { code, text }),
           data: { answer: text, question: t.block_reason },
         }),
       );
@@ -2677,12 +2695,12 @@ export class Hub {
   unblock(actor: Actor, code: string, note?: string): TaskView {
     const t = this.requireTask(code);
     if (actor.kind === 'agent') this.requireAssignee(actor.agent, t, code);
-    if (t.status !== 'input_required') throw conflict(`${code} 没有处于阻塞状态`);
+    if (t.status !== 'input_required') throw conflict(tr('{code} 没有处于阻塞状态', { code }));
     const who = actor.kind === 'owner' ? 'owner' : agentCode(actor.agent.id);
     return this.write(() =>
       this.taskView(
         this.setStatus(t, who, 'working', {
-          summary: `${this.actorName(who)}解除了 ${code} 的阻塞${note ? `：${note}` : ''}`,
+          summary: () => tr('{v}解除了 {code} 的阻塞{v2}', { v: this.actorName(who), code, v2: note ? tr('：{note}', { note }) : '' }),
           data: { note: note ?? '' },
         }),
       ),
@@ -2692,9 +2710,9 @@ export class Hub {
   submit(agent: AgentRow, code: string, input: { summary: string; artifacts?: { name?: string; parts: Part[] }[] }): TaskView {
     const t = this.requireTask(code);
     this.requireAssignee(agent, t, code);
-    if (t.status !== 'working') throw conflict(`只有进行中的任务可以提交验收`);
+    if (t.status !== 'working') throw conflict(tr('只有进行中的任务可以提交验收'));
     const summary = input.summary?.trim();
-    if (!summary) throw invalid('请写一段交付说明（summary）');
+    if (!summary) throw invalid(tr('请写一段交付说明（summary）'));
     const me = agentCode(agent.id);
     return this.write(() => {
       const now = this.iso();
@@ -2708,12 +2726,13 @@ export class Hub {
           .prepare('INSERT INTO artifact_revisions (artifact_id, rev, author, parts, created_at) VALUES (?, 1, ?, ?, ?)')
           .run(Number(r.lastInsertRowid), me, JSON.stringify(parts), now);
       };
+      // 交付说明的名字是数据（统计提交轮次时按它判断），显示时再翻译
       add('交付说明', [{ kind: 'text', text: summary }]);
-      for (const a of input.artifacts ?? []) add(a.name ?? '交付物', a.parts ?? []);
+      for (const a of input.artifacts ?? []) add(a.name ?? tr('交付物'), a.parts ?? []);
       const fresh = this.taskById(t.id);
       const updated = this.setStatus(fresh, me, 'review', {
         lease: null,
-        summary: `${agent.name}（${me}）提交了 ${code}「${t.title}」等待验收`,
+        summary: () => tr('{name}（{me}）提交了 {code}「{title}」等待验收', { name: agent.name, me, code, title: t.title }),
         data: { summary },
       });
       return this.taskView(updated);
@@ -2723,15 +2742,15 @@ export class Hub {
   release(agent: AgentRow, code: string, reason: string): TaskView {
     const t = this.requireTask(code);
     this.requireAssignee(agent, t, code);
-    if (!['assigned', 'working', 'input_required'].includes(t.status)) throw conflict(`${code} 当前状态不能放弃`);
-    if (!reason?.trim()) throw invalid('请说明放弃的理由');
+    if (!['assigned', 'working', 'input_required'].includes(t.status)) throw conflict(tr('{code} 当前状态不能放弃', { code }));
+    if (!reason?.trim()) throw invalid(tr('请说明放弃的理由'));
     const me = agentCode(agent.id);
     return this.write(() =>
       this.taskView(
         this.setStatus(t, me, 'open', {
           assignee: null,
           lease: null,
-          summary: `${agent.name}（${me}）放弃了 ${code}：${reason}`,
+          summary: () => tr('{name}（{me}）放弃了 {code}：{reason}', { name: agent.name, me, code, reason }),
           data: { reason },
         }),
       ),
@@ -2742,24 +2761,24 @@ export class Hub {
    * 验收、退回、归档（原来的取消）通常由负责人做；agent 拆出来的子任务，创建它的 agent 也可以验收、退回，
    * 在还没人开工（待领取、已指派）时归档。指派给自己的子任务不能自己验收。父任务最终仍由负责人验收。
    */
-  private reviewer(actor: Actor, t: TaskRow, code: string, what: '验收' | '退回' | '归档'): { by: string; who: string } {
-    if (actor.kind === 'owner') return { by: 'owner', who: '负责人' };
+  private reviewer(actor: Actor, t: TaskRow, code: string, what: '验收' | '退回' | '归档'): { by: string; who: () => string } {
+    if (actor.kind === 'owner') return { by: 'owner', who: () => tr('负责人') };
     const me = agentCode(actor.agent.id);
-    if (t.parent_id === null || t.created_by !== me) throw forbidden(`只有负责人或创建这个子任务的 agent 可以${what} ${code}`);
-    if (what !== '归档' && t.assignee_id === actor.agent.id) throw forbidden(`${code} 指派给了你自己，不能自己${what}，请等负责人处理`);
-    if (what === '归档' && !['open', 'assigned'].includes(t.status)) throw forbidden(`${code} 已经有人开工了，只有负责人可以归档`);
-    return { by: me, who: `${actor.agent.name}（${me}）` };
+    if (t.parent_id === null || t.created_by !== me) throw forbidden(tr('只有负责人或创建这个子任务的 agent 可以{what} {code}', { what: tr(what), code }));
+    if (what !== '归档' && t.assignee_id === actor.agent.id) throw forbidden(tr('{code} 指派给了你自己，不能自己{what}，请等负责人处理', { code, what: tr(what) }));
+    if (what === '归档' && !['open', 'assigned'].includes(t.status)) throw forbidden(tr('{code} 已经有人开工了，只有负责人可以归档', { code }));
+    return { by: me, who: () => tr('{name}（{me}）', { name: actor.agent.name, me }) };
   }
 
   approve(code: string, comment?: string, actor: Actor = { kind: 'owner' }): TaskView {
     const t = this.requireTask(code);
-    if (t.status !== 'review') throw conflict(`${code} 不在待验收状态`);
+    if (t.status !== 'review') throw conflict(tr('{code} 不在待验收状态', { code }));
     const { by, who } = this.reviewer(actor, t, code, '验收');
     return this.write(() => {
       if (comment?.trim()) this.addComment(by, t, comment);
       const updated = this.setStatus(this.taskById(t.id), by, 'completed', {
         lease: null,
-        summary: `${who}验收通过了 ${code}「${t.title}」`,
+        summary: () => tr('{who}验收通过了 {code}「{title}」', {who: who(), code, title: t.title }),
       });
       return this.taskView(updated);
     });
@@ -2767,15 +2786,15 @@ export class Hub {
 
   reject(code: string, reason: string, actor: Actor = { kind: 'owner' }): TaskView {
     const t = this.requireTask(code);
-    if (t.status !== 'review') throw conflict(`${code} 不在待验收状态`);
-    if (!reason?.trim()) throw invalid('请写明修改意见');
+    if (t.status !== 'review') throw conflict(tr('{code} 不在待验收状态', { code }));
+    if (!reason?.trim()) throw invalid(tr('请写明修改意见'));
     const { by, who } = this.reviewer(actor, t, code, '退回');
     const assignee = t.assignee_id ? this.requireAgentRow(agentCode(t.assignee_id)) : null;
     return this.write(() => {
-      this.addComment(by, t, `验收未通过：${reason}`);
+      this.addComment(by, t, tr('验收未通过：{reason}', { reason }));
       const updated = this.setStatus(this.taskById(t.id), by, 'working', {
         lease: assignee ? this.lease(assignee) : null,
-        summary: `${who}退回了 ${code}：${reason}`,
+        summary: () => tr('{who}退回了 {code}：{reason}', {who: who(), code, reason }),
         data: { reason },
       });
       return this.taskView(updated);
@@ -2785,14 +2804,14 @@ export class Hub {
   /** 手动归档（原来的「取消」）：任务不再做了，收进归档；接口名沿用 cancel，兼容老版本命令行。 */
   cancel(code: string, reason?: string, actor: Actor = { kind: 'owner' }): TaskView {
     const t = this.requireTask(code);
-    if (CLOSED_STATUSES.includes(t.status)) throw conflict(`${code} 已经${statusLabel(t)}`);
+    if (CLOSED_STATUSES.includes(t.status)) throw conflict(tr('{code} 已经{statusLabel}', { code, statusLabel: statusLabel(t) }));
     const { by, who } = this.reviewer(actor, t, code, '归档');
     return this.write(() =>
       this.taskView(
         this.setStatus(t, by, 'archived', {
           lease: null,
           archive: 'manual',
-          summary: `${who}归档了 ${code}「${t.title}」${reason ? `：${reason}` : ''}`,
+          summary: () => tr('{who}归档了 {code}「{title}」{v}', {who: who(), code, title: t.title, v: reason ? tr('：{reason}', { reason }) : '' }),
           data: { reason: reason ?? '' },
         }),
       ),
@@ -2809,7 +2828,7 @@ export class Hub {
   setArchiveSettings(input: { auto_archive_hours?: number }) {
     const v = input.auto_archive_hours;
     if (v !== undefined) {
-      if (!Number.isInteger(v) || v < 0 || v > 24 * 365) throw invalid('自动归档时间要在 0 到 8760 小时之间（0 表示不自动归档）');
+      if (!Number.isInteger(v) || v < 0 || v > 24 * 365) throw invalid(tr('自动归档时间要在 0 到 8760 小时之间（0 表示不自动归档）'));
       this.db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('auto_archive_hours', ?)").run(String(v));
     }
     return this.archiveSettings();
@@ -2838,7 +2857,7 @@ export class Hub {
           archive: 'auto',
           lease: null,
           audience: [],
-          summary: `${code}「${t.title}」完成后 ${hours} 小时没有动静，已自动归档`,
+          summary: () => tr('{code}「{title}」完成后 {hours} 小时没有动静，已自动归档', { code, title: t.title, hours }),
           data: { hours },
         });
       }
@@ -2865,7 +2884,7 @@ export class Hub {
   /** 把交付物里的 file_id 换成文件信息。 */
   filePart(id: string): Part {
     const f = this.getFile(id);
-    if (!f) throw invalid(`找不到上传的文件 ${id}`);
+    if (!f) throw invalid(tr('找不到上传的文件 {id}', { id }));
     return { kind: 'file', name: f.name, mime: f.mime, size: f.size, url: `/files/${f.id}` };
   }
 
@@ -2903,7 +2922,6 @@ export class Hub {
     const code = taskCode(t.project_id, t.num);
     // 负责人在任务下回复了，说明这个任务里 @ 他的话已经看过
     if (author === 'owner') this.db.prepare(`UPDATE events SET owner_read = 1 WHERE type = 'mention' AND audience = '[]' AND task_id = ?`).run(t.id);
-    const who = this.actorName(author);
     const assignee = t.assignee_id === null ? null : agentCode(t.assignee_id);
     const commentId = Number(r.lastInsertRowid);
     // agent 在任务下回复了，它在这个任务里接手的评论和指派都算处理完
@@ -2914,14 +2932,14 @@ export class Hub {
       task: t,
       // mentions：评论 @ 了哪些 agent。@ 了别人、没 @ 任务负责的 agent 时，不唤醒它（它在动态里照样看得到）
       data: { comment_id: commentId, text, assignee, mentions: targets.filter((x) => x !== 'owner'), files: files.map((f) => f.name) },
-      summary: `${who}在 ${code} 下评论：${text ? excerpt(text) : ''}${files.length ? `${text ? ' ' : ''}〔附件：${files.map((f) => f.name).join('、')}〕` : ''}`,
+      summary: () => tr('{who}在 {code} 下评论：{v}{v2}', { who: this.actorName(author), code, v: text ? excerpt(text) : '', v2: files.length ? tr('{v}〔附件：{v2}〕', { v: text ? ' ' : '', v2: files.map((f) => f.name).join(tr('、')) }) : '' }),
     });
     for (const target of targets) {
       this.emit('mention', author, {
         task: t,
         audience: target === 'owner' ? [] : [target],
         data: { target, text, comment_id: commentId },
-        summary: `${who}在 ${code} 里 @了${target === 'owner' ? '负责人' : '你'}：${excerpt(text)}`,
+        summary: () => tr('{who}在 {code} 里 @了{v}：{excerpt}', { who: this.actorName(author), code, v: target === 'owner' ? tr('负责人') : tr('你'), excerpt: excerpt(text) }),
       });
     }
   }
@@ -2961,7 +2979,7 @@ export class Hub {
    */
   markReceipts(agent: AgentRow, input: { state?: string; seqs?: number[]; tasks?: string[]; note?: string }) {
     const state = input.state as ReceiptState;
-    if (!RECEIPT_STATES.includes(state)) throw invalid('state 只能是 working、done、failed 或 stopped');
+    if (!RECEIPT_STATES.includes(state)) throw invalid(tr('state 只能是 working、done、failed 或 stopped'));
     const note = String(input.note ?? '').slice(0, 300);
     const me = agentCode(agent.id);
     const targets: { kind: ReceiptKind; id: number }[] = [];
@@ -3056,8 +3074,8 @@ export class Hub {
 
   private receiptEvent(agent: AgentRow, state: ReceiptState, targets: { kind: ReceiptKind; id: number }[]) {
     if (!targets.length) return;
-    const who = `${agent.name}（${agentCode(agent.id)}）`;
-    const verb = { working: '开始处理', done: '处理完', failed: '没能处理完', stopped: '中断了处理' }[state];
+    const who = tr('{name}（{agentCode}）', { name: agent.name, agentCode: agentCode(agent.id) });
+    const verb = { working: tr('开始处理'), done: tr('处理完'), failed: tr('没能处理完'), stopped: tr('中断了处理') }[state];
     // 事件挂在相关任务上，控制台据此只刷新打开的那个任务
     const taskIds = new Set<number>();
     for (const t of targets) {
@@ -3072,7 +3090,7 @@ export class Hub {
       task,
       audience: [],
       data: { agent: agentCode(agent.id), state, targets },
-      summary: `${who}${verb} ${targets.length} 条事项`,
+      summary: () => tr('{who}{verb} {n} 条事项', { who, verb, n: targets.length }),
     });
   }
 
@@ -3114,7 +3132,7 @@ export class Hub {
     const a = this.db.prepare('SELECT * FROM artifacts WHERE id = ? AND task_id = ?').get(Number(id), t.id) as unknown as
       | ArtifactRow
       | undefined;
-    if (!a) throw notFound(`${taskCode(t.project_id, t.num)} 下没有编号为 ${id} 的交付物`);
+    if (!a) throw notFound(tr('{v} 下没有编号为 {id} 的交付物', { v: taskCode(t.project_id, t.num), id }));
     return a;
   }
 
@@ -3125,7 +3143,7 @@ export class Hub {
     const a = this.artifactView(this.requireArtifact(t, id));
     if (rev === undefined || rev === a.rev) return a;
     const r = this.artifactRevisions(actor, code, id).find((x) => x.rev === rev);
-    if (!r) throw notFound(`交付物 ${id} 没有第 ${rev} 版`);
+    if (!r) throw notFound(tr('交付物 {id} 没有第 {rev} 版', { id, rev }));
     return { ...a, parts: r.parts, rev: r.rev, updated_at: r.created_at, updated_by: r.author };
   }
 
@@ -3164,37 +3182,37 @@ export class Hub {
   ): ArtifactView {
     const t = this.requireTask(code);
     this.assertVisible(actor, t);
-    if (t.status === 'archived' && t.archive_kind !== 'auto') throw conflict(`${code} 已手动归档，不能再改交付物`);
+    if (t.status === 'archived' && t.archive_kind !== 'auto') throw conflict(tr('{code} 已手动归档，不能再改交付物', { code }));
     const a = this.requireArtifact(t, id);
     const baseRev = Number(input.base_rev);
-    if (!Number.isInteger(baseRev) || baseRev < 1) throw invalid('请带上 base_rev：你是在第几版的基础上修改的（先读取交付物拿到当前版本号）');
-    if (baseRev > a.rev) throw invalid(`交付物 ${a.id} 目前只到第 ${a.rev} 版`);
+    if (!Number.isInteger(baseRev) || baseRev < 1) throw invalid(tr('请带上 base_rev：你是在第几版的基础上修改的（先读取交付物拿到当前版本号）'));
+    if (baseRev > a.rev) throw invalid(tr('交付物 {id} 目前只到第 {rev} 版', { id: a.id, rev: a.rev }));
     const who = actor.kind === 'owner' ? 'owner' : agentCode(actor.agent.id);
     const stale = () =>
-      `交付物 ${a.id}「${a.name}」已经被${this.actorName(a.updated_by ?? a.author)}改到第 ${a.rev} 版（你基于第 ${baseRev} 版）`;
+      tr('交付物 {id}「{name}」已经被{v}改到第 {rev} 版（你基于第 {baseRev} 版）', { id: a.id, name: a.name, v: this.actorName(a.updated_by ?? a.author), rev: a.rev, baseRev });
     let parts: Part[];
     const current = json<Part[]>(a.parts, []);
     if (input.edits?.length) {
-      if (input.content !== undefined || input.parts) throw invalid('edits 和 content 只能二选一');
+      if (input.content !== undefined || input.parts) throw invalid(tr('edits 和 content 只能二选一'));
       let text = editableText(current);
-      if (text === null) throw invalid(`交付物 ${a.id} 不是单段文本，只能整份替换`);
+      if (text === null) throw invalid(tr('交付物 {id} 不是单段文本，只能整份替换', { id: a.id }));
       for (const [i, e] of input.edits.entries()) {
-        if (typeof e?.old !== 'string' || !e.old || typeof e.new !== 'string') throw invalid(`第 ${i + 1} 处修改需要 old（原文片段）和 new（替换后的内容）`);
+        if (typeof e?.old !== 'string' || !e.old || typeof e.new !== 'string') throw invalid(tr('第 {v} 处修改需要 old（原文片段）和 new（替换后的内容）', { v: i + 1 }));
         const n = countOf(text, e.old);
         if (n !== 1) {
-          if (baseRev < a.rev) throw conflict(`${stale()}，而且你要改的第 ${i + 1} 处已经被改动。请重新读取最新版本后再改。`);
-          throw invalid(`第 ${i + 1} 处的原文片段${n === 0 ? '在交付物里找不到' : `出现了 ${n} 次，请多带一些上下文让它唯一`}`);
+          if (baseRev < a.rev) throw conflict(tr('{stale}，而且你要改的第 {v} 处已经被改动。请重新读取最新版本后再改。', { stale: stale(), v: i + 1 }));
+          throw invalid(tr('第 {v} 处的原文片段{v2}', { v: i + 1, v2: n === 0 ? tr('在交付物里找不到') : tr('出现了 {n} 次，请多带一些上下文让它唯一', { n }) }));
         }
         text = text.replace(e.old, () => e.new);
       }
       parts = [{ kind: 'text', text }];
     } else if (input.content !== undefined || input.parts) {
-      if (baseRev !== a.rev) throw conflict(`${stale()}，整份替换会覆盖别人的修改。请先读取最新版本，在它的基础上修改后再提交。`);
+      if (baseRev !== a.rev) throw conflict(tr('{stale}，整份替换会覆盖别人的修改。请先读取最新版本，在它的基础上修改后再提交。', { stale: stale() }));
       parts = input.parts ?? [{ kind: 'text', text: String(input.content) }];
-      if (!parts.length) throw invalid('交付物内容不能为空');
-    } else throw invalid('请给出 content（整份替换）或 edits（局部修改）');
+      if (!parts.length) throw invalid(tr('交付物内容不能为空'));
+    } else throw invalid(tr('请给出 content（整份替换）或 edits（局部修改）'));
     const before = editableText(current);
-    if (before !== null && before === editableText(parts)) throw invalid('内容没有变化');
+    if (before !== null && before === editableText(parts)) throw invalid(tr('内容没有变化'));
     const note = input.note?.trim() ?? '';
     return this.write(() => {
       const now = this.iso();
@@ -3209,7 +3227,7 @@ export class Hub {
       this.emit('artifact.updated', who, {
         task: t,
         data: { artifact: a.id, name: a.name, rev, assignee, note, mode: input.edits?.length ? 'patch' : 'replace' },
-        summary: `${this.actorName(who)}把 ${code} 的交付物「${a.name}」改到了第 ${rev} 版${note ? `：${excerpt(note)}` : ''}`,
+        summary: () => tr('{v}把 {code} 的交付物「{name}」改到了第 {rev} 版{v2}', { v: this.actorName(who), code, name: a.name, rev, v2: note ? tr('：{excerpt}', { excerpt: excerpt(note) }) : '' }),
       });
       return this.artifactView(this.requireArtifact(t, a.id));
     });
@@ -3219,20 +3237,20 @@ export class Hub {
   comment(actor: Actor, code: string, text: string, fileIds: string[] = []) {
     const t = this.requireTask(code);
     this.assertVisible(actor, t);
-    if (fileIds.length > 10) throw invalid('一条评论最多带 10 个附件');
+    if (fileIds.length > 10) throw invalid(tr('一条评论最多带 10 个附件'));
     const files = [...new Set(fileIds)].map((id) => this.filePart(id));
-    if (!text?.trim() && files.length === 0) throw invalid('评论内容不能为空');
+    if (!text?.trim() && files.length === 0) throw invalid(tr('评论内容不能为空'));
     const author = actor.kind === 'owner' ? 'owner' : agentCode(actor.agent.id);
     this.write(() => this.addComment(author, t, text?.trim() ?? '', files));
     return this.getTask(code).comments.at(-1)!;
   }
 
   message(actor: Actor, to: string, body: string) {
-    if (!body?.trim()) throw invalid('私信内容不能为空');
+    if (!body?.trim()) throw invalid(tr('私信内容不能为空'));
     const from = actor.kind === 'owner' ? 'owner' : agentCode(actor.agent.id);
     let target: string;
     if (/^(owner|负责人)$/i.test(to)) {
-      if (actor.kind === 'owner') throw invalid('不能给自己发私信');
+      if (actor.kind === 'owner') throw invalid(tr('不能给自己发私信'));
       target = 'owner';
     } else {
       const a = this.requireAgentRow(to);
@@ -3241,7 +3259,7 @@ export class Hub {
         const shared = this.db
           .prepare('SELECT 1 FROM memberships a JOIN memberships b ON a.project_id = b.project_id WHERE a.agent_id = ? AND b.agent_id = ?')
           .get(actor.agent.id, a.id);
-        if (!shared) throw forbidden(`你和 ${to} 没有共同参与的项目`);
+        if (!shared) throw forbidden(tr('你和 {to} 没有共同参与的项目', { to }));
       }
     }
     return this.write(() => {
@@ -3255,7 +3273,7 @@ export class Hub {
       this.emit('message.direct', from, {
         audience: target === 'owner' ? [] : [target],
         data: { from, to: target, body: body.trim(), message_id: Number(r.lastInsertRowid) },
-        summary: `${this.actorName(from)}给${target === 'owner' ? '负责人' : '你'}发来私信：${excerpt(body)}`,
+        summary: () => tr('{v}给{v2}发来私信：{excerpt}', { v: this.actorName(from), v2: target === 'owner' ? tr('负责人') : tr('你'), excerpt: excerpt(body) }),
       });
       return { ok: true };
     });
@@ -3280,12 +3298,12 @@ export class Hub {
 
   broadcast(project: string, body: string) {
     const p = this.requireProject(project);
-    if (!body?.trim()) throw invalid('广播内容不能为空');
+    if (!body?.trim()) throw invalid(tr('广播内容不能为空'));
     return this.write(() => {
       this.emit('owner.broadcast', 'owner', {
         project: p.id,
         data: { body: body.trim() },
-        summary: `负责人在项目 ${project} 广播：${excerpt(body, 80)}`,
+        summary: () => tr('负责人在项目 {project} 广播：{v}', { project, v: excerpt(body, 80) }),
       });
       return { ok: true };
     });
@@ -3317,9 +3335,10 @@ export class Hub {
           task: t,
           audience: who ? [who] : [],
           data: { assignee: who, due_at: t.due_at },
-          summary: overdue
-            ? `${code}「${t.title}」已超过截止时间${who ? `（${this.agentName(t.assignee_id)}）` : '，还没有人领取'}`
-            : `${code}「${t.title}」还有 ${left >= 60 ? `${Math.round(left / 60)} 小时` : `${left} 分钟`}到截止时间${who ? '' : '，还没有人领取'}`,
+          summary: () =>
+          (overdue
+            ? tr('{code}「{title}」已超过截止时间{v}', { code, title: t.title, v: who ? tr('（{v}）', { v: this.agentName(t.assignee_id) }) : tr('，还没有人领取') })
+            : tr('{code}「{title}」还有 {v}到截止时间{v2}', { code, title: t.title, v: left >= 60 ? tr('{n} 小时', { n: Math.round(left / 60) }) : tr('{left} 分钟', { left }), v2: who ? '' : tr('，还没有人领取') })),
         });
       }
     });
@@ -3360,13 +3379,13 @@ export class Hub {
         n++;
         this.db.prepare('UPDATE tasks SET stall_warned = 1 WHERE id = ?').run(t.id);
         const hours = Math.round((now - Date.parse(since)) / 3600_000);
-        const who = this.agentName(t.assignee_id) ?? '负责的 agent';
-        const what = [repeats >= 2 ? `又上报了 ${repeats} 次进度` : '', runs >= 3 ? `被唤起了 ${runs} 次` : ''].filter(Boolean).join('、');
+        const who = this.agentName(t.assignee_id) ?? tr('负责的 agent');
+        const what = [repeats >= 2 ? tr('又上报了 {repeats} 次进度', { repeats }) : '', runs >= 3 ? tr('被唤起了 {runs} 次', { runs }) : ''].filter(Boolean).join(tr('、'));
         this.emit('task.stalled', 'owner', {
           task: t,
           audience: [],
           data: { assignee: t.assignee_id === null ? null : agentCode(t.assignee_id), percent: t.progress, since, reports: repeats, runs },
-          summary: `${code}「${t.title}」可能在原地打转：${who} 近 ${hours} 小时${what}，进度一直停在 ${t.progress}%`,
+          summary: () => tr('{code}「{title}」可能在原地打转：{who} 近 {hours} 小时{what}，进度一直停在 {progress}%', { code, title: t.title, who, hours, what, progress: t.progress }),
         });
       }
     });
@@ -3388,7 +3407,7 @@ export class Hub {
           task: t,
           audience: who ? [who] : [],
           data: { assignee: who, lease_until: t.lease_until },
-          summary: `${taskCode(t.project_id, t.num)} 已经很久没有上报进度，可能已失联${who ? `（${this.agentName(t.assignee_id)}）` : ''}`,
+          summary: () => tr('{v} 已经很久没有上报进度，可能已失联{v2}', { v: taskCode(t.project_id, t.num), v2: who ? tr('（{v}）', { v: this.agentName(t.assignee_id) }) : '' }),
         });
       }
     });
@@ -3420,7 +3439,7 @@ export class Hub {
   recommend(input: { project?: string; task?: string; tags?: string[]; title?: string }): Recommendation[] {
     const t = input.task ? this.requireTask(input.task) : null;
     const project = t ? `P-${t.project_id}` : input.project;
-    if (!project) throw invalid('需要指定项目或任务');
+    if (!project) throw invalid(tr('需要指定项目或任务'));
     const projectId = this.requireProject(project).id;
     const required = t ? json<string[]>(t.required_tags, []) : (input.tags ?? []).filter(Boolean);
     const title = t?.title ?? input.title ?? '';
@@ -3447,43 +3466,43 @@ export class Hub {
           const hit = required.filter((r) => tags.includes(r));
           if (hit.length) {
             score += 25;
-            reasons.push(`能力匹配：${hit.join('、')}`);
+            reasons.push(tr('能力匹配：{hit}', { hit: hit.join(tr('、')) }));
           } else {
             score -= 40;
-            warnings.push(`没有能力标签 ${required.join('、')}`);
+            warnings.push(tr('没有能力标签 {required}', { required: required.join(tr('、')) }));
           }
         }
         if (a.presence === 'online') {
           score += 15;
-          reasons.push('在线');
+          reasons.push(tr('在线'));
         } else if (a.presence === 'active') {
           score += 10;
-          reasons.push('最近活跃');
+          reasons.push(tr('最近活跃'));
         } else if (a.presence === 'idle') score += 3;
-        else warnings.push('离线');
+        else warnings.push(tr('离线'));
         if (a.daemon_paused) {
           score -= 15;
-          warnings.push('值守已暂停');
+          warnings.push(tr('值守已暂停'));
         } else if (a.daemon) {
           score += 10;
-          reasons.push('有值守进程，指派后会自动唤醒');
+          reasons.push(tr('有值守进程，指派后会自动唤醒'));
         }
         const load = a.active_tasks.length;
         score -= Math.min(load, 5) * 8;
-        if (load === 0) reasons.push('手上没有任务');
-        else (load >= 3 ? warnings : reasons).push(`手上 ${load} 个任务`);
+        if (load === 0) reasons.push(tr('手上没有任务'));
+        else (load >= 3 ? warnings : reasons).push(tr('手上 {load} 个任务', { load }));
         const s = stats.get(a.id);
         if (s?.completed) {
           score += Math.min(s.completed, 5) * 3;
-          reasons.push(`近 30 天完成 ${s.completed} 个`);
+          reasons.push(tr('近 30 天完成 {completed} 个', { completed: s.completed }));
         }
         if (s && s.submitted >= 2 && (s.reject_rate ?? 0) >= 50) {
           score -= 10;
-          warnings.push(`退回率 ${s.reject_rate}%`);
+          warnings.push(tr('退回率 {reject_rate}%', { reject_rate: s.reject_rate }));
         }
         if (s?.overdue) {
           score -= 5 * s.overdue;
-          warnings.push(`${s.overdue} 个任务已逾期`);
+          warnings.push(tr('{overdue} 个任务已逾期', { overdue: s.overdue }));
         }
         if (mine.size) {
           let best: { sim: number; code: string; title: string } | null = null;
@@ -3497,7 +3516,7 @@ export class Hub {
           }
           if (best) {
             score += Math.round(best.sim * 20);
-            reasons.push(`做过类似任务 ${best.code}「${best.title}」`);
+            reasons.push(tr('做过类似任务 {code}「{title}」', { code: best.code, title: best.title }));
           }
         }
         return { id: a.id, name: a.name, score: Math.max(0, Math.min(100, Math.round(score))), reasons, warnings, presence: a.presence, load };
@@ -3620,7 +3639,7 @@ export class Hub {
       params.push(agentCode(this.requireAgentRow(opts.from).id));
     }
     if (opts.type) {
-      if (opts.type !== 'mention' && opts.type !== 'message.direct') throw invalid(`未知的类型：${opts.type}`);
+      if (opts.type !== 'mention' && opts.type !== 'message.direct') throw invalid(tr('未知的类型：{type}', { type: opts.type }));
       where.push('type = ?');
       params.push(opts.type);
     }
@@ -3697,7 +3716,7 @@ const LIVE_SQL = "'open','assigned','working','input_required'";
 function normalizeDue(v: string | null | undefined): string | null {
   if (v == null || v.trim() === '') return null;
   const ms = Date.parse(v);
-  if (Number.isNaN(ms)) throw invalid(`截止时间格式不对：${v}，请用 ISO 格式，如 2026-11-01T18:00:00+08:00`);
+  if (Number.isNaN(ms)) throw invalid(tr('截止时间格式不对：{v}，请用 ISO 格式，如 2026-11-01T18:00:00+08:00', { v }));
   return new Date(ms).toISOString();
 }
 
@@ -3742,15 +3761,15 @@ function excerpt(text: string, n = 60) {
 function fieldLabel(f: string) {
   return (
     {
-      title: '标题',
-      description: '描述',
-      acceptance: '验收标准',
-      priority: '优先级',
-      required_tags: '能力标签',
-      depends_on: '依赖',
-      refs: '引用的任务',
-      files: '附件',
-      due_at: '截止时间',
+      title: tr('标题'),
+      description: tr('描述'),
+      acceptance: tr('验收标准'),
+      priority: tr('优先级'),
+      required_tags: tr('能力标签'),
+      depends_on: tr('依赖'),
+      refs: tr('引用的任务'),
+      files: tr('附件'),
+      due_at: tr('截止时间'),
     } as Record<string, string>
   )[f] ?? f;
 }

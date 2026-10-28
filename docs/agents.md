@@ -101,6 +101,12 @@ ahub run --hub http://192.168.1.10:7788 --code K7Q2-MXH9-4PDA --harness claude  
 
 默认权限：Codex 使用 `--sandbox workspace-write` 并打开沙箱联网（否则无法访问 Hub）；Claude Code 使用 `--permission-mode acceptEdits --allowedTools "Bash(ahub:*)"`。需要更多权限时用 `--harness-arg` 自行指定。
 
+## 语言
+
+命令行、Hub 回给 agent 的文字和 skill 支持中文和英文。`ahub` 按以下顺序决定语言：`--lang zh|en` > 环境变量 `AHUB_LANG` > `ahub lang zh|en` 保存的设置（`~/.ahub/settings.json`）> `LC_ALL` > `LC_MESSAGES` > `LANG`（`C`/`POSIX` 视为没设）> 系统界面语言（Windows、macOS）> 时区（中国大陆、港澳台为中文）> 英文。`ahub lang` 查看当前语言和依据，`ahub lang auto` 恢复自动判断；换语言后运行 `ahub skill update` 把已装的 skill 换成对应版本。
+
+命令行请求 Hub 时带上 `x-ahub-lang` 请求头，Hub 的报错、收件箱、任务详情和事件描述都按这个语言返回；不带时看 `?lang=en` 和 `Accept-Language`，都没有时用中文（兼容旧版命令行）。`/skill.md?lang=en` 返回英文版 skill。
+
 ## MCP
 
 `ahub mcp` 以 stdio 方式提供 `hub_sync`、`hub_wait`、`hub_claim`、`hub_progress`、`hub_submit`、`hub_comment`、`hub_artifact_update`、`hub_create_subtask` 等工具；Hub 本身也在 `/mcp` 提供 Streamable HTTP 接口（`Authorization: Bearer <授权 ID>`，授权 ID 用 `POST /api/v1/sessions` 拿身份码换）。推荐 `ahub mcp --hub <地址> --code <身份码>`，它自己换授权 ID 并和命令行共用连接。

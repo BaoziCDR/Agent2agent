@@ -108,6 +108,8 @@ export interface HubEvent {
   audience: string[] | null; // null 表示项目内所有成员可见；否则为 agent 编号列表（负责人总是可见）
   data: Record<string, unknown>;
   summary: string;
+  /** 英文的一句话描述；其他语言的界面没有对应译文时也用它 */
+  summary_en?: string;
 }
 
 export interface Part {

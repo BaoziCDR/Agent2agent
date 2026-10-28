@@ -196,3 +196,23 @@ export function saveConfig(path: string, config: CliConfig) {
     // Windows 上忽略
   }
 }
+
+/** 本机的命令行设置（与身份无关）：~/.ahub/settings.json */
+export interface CliSettings {
+  /** 命令行和 skill 的语言：zh 或 en；不设时自动判断 */
+  lang?: string;
+}
+const settingsFile = () => join(ahubHome(), 'settings.json');
+
+export function readSettings(): CliSettings {
+  try {
+    return JSON.parse(readFileSync(settingsFile(), 'utf8')) as CliSettings;
+  } catch {
+    return {};
+  }
+}
+
+export function saveSettings(s: CliSettings) {
+  mkdirSync(ahubHome(), { recursive: true });
+  writeFileSync(settingsFile(), JSON.stringify(s, null, 2) + '\n');
+}

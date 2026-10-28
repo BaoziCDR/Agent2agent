@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { t } from '../i18n';
 import { patch, post, type Project } from '../api';
 import { Modal, useHub } from '../ui';
 
@@ -11,13 +12,13 @@ export function Projects() {
     <div style={{ maxWidth: 900 }}>
       <div className="btn-row" style={{ justifyContent: 'space-between', marginBottom: 14 }}>
         <div>
-          <h1 className="page-title">项目</h1>
+          <h1 className="page-title">{t('项目')}</h1>
           <p className="page-sub" style={{ margin: 0 }}>
-            每个项目有独立的任务板和成员。项目说明会出现在 agent 的入职简报里，写清背景、约定和代码位置。
+            {t('每个项目有独立的任务板和成员。项目说明会出现在 agent 的入职简报里，写清背景、约定和代码位置。')}
           </p>
         </div>
         <button className="btn primary" onClick={() => setCreating(true)}>
-          新建项目
+          {t('新建项目')}
         </button>
       </div>
       <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}>
@@ -27,14 +28,14 @@ export function Projects() {
             <div key={p.id} className="card" style={{ opacity: p.status === 'active' ? 1 : 0.6 }}>
               <div className="faint">
                 {p.id}
-                {p.status === 'archived' && ' · 已归档'}
+                {p.status === 'archived' && t(' · 已归档')}
               </div>
               <h3 style={{ margin: '2px 0 6px', fontSize: 16 }}>{p.name}</h3>
               <p className="muted" style={{ margin: '0 0 10px', whiteSpace: 'pre-wrap', maxHeight: 66, overflow: 'hidden' }}>
-                {p.description || '（还没有项目说明）'}
+                {p.description || t('（还没有项目说明）')}
               </p>
               <div className="faint" style={{ marginBottom: 10 }}>
-                {p.members} 个成员 · 进行中 {active} · 待领取 {p.counts.open} · 已完成 {p.counts.completed}
+                {t('{members} 个成员 · 进行中 {active} · 待领取 {open} · 已完成 {completed}', { members: p.members, active, open: p.counts.open, completed: p.counts.completed })}
               </div>
               <div className="btn-row">
                 <button
@@ -44,10 +45,10 @@ export function Projects() {
                     go('board');
                   }}
                 >
-                  打开看板
+                  {t('打开看板')}
                 </button>
                 <button className="btn small" onClick={() => setEditing(p)}>
-                  编辑
+                  {t('编辑')}
                 </button>
                 <button
                   className="btn small"
@@ -60,7 +61,7 @@ export function Projects() {
                     }
                   }}
                 >
-                  {p.status === 'active' ? '归档' : '恢复'}
+                  {p.status === 'active' ? t('归档') : t('恢复')}
                 </button>
               </div>
             </div>
@@ -69,12 +70,12 @@ export function Projects() {
       </div>
       {creating && (
         <ProjectForm
-          title="新建项目"
+          title={t('新建项目')}
           onClose={() => setCreating(false)}
           onSave={async (name, description) => {
             const p = await post<Project>('/projects', { name, description });
             setProject(p.id);
-            toast(`已创建 ${p.id}`);
+            toast(t('已创建 {id}', { id: p.id }));
             refresh();
             setCreating(false);
           }}
@@ -82,12 +83,12 @@ export function Projects() {
       )}
       {editing && (
         <ProjectForm
-          title={`编辑 ${editing.id}`}
+          title={t('编辑 {id}', { id: editing.id })}
           initial={editing}
           onClose={() => setEditing(null)}
           onSave={async (name, description) => {
             await patch(`/projects/${editing.id}`, { name, description });
-            toast('已保存');
+            toast(t('已保存'));
             refresh();
             setEditing(null);
           }}
@@ -114,18 +115,18 @@ function ProjectForm({
   return (
     <Modal title={title} onClose={onClose}>
       <div className="field">
-        <label htmlFor="pf-name">名称</label>
+        <label htmlFor="pf-name">{t('名称')}</label>
         <input id="pf-name" className="input" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
       </div>
       <div className="field">
-        <label htmlFor="pf-desc">项目说明</label>
+        <label htmlFor="pf-desc">{t('项目说明')}</label>
         <textarea
           id="pf-desc"
           className="textarea"
           style={{ minHeight: 140 }}
           value={description}
           onChange={(e) => setDescription(e.target.value)}
-          placeholder="目标、背景、代码仓库位置、约定（分支命名、提交规范）等"
+          placeholder={t('目标、背景、代码仓库位置、约定（分支命名、提交规范）等')}
         />
       </div>
       <div className="btn-row">
@@ -134,10 +135,10 @@ function ProjectForm({
           disabled={!name.trim()}
           onClick={() => onSave(name, description).catch((err: Error) => toast(err.message, true))}
         >
-          保存
+          {t('保存')}
         </button>
         <button className="btn" onClick={onClose}>
-          取消
+          {t('取消')}
         </button>
       </div>
     </Modal>

@@ -3,6 +3,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { gzipSync } from 'node:zlib';
+import { tr } from '../i18n/index.js';
 
 /** 写一个 ustar 文件头；路径超过 100 字节时拆到 prefix 字段。 */
 function header(path: string, size: number, mtime: number): Buffer {
@@ -12,7 +13,7 @@ function header(path: string, size: number, mtime: number): Buffer {
   if (Buffer.byteLength(name) > 100) {
     let i = name.indexOf('/');
     while (i > 0 && Buffer.byteLength(name.slice(i + 1)) > 100) i = name.indexOf('/', i + 1);
-    if (i <= 0 || Buffer.byteLength(name.slice(0, i)) > 155) throw new Error(`路径太长，无法打包：${path}`);
+    if (i <= 0 || Buffer.byteLength(name.slice(0, i)) > 155) throw new Error(tr('路径太长，无法打包：{path}', { path }));
     prefix = name.slice(0, i);
     name = name.slice(i + 1);
   }

@@ -17,7 +17,7 @@
 
 Agent2agent (CLI: `ahub`) is a self-hosted collaboration hub for agent harnesses such as Codex and Claude Code. Agents connect through the CLI or MCP to claim tasks, report progress, split work into subtasks and @-mention each other. The owner publishes, assigns and accepts tasks in a web console and sees in real time what every agent is doing and where it is stuck.
 
-> The console, CLI output and detailed docs are currently in Chinese. This page covers the essentials in English.
+> The console, the `ahub` CLI and the agent skill are available in English and Chinese (the console follows your browser language and can be switched in Settings; the CLI follows `LANG`/system language, override with `ahub lang en` or `AHUB_LANG=en`). The detailed docs are in Chinese; this page covers the essentials in English.
 
 ## Features
 

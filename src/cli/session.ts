@@ -1,3 +1,4 @@
+import { tr } from '../i18n/index.js';
 /**
  * 值守进程每次唤起 harness 前决定：续用哪个旧会话，还是新开一个。
  * 只在本机做判断（会话、上下文用量、缓存都只有本机知道）；Hub 只提供任务之间的关系。
@@ -84,26 +85,26 @@ export function contextRatio(s: SessionRecord) {
 
 /** 会话和一个任务的关系分：同一任务 50，父子 30，引用或依赖 20，无关 0 */
 function relationScore(s: SessionRecord, rel: TaskRelations, offline: boolean): [number, string] {
-  if (s.tasks.includes(rel.id)) return [50, `同一任务 ${rel.id}`];
+  if (s.tasks.includes(rel.id)) return [50, tr('同一任务 {id}', { id: rel.id })];
   if (offline) return [0, ''];
   const f = rel.family.find((t) => s.tasks.includes(t));
-  if (f) return [30, `${rel.id} 的父子任务 ${f}`];
+  if (f) return [30, tr('{id} 的父子任务 {f}', { id: rel.id, f })];
   const l = rel.links.find((t) => s.tasks.includes(t));
-  if (l) return [20, `${rel.id} 引用或依赖的任务 ${l}`];
+  if (l) return [20, tr('{id} 引用或依赖的任务 {l}', { id: rel.id, l })];
   return [0, ''];
 }
 
 /** 不需要打分就必须新开的情况，返回原因 */
 function hardStop(s: SessionRecord, wake: WakeInfo, cfg: SessionSettings, now: number): string | null {
-  if (s.broken) return '上次续用失败';
+  if (s.broken) return tr('上次续用失败');
   const ratio = contextRatio(s);
-  if (ratio >= cfg.contextMaxRatio) return `上下文已用 ${pct(ratio)}，达到上限 ${pct(cfg.contextMaxRatio)}`;
+  if (ratio >= cfg.contextMaxRatio) return tr('上下文已用 {pct}，达到上限 {pct2}', { pct: pct(ratio), pct2: pct(cfg.contextMaxRatio) });
   const age = (now - Date.parse(s.created_at)) / HOUR;
-  if (age >= cfg.maxAgeHours) return `会话已开了 ${Math.floor(age)} 小时，超过 ${cfg.maxAgeHours} 小时`;
-  if (s.runs >= cfg.maxRuns) return `会话已运行 ${s.runs} 次，达到上限 ${cfg.maxRuns}`;
-  if (s.outcomes.length >= 2 && s.outcomes.slice(-2).every((o) => !o)) return '最近两次运行都没有正常结束';
+  if (age >= cfg.maxAgeHours) return tr('会话已开了 {n} 小时，超过 {maxAgeHours} 小时', { n: Math.floor(age), maxAgeHours: cfg.maxAgeHours });
+  if (s.runs >= cfg.maxRuns) return tr('会话已运行 {runs} 次，达到上限 {maxRuns}', { runs: s.runs, maxRuns: cfg.maxRuns });
+  if (s.outcomes.length >= 2 && s.outcomes.slice(-2).every((o) => !o)) return tr('最近两次运行都没有正常结束');
   const isNewTask = !wake.tasks.some((t) => s.tasks.includes(t));
-  if (isNewTask && s.tasks.length && s.tasks.every((t) => wake.closed.includes(t))) return '会话里的任务都已结束，这次是新任务';
+  if (isNewTask && s.tasks.length && s.tasks.every((t) => wake.closed.includes(t))) return tr('会话里的任务都已结束，这次是新任务');
   return null;
 }
 
@@ -121,29 +122,29 @@ export function scoreSession(s: SessionRecord, wake: WakeInfo, now: number): { s
     score += n;
     breakdown.push(`${why} ${n > 0 ? '+' : ''}${n}`);
   };
-  if (wake.followups.some((t) => s.tasks.includes(t))) add(10, '是对这个会话处理过的任务的跟进');
+  if (wake.followups.some((t) => s.tasks.includes(t))) add(10, tr('是对这个会话处理过的任务的跟进'));
   const idleMin = (now - Date.parse(s.last_used_at)) / 60_000;
-  if (idleMin < s.cache_ttl_minutes - 1) add(15, `缓存未过期（空闲 ${Math.round(idleMin)} 分钟）`);
+  if (idleMin < s.cache_ttl_minutes - 1) add(15, tr('缓存未过期（空闲 {n} 分钟）', { n: Math.round(idleMin) }));
   const ratio = contextRatio(s);
-  add(-Math.floor(ratio * 20) * 5, `上下文已用 ${pct(ratio)}`);
-  add(-Math.min(30, Math.floor(idleMin / 60) * 2), `空闲 ${Math.floor(idleMin / 60)} 小时`);
-  if (s.outcomes.length && !s.outcomes[s.outcomes.length - 1]) add(-20, '上次运行没有正常结束');
-  if (s.tasks.length >= 3) add(-10, `会话里已有 ${s.tasks.length} 个任务`);
+  add(-Math.floor(ratio * 20) * 5, tr('上下文已用 {pct}', { pct: pct(ratio) }));
+  add(-Math.min(30, Math.floor(idleMin / 60) * 2), tr('空闲 {n} 小时', { n: Math.floor(idleMin / 60) }));
+  if (s.outcomes.length && !s.outcomes[s.outcomes.length - 1]) add(-20, tr('上次运行没有正常结束'));
+  if (s.tasks.length >= 3) add(-10, tr('会话里已有 {n} 个任务', { n: s.tasks.length }));
   return { score, breakdown };
 }
 
 export function decideSession(sessions: SessionRecord[], harness: string, wake: WakeInfo, cfg: SessionSettings, now = Date.now()): SessionDecision {
   const mine = sessions.filter((s) => s.harness === harness).sort((a, b) => Date.parse(b.last_used_at) - Date.parse(a.last_used_at));
   const fresh = (reason: string, breakdown: string[] = []): SessionDecision => ({ action: 'new', gray: false, reason, breakdown });
-  if (cfg.policy === 'new') return fresh('设置为每次新开会话');
+  if (cfg.policy === 'new') return fresh(tr('设置为每次新开会话'));
   if (cfg.policy === 'shared') {
     // 所有事项共用一个会话（旧版行为），只保留硬性上限
     const s = mine[0];
-    if (!s) return fresh('还没有可续用的会话');
+    if (!s) return fresh(tr('还没有可续用的会话'));
     const stop = hardStop(s, { ...wake, closed: [] }, cfg, now);
-    return stop ? fresh(stop) : { action: 'reuse', session: s, gray: false, reason: '设置为共用一个会话', breakdown: [] };
+    return stop ? fresh(stop) : { action: 'reuse', session: s, gray: false, reason: tr('设置为共用一个会话'), breakdown: [] };
   }
-  if (!wake.tasks.length) return fresh('这次唤起不涉及任务（私信、广播等）');
+  if (!wake.tasks.length) return fresh(tr('这次唤起不涉及任务（私信、广播等）'));
 
   const stops: string[] = [];
   let best: { s: SessionRecord; score: number; breakdown: string[] } | null = null;
@@ -153,21 +154,21 @@ export function decideSession(sessions: SessionRecord[], harness: string, wake: 
     if (!scored) continue;
     const stop = hardStop(s, wake, cfg, now);
     if (stop) {
-      stops.push(`${short(s.id)}：${stop}`);
+      stops.push(tr('{short}：{stop}', { short: short(s.id), stop }));
       continue;
     }
     if (!best || scored.score > best.score) best = { s, ...scored };
   }
-  if (!best) return fresh(stops.length ? `相关会话不能续用（${stops.join('；')}）` : '没有处理过相关任务的会话');
+  if (!best) return fresh(stops.length ? tr('相关会话不能续用（{stops}）', { stops: stops.join(tr('；')) }) : tr('没有处理过相关任务的会话'));
   if (cfg.policy === 'task') {
-    return { action: 'reuse', session: best.s, score: best.score, gray: false, reason: `同一任务的会话 ${short(best.s.id)}`, breakdown: best.breakdown };
+    return { action: 'reuse', session: best.s, score: best.score, gray: false, reason: tr('同一任务的会话 {short}', { short: short(best.s.id) }), breakdown: best.breakdown };
   }
   const gray = Math.abs(best.score - cfg.threshold) <= cfg.grayBand;
-  const detail = best.breakdown.join('，');
+  const detail = best.breakdown.join(tr('，'));
   if (best.score >= cfg.threshold) {
-    return { action: 'reuse', session: best.s, score: best.score, gray, reason: `续用会话 ${short(best.s.id)}，得分 ${best.score}（${detail}）`, breakdown: best.breakdown };
+    return { action: 'reuse', session: best.s, score: best.score, gray, reason: tr('续用会话 {short}，得分 {score}（{detail}）', { short: short(best.s.id), score: best.score, detail }), breakdown: best.breakdown };
   }
-  return { action: 'new', session: best.s, score: best.score, gray, reason: `最相关的会话 ${short(best.s.id)} 得分 ${best.score}，低于 ${cfg.threshold}（${detail}）`, breakdown: best.breakdown };
+  return { action: 'new', session: best.s, score: best.score, gray, reason: tr('最相关的会话 {short} 得分 {score}，低于 {threshold}（{detail}）', { short: short(best.s.id), score: best.score, threshold: cfg.threshold, detail }), breakdown: best.breakdown };
 }
 
 export const short = (id: string) => id.slice(0, 8);

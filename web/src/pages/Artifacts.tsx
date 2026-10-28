@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { t } from '../i18n';
 import { ApiError, get, put, type Agent, type Artifact, type ArtifactRevision, type Part } from '../api';
 import { Modal, agentLabel, clock, useData, useHub } from '../ui';
 import { Markdown } from '../markdown';
@@ -10,7 +11,10 @@ const isImage = (p: { mime?: string }) => /^image\/(png|jpeg|gif|webp)$/.test(p.
 /** 只有一段文本的交付物才能逐行对比和在线编辑。 */
 const textOf = (parts: Part[]) => (parts.length === 1 && parts[0].kind === 'text' && typeof parts[0].text === 'string' ? parts[0].text : null);
 
-const who = (agents: Agent[], code: string | null) => (!code ? '' : code === 'owner' ? '负责人' : agentLabel(agents, code));
+/** 交付说明这份交付物的名字存的是中文，显示时按语言翻译 */
+const artifactName = (name: string) => (name === '交付说明' ? t('交付说明') : name);
+
+const who = (agents: Agent[], code: string | null) => (!code ? '' : code === 'owner' ? t('负责人') : agentLabel(agents, code));
 
 /** 文件：图片显示缩略图，其他显示文件名和大小。 */
 export function FilePart({ p }: { p: Part }) {
@@ -57,17 +61,17 @@ function DiffView({ before, after }: { before: string; after: string }) {
   const hunks = foldDiff(lineDiff(before, after));
   const added = hunks.filter((h) => h.kind === 'add').length;
   const removed = hunks.filter((h) => h.kind === 'del').length;
-  if (!added && !removed) return <div className="faint">两个版本内容相同</div>;
+  if (!added && !removed) return <div className="faint">{t('两个版本内容相同')}</div>;
   return (
     <div>
       <div className="diff-stat">
-        <span className="diff-add-n">+{added}</span> <span className="diff-del-n">−{removed}</span> 行
+        <span className="diff-add-n">+{added}</span> <span className="diff-del-n">−{removed}</span> {t('行')}
       </div>
       <div className="diff">
         {hunks.map((h, i) =>
           h.kind === 'skip' ? (
             <div key={i} className="diff-skip">
-              ⋯ {h.count} 行未改动
+              ⋯ {t('{n} 行未改动', { n: h.count })}
             </div>
           ) : (
             <div key={i} className={`diff-line ${h.kind}`}>
@@ -94,7 +98,7 @@ function HistoryDialog({ task, artifact, onClose }: { task: string; artifact: Ar
   const curText = cur && textOf(cur.parts);
   const prevText = prev && textOf(prev.parts);
   return (
-    <Modal title={`「${artifact.name}」的修改历史`} onClose={onClose} wide>
+    <Modal title={t('「{name}」的修改历史', { name: artifactName(artifact.name) })} onClose={onClose} wide>
       <div className="history">
         <div className="history-list">
           {revs
@@ -102,12 +106,12 @@ function HistoryDialog({ task, artifact, onClose }: { task: string; artifact: Ar
             .reverse()
             .map((r) => (
               <button key={r.rev} className={`history-item ${cur?.rev === r.rev ? 'active' : ''}`} onClick={() => setSel(r.rev)}>
-                <b>第 {r.rev} 版</b>
-                {r.rev === artifact.rev && <span className="badge accent">当前</span>}
+                <b>{t('第 {n} 版', { n: r.rev })}</b>
+                {r.rev === artifact.rev && <span className="badge accent">{t('当前')}</span>}
                 <div className="faint">
                   {who(agents, r.author)} · {clock(r.created_at)}
                 </div>
-                <div className="faint history-note">{r.note || (r.rev === 1 ? '提交' : '')}</div>
+                <div className="faint history-note">{r.note || (r.rev === 1 ? t('提交') : '')}</div>
               </button>
             ))}
         </div>
@@ -117,10 +121,10 @@ function HistoryDialog({ task, artifact, onClose }: { task: string; artifact: Ar
               <div className="btn-row" style={{ marginBottom: 10 }}>
                 <div className="tabs" style={{ margin: 0 }}>
                   <button className={`tab ${mode === 'diff' ? 'active' : ''}`} disabled={!prev} onClick={() => setMode('diff')}>
-                    与第 {cur.rev - 1 || 1} 版对比
+                    {t('与第 {n} 版对比', { n: cur.rev - 1 || 1 })}
                   </button>
                   <button className={`tab ${mode === 'full' || !prev ? 'active' : ''}`} onClick={() => setMode('full')}>
-                    完整内容
+                    {t('完整内容')}
                   </button>
                 </div>
               </div>
@@ -128,7 +132,7 @@ function HistoryDialog({ task, artifact, onClose }: { task: string; artifact: Ar
                 curText !== null && prevText !== null ? (
                   <DiffView before={prevText!} after={curText!} />
                 ) : (
-                  <div className="faint">这份交付物不是纯文本，不能逐行对比，请看完整内容。</div>
+                  <div className="faint">{t('这份交付物不是纯文本，不能逐行对比，请看完整内容。')}</div>
                 )
               ) : (
                 <div className="artifact-body">
@@ -145,7 +149,7 @@ function HistoryDialog({ task, artifact, onClose }: { task: string; artifact: Ar
 
 function CompareDialog({ before, after, onClose }: { before: Artifact; after: Artifact; onClose: () => void }) {
   return (
-    <Modal title={`「${after.name}」：第 ${before.round} 次提交 → 第 ${after.round} 次提交`} onClose={onClose} wide>
+    <Modal title={t('「{name}」：第 {a} 次提交 → 第 {b} 次提交', { name: artifactName(after.name), a: before.round, b: after.round })} onClose={onClose} wide>
       <DiffView before={textOf(before.parts) ?? ''} after={textOf(after.parts) ?? ''} />
     </Modal>
   );
@@ -162,7 +166,7 @@ function EditDialog({ task, artifact, onClose, onSaved }: { task: string; artifa
     setBusy(true);
     try {
       await put(`/tasks/${task}/artifacts/${artifact.id}`, { base_rev: artifact.rev, content: text, note });
-      toast(`已保存为第 ${artifact.rev + 1} 版`);
+      toast(t('已保存为第 {n} 版', { n: artifact.rev + 1 }));
       onSaved();
       onClose();
     } catch (err) {
@@ -173,22 +177,22 @@ function EditDialog({ task, artifact, onClose, onSaved }: { task: string; artifa
     }
   };
   return (
-    <Modal title={`修改「${artifact.name}」（基于第 ${artifact.rev} 版）`} onClose={onClose} wide>
+    <Modal title={t('修改「{name}」（基于第 {n} 版）', { name: artifactName(artifact.name), n: artifact.rev })} onClose={onClose} wide>
       {stale && (
         <div className="notice warn" style={{ marginBottom: 10 }}>
-          在你编辑期间，这份交付物已经被别人改过了。为了不覆盖别人的修改，这次没有保存。请复制你的改动，关闭后重新打开最新版本再改。
+          {t('在你编辑期间，这份交付物已经被别人改过了。为了不覆盖别人的修改，这次没有保存。请复制你的改动，关闭后重新打开最新版本再改。')}
         </div>
       )}
       <textarea className="textarea artifact-editor" value={text} onChange={(e) => setText(e.target.value)} spellCheck={false} />
       <div className="field" style={{ marginTop: 10 }}>
-        <input className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="改了什么（可选），会写进修改历史" />
+        <input className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder={t('改了什么（可选），会写进修改历史')} />
       </div>
       <div className="btn-row" style={{ justifyContent: 'flex-end' }}>
         <button className="btn" onClick={onClose}>
-          取消
+          {t('取消')}
         </button>
         <button className="btn primary" disabled={busy || stale} onClick={save}>
-          保存为第 {artifact.rev + 1} 版
+          {t('保存为第 {n} 版', { n: artifact.rev + 1 })}
         </button>
       </div>
     </Modal>
@@ -218,38 +222,38 @@ export function Artifacts({ task, artifacts, onChanged }: { task: string; artifa
   const card = (a: Artifact) => {
     const prev = previousOf(a);
     return (
-      <div key={a.id} className="artifact" data-source={`「${a.name}」（${a.author}）`}>
+      <div key={a.id} className="artifact" data-source={t('「{name}」（{author}）', { name: artifactName(a.name), author: a.author })}>
         <div className="artifact-meta">
           <div className="artifact-title">
-            <b>{a.name}</b>
+            <b>{artifactName(a.name)}</b>
             <span className="faint">#{a.id}</span>
-            <span className={`badge ${a.rev > 1 ? 'accent' : ''}`} title="版本号：每次修改加一">
+            <span className={`badge ${a.rev > 1 ? 'accent' : ''}`} title={t('版本号：每次修改加一')}>
               v{a.rev}
             </span>
           </div>
           <div className="faint artifact-who">
-            {who(agents, a.author)} {clock(a.created_at)} 提交
+            {t('{who} {time} 提交', { who: who(agents, a.author), time: clock(a.created_at) })}
             {a.rev > 1 && a.updated_at && (
               <>
                 {' '}
-                · {who(agents, a.updated_by)} {clock(a.updated_at)} 修改
+                · {t('{who} {time} 修改', { who: who(agents, a.updated_by), time: clock(a.updated_at) })}
               </>
             )}
           </div>
           <div className="btn-row artifact-actions">
             {prev && (
               <button className="btn small" onClick={() => setCompare({ before: prev, after: a })}>
-                与第 {prev.round} 次提交对比
+                {t('与第 {n} 次提交对比', { n: prev.round })}
               </button>
             )}
             {a.rev > 1 && (
               <button className="btn small" onClick={() => setHistory(a)}>
-                历史（{a.rev} 版）
+                {t('历史（{n} 版）', { n: a.rev })}
               </button>
             )}
             {textOf(a.parts) !== null && (
               <button className="btn small" onClick={() => setEditing(a)}>
-                修改
+                {t('修改')}
               </button>
             )}
           </div>
@@ -276,10 +280,10 @@ export function Artifacts({ task, artifacts, onChanged }: { task: string; artifa
             {rounds.length > 1 && (
               <button className="round-head" onClick={r === latest ? undefined : toggle} disabled={r === latest} aria-expanded={expanded}>
                 {r !== latest && <span className="round-caret">{expanded ? '▾' : '▸'}</span>}
-                <b>第 {r} 次提交</b>
-                {r === latest && <span className="badge accent">最新</span>}
+                <b>{t('第 {n} 次提交', { n: r })}</b>
+                {r === latest && <span className="badge accent">{t('最新')}</span>}
                 <span className="faint">
-                  {clock(items[0].created_at)} · {items.length} 份
+                  {clock(items[0].created_at)} · {t('{n} 份', { n: items.length })}
                 </span>
               </button>
             )}

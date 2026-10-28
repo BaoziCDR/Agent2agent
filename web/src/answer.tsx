@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import { post, type Task } from './api';
 import { useHub } from './ui';
+import { t } from './i18n';
 import { Markdown } from './markdown';
 
 export function AnswerBox({ task, onDone, compact = false }: { task: Task; onDone?: () => void; compact?: boolean }) {
@@ -13,7 +14,7 @@ export function AnswerBox({ task, onDone, compact = false }: { task: Task; onDon
     setBusy(true);
     try {
       await post(`/tasks/${task.id}/answer`, { answer });
-      toast(`已回答，${task.assignee_name ?? 'agent'} 会继续处理`);
+      toast(t('已回答，{who} 会继续处理', { who: task.assignee_name ?? 'agent' }));
       setText('');
       onDone?.();
       refresh();
@@ -27,14 +28,14 @@ export function AnswerBox({ task, onDone, compact = false }: { task: Task; onDon
     <div className={`ask ${compact ? 'compact' : ''}`} onClick={(e) => compact && e.stopPropagation()}>
       {!compact && (
         <div className="ask-q">
-          <span className="ask-label">{task.assignee_name ?? 'agent'} 在等你回答</span>
+          <span className="ask-label">{t('{who} 在等你回答', { who: task.assignee_name ?? 'agent' })}</span>
           <Markdown text={task.block_reason} agents={agents} />
         </div>
       )}
       {task.block_options.length > 0 && (
         <div className="ask-options">
           {task.block_options.map((o) => (
-            <button key={o} className="btn small" disabled={busy} onClick={() => void send(o)} title="选这个答案并解除阻塞">
+            <button key={o} className="btn small" disabled={busy} onClick={() => void send(o)} title={t('选这个答案并解除阻塞')}>
               {o}
             </button>
           ))}
@@ -52,11 +53,11 @@ export function AnswerBox({ task, onDone, compact = false }: { task: Task; onDon
             className="input"
             value={text}
             onChange={(e) => setText(e.target.value)}
-            placeholder={task.block_options.length ? '或者写其他答案' : '写下你的回答'}
-            aria-label="回答"
+            placeholder={task.block_options.length ? t('或者写其他答案') : t('写下你的回答')}
+            aria-label={t('回答')}
           />
           <button className="btn primary" disabled={!text.trim() || busy}>
-            回答并继续
+            {t('回答并继续')}
           </button>
         </form>
       )}

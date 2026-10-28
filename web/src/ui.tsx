@@ -1,5 +1,7 @@
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useState } from 'react';
 import { type Agent, get, type HubEvent, type Presence, type Project, type Receipt, type Task } from './api';
+import { STATUS_LABELS } from '../../src/shared/model';
+import { langTag, msg, t } from './i18n';
 
 export interface HubCtx {
   projects: Project[];
@@ -12,6 +14,8 @@ export interface HubCtx {
   toast: (msg: string, error?: boolean) => void;
   openTask: (id: string) => void;
   go: (page: string) => void;
+  /** 切换界面语言；null 表示跟随浏览器 */
+  onLang: (code: string | null) => void;
 }
 
 export const Ctx = createContext<HubCtx>(null as unknown as HubCtx);
@@ -43,19 +47,19 @@ export function useData<T>(load: () => Promise<T>, deps: unknown[]): { data: T |
 }
 
 export function timeAgo(iso: string | null | undefined): string {
-  if (!iso) return '从未';
+  if (!iso) return t('从未');
   const diff = (Date.now() - new Date(iso).getTime()) / 1000;
-  if (diff < 60) return '刚刚';
-  if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)} 小时前`;
-  return `${Math.floor(diff / 86400)} 天前`;
+  if (diff < 60) return t('刚刚');
+  if (diff < 3600) return t('{n} 分钟前', { n: Math.floor(diff / 60) });
+  if (diff < 86400) return t('{n} 小时前', { n: Math.floor(diff / 3600) });
+  return t('{n} 天前', { n: Math.floor(diff / 86400) });
 }
 
 const RECEIPT: Record<Receipt['state'], { icon: string; label: string }> = {
-  working: { icon: '👌', label: '处理中' },
-  done: { icon: '✅', label: '已处理' },
-  failed: { icon: '⚠️', label: '处理失败' },
-  stopped: { icon: '⏸', label: '处理中断' },
+  working: { icon: '👌', label: msg('处理中') },
+  done: { icon: '✅', label: msg('已处理') },
+  failed: { icon: '⚠️', label: msg('处理失败') },
+  stopped: { icon: '⏸', label: msg('处理中断') },
 };
 
 /** 消息下面一排小标签：哪个 agent 接手了、处理到哪一步，像聊天软件里的表情回应。 */
@@ -69,9 +73,9 @@ export function Receipts({ list }: { list: Receipt[] | undefined }) {
           <span
             key={r.agent}
             className={`receipt ${r.state}`}
-            title={`${r.agent_name}（${r.agent}）${s.label} · ${clock(r.updated_at)}${r.note ? `\n${r.note}` : ''}`}
+            title={`${r.agent_name} (${r.agent}) ${t(s.label)} · ${clock(r.updated_at)}${r.note ? `\n${r.note}` : ''}`}
           >
-            <span aria-label={s.label}>{s.icon}</span> {r.agent_name}
+            <span aria-label={t(s.label)}>{s.icon}</span> {r.agent_name}
           </span>
         );
       })}
@@ -82,30 +86,36 @@ export function Receipts({ list }: { list: Receipt[] | undefined }) {
 export function clock(iso: string): string {
   const d = new Date(iso);
   const today = new Date().toDateString() === d.toDateString();
-  const hm = d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+  const hm = d.toLocaleTimeString(langTag(), { hour: '2-digit', minute: '2-digit', hour12: false });
   return today ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
 }
 
 const span = (ms: number) =>
-  ms >= 86400_000 ? `${Math.floor(ms / 86400_000)} 天` : ms >= 3600_000 ? `${Math.floor(ms / 3600_000)} 小时` : `${Math.max(1, Math.floor(ms / 60_000))} 分钟`;
+  ms >= 86400_000
+    ? t('{n} 天', { n: Math.floor(ms / 86400_000) })
+    : ms >= 3600_000
+      ? t('{n} 小时', { n: Math.floor(ms / 3600_000) })
+      : t('{n} 分钟', { n: Math.max(1, Math.floor(ms / 60_000)) });
 
-/** 完整日期时间，如 11月1日 18:00 */
+/** 完整日期时间，如 11月1日 18:00（英文为 Nov 1, 18:00） */
 export function dateTime(iso: string): string {
   const d = new Date(iso);
-  const hm = d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
-  const year = d.getFullYear() === new Date().getFullYear() ? '' : `${d.getFullYear()}年`;
-  return `${year}${d.getMonth() + 1}月${d.getDate()}日 ${hm}`;
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return d.toLocaleString(langTag(), { year: sameYear ? undefined : 'numeric', month: langTag() === 'zh-CN' ? 'numeric' : 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
+/** 任务状态的显示名：按状态枚举翻译，不用 Hub 返回的中文 status_label */
+export const statusLabel = (status: string) => t(STATUS_LABELS[status as keyof typeof STATUS_LABELS] ?? status);
+
 /** 截止时间的提示：逾期标红，24 小时内到期标黄；已结束或待验收的任务只显示日期。 */
-export function dueInfo(t: { due_at: string | null; status: string }): { text: string; cls: '' | 'warn' | 'bad'; title: string } | null {
-  if (!t.due_at) return null;
-  const title = `截止：${dateTime(t.due_at)}`;
-  if (!['open', 'assigned', 'working', 'input_required'].includes(t.status)) return { text: `${clock(t.due_at)} 截止`, cls: '', title };
-  const left = new Date(t.due_at).getTime() - Date.now();
-  if (left < 0) return { text: `逾期 ${span(-left)}`, cls: 'bad', title };
-  if (left < 86400_000) return { text: `剩 ${span(left)}`, cls: 'warn', title };
-  return { text: `${clock(t.due_at)} 截止`, cls: '', title };
+export function dueInfo(task: { due_at: string | null; status: string }): { text: string; cls: '' | 'warn' | 'bad'; title: string } | null {
+  if (!task.due_at) return null;
+  const title = t('截止：{time}', { time: dateTime(task.due_at) });
+  if (!['open', 'assigned', 'working', 'input_required'].includes(task.status)) return { text: t('{time} 截止', { time: clock(task.due_at) }), cls: '', title };
+  const left = new Date(task.due_at).getTime() - Date.now();
+  if (left < 0) return { text: t('逾期 {span}', { span: span(-left) }), cls: 'bad', title };
+  if (left < 86400_000) return { text: t('剩 {span}', { span: span(left) }), cls: 'warn', title };
+  return { text: t('{time} 截止', { time: clock(task.due_at) }), cls: '', title };
 }
 
 /** ISO 转成 datetime-local 输入框的值 */
@@ -116,7 +126,8 @@ export function toLocalInput(iso: string | null): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-export const PRESENCE_LABEL: Record<Presence, string> = { online: '在线', active: '活跃', idle: '空闲', offline: '离线' };
+const PRESENCE_LABELS: Record<Presence, string> = { online: msg('在线'), active: msg('活跃'), idle: msg('空闲'), offline: msg('离线') };
+export const presenceLabel = (p: Presence) => t(PRESENCE_LABELS[p]);
 
 export function presence(a: Agent): Presence {
   return a.status === 'active' ? a.presence : 'offline';
@@ -128,8 +139,9 @@ export const PLATFORM_LABEL: Record<string, string> = {
   claude: 'Claude',
   chatgpt: 'ChatGPT',
   cursor: 'Cursor',
-  other: '其他',
+  other: msg('其他'),
 };
+export const platformLabel = (p: string) => t(PLATFORM_LABEL[p] ?? p);
 
 export function StatusBadge({ task }: { task: Pick<Task, 'status' | 'status_label'> }) {
   const cls =
@@ -144,7 +156,7 @@ export function StatusBadge({ task }: { task: Pick<Task, 'status' | 'status_labe
             : task.status === 'archived'
               ? 'muted'
               : '';
-  return <span className={`badge ${cls}`}>{task.status_label}</span>;
+  return <span className={`badge ${cls}`}>{statusLabel(task.status)}</span>;
 }
 
 export function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
@@ -190,7 +202,7 @@ export async function copyText(text: string): Promise<boolean> {
   return ok;
 }
 
-export function CopyButton({ text, label = '复制' }: { text: string; label?: string }) {
+export function CopyButton({ text, label }: { text: string; label?: string }) {
   const [done, setDone] = useState(false);
   return (
     <button
@@ -203,7 +215,7 @@ export function CopyButton({ text, label = '复制' }: { text: string; label?: s
         }
       }}
     >
-      {done ? '已复制' : label}
+      {done ? t('已复制') : (label ?? t('复制'))}
     </button>
   );
 }
@@ -219,7 +231,7 @@ export function CodeBox({ text }: { text: string }) {
 
 export function agentLabel(agents: Agent[], code: string | null): string {
   if (!code) return '—';
-  if (code === 'owner') return '负责人';
+  if (code === 'owner') return t('负责人');
   const a = agents.find((x) => x.id === code);
   return a ? `${a.name}` : code;
 }
@@ -256,7 +268,7 @@ export function TagPicker({ id, value, onChange, placeholder }: { id?: string; v
           ))}
         </div>
       )}
-      <input id={id} className="input" value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder ?? '点选上面的标签，或输入自定义标签，用逗号分隔'} />
+      <input id={id} className="input" value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder ?? t('点选上面的标签，或输入自定义标签，用逗号分隔')} />
     </div>
   );
 }

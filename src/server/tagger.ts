@@ -3,6 +3,7 @@
 import type { Db } from './db.js';
 import { json } from './db.js';
 import { HubError, type Hub } from './hub.js';
+import { tr } from '../i18n/index.js';
 import type { HubEvent } from '../shared/model.js';
 
 export interface LlmConfig {
@@ -77,8 +78,8 @@ export class Tagger {
       model: input.model === undefined ? c.model : String(input.model).trim(),
       auto_tag: input.auto_tag === undefined ? c.auto_tag : !!input.auto_tag,
     };
-    if (next.base_url && !/^https?:\/\/\S+$/.test(next.base_url)) throw invalid('接口地址要以 http:// 或 https:// 开头，例如 https://api.openai.com/v1');
-    if (next.base_url && !next.model) throw invalid('请填写模型名称');
+    if (next.base_url && !/^https?:\/\/\S+$/.test(next.base_url)) throw invalid(tr('接口地址要以 http:// 或 https:// 开头，例如 https://api.openai.com/v1'));
+    if (next.base_url && !next.model) throw invalid(tr('请填写模型名称'));
     this.db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('llm', ?)").run(JSON.stringify(next));
     return this.view(next);
   }
@@ -138,7 +139,7 @@ export class Tagger {
   }
 
   async chat(user: string, cfg = this.config()): Promise<string> {
-    if (!cfg.base_url || !cfg.model) throw invalid('还没有配置外部模型');
+    if (!cfg.base_url || !cfg.model) throw invalid(tr('还没有配置外部模型'));
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), this.opts.timeoutMs ?? 20_000);
     try {

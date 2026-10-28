@@ -1,5 +1,6 @@
 import { type ReactNode, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { Agent } from './api';
+import { t } from './i18n';
 
 export interface MentionCandidate {
   code: string; // 插入到文本里的编号，如 A-3、负责人
@@ -142,10 +143,10 @@ export function MentionText({ text, agents }: { text: string; agents: Agent[] })
   let last = 0;
   for (const m of text.matchAll(/@(A-\d+|负责人|owner)/gi)) {
     const code = m[1].toUpperCase().startsWith('A-') ? m[1].toUpperCase() : null;
-    const name = code ? agents.find((a) => a.id === code)?.name : '负责人';
+    const name = code ? agents.find((a) => a.id === code)?.name : t('负责人');
     out.push(text.slice(last, m.index));
     out.push(
-      <span key={m.index} className="mention" title={code ?? '负责人'}>
+      <span key={m.index} className="mention" title={code ?? t('负责人')}>
         @{name ?? m[1]}
       </span>,
     );

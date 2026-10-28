@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type SessionDecision, type SessionRecord, contextRatio, short } from './session.js';
+import { tr } from '../i18n/index.js';
 
 /**
  * 第二期：规则打分落在灰区（或设置为每次都判断）时，用小模型再看一眼要不要续用。
@@ -34,8 +35,8 @@ const SCHEMA = {
   additionalProperties: false,
 };
 
-const SYSTEM =
-  '你帮一个自动值守程序决定：唤起编程 agent 处理新事项时，续用一个旧会话（保留之前的上下文，缓存命中时更便宜，但上下文越大越贵、越容易被旧信息干扰），还是新开会话（从任务的工作笔记重新开始）。只根据给出的信息判断，用一句中文说明理由。';
+const judgeSystem = () =>
+  tr('你帮一个自动值守程序决定：唤起编程 agent 处理新事项时，续用一个旧会话（保留之前的上下文，缓存命中时更便宜，但上下文越大越贵、越容易被旧信息干扰），还是新开会话（从任务的工作笔记重新开始）。只根据给出的信息判断，用一句中文说明理由。');
 
 /** 这次要不要找小模型判断 */
 export function shouldJudge(decision: SessionDecision, opts: JudgeOptions) {
@@ -48,20 +49,20 @@ export function judgePrompt(decision: SessionDecision, wakeItems: string[], thre
   const s = decision.session as SessionRecord;
   const idle = Math.round((now - Date.parse(s.last_used_at)) / 60_000);
   return [
-    '## 本次唤起的事项',
+    tr('## 本次唤起的事项'),
     ...wakeItems.map((x) => `- ${x}`),
     '',
-    `## 候选会话 ${short(s.id)}`,
-    `- 处理过的任务：${s.tasks.join('、') || '无'}`,
-    `- 已运行 ${s.runs} 次，开了 ${Math.round((now - Date.parse(s.created_at)) / 3600_000)} 小时，空闲 ${idle} 分钟（缓存有效期约 ${s.cache_ttl_minutes} 分钟）`,
-    `- 上下文已用 ${Math.round(contextRatio(s) * 100)}%（${Math.round(s.context_tokens / 1000)}k / ${Math.round(s.context_window / 1000)}k）`,
-    `- 最近几次运行：${s.outcomes.map((o) => (o ? '正常' : '异常')).join('、') || '无记录'}`,
-    s.summary ? `- 上次运行的总结：${s.summary.slice(0, 500)}` : '',
+    tr('## 候选会话 {short}', { short: short(s.id) }),
+    tr('- 处理过的任务：{v}', { v: s.tasks.join(tr('、')) || tr('无') }),
+    tr('- 已运行 {runs} 次，开了 {n} 小时，空闲 {idle} 分钟（缓存有效期约 {cache_ttl_minutes} 分钟）', { runs: s.runs, n: Math.round((now - Date.parse(s.created_at)) / 3600_000), idle, cache_ttl_minutes: s.cache_ttl_minutes }),
+    tr('- 上下文已用 {n}%（{n2}k / {n3}k）', { n: Math.round(contextRatio(s) * 100), n2: Math.round(s.context_tokens / 1000), n3: Math.round(s.context_window / 1000) }),
+    tr('- 最近几次运行：{v}', { v: s.outcomes.map((o) => (o ? tr('正常') : tr('异常'))).join(tr('、')) || tr('无记录') }),
+    s.summary ? tr('- 上次运行的总结：{summary}', { summary: s.summary.slice(0, 500) }) : '',
     '',
-    `## 规则打分：${decision.score}（达到 ${threshold} 续用），规则的倾向是${decision.action === 'reuse' ? '续用' : '新开'}`,
+    tr('## 规则打分：{score}（达到 {threshold} 续用），规则的倾向是{v}', { score: decision.score, threshold, v: decision.action === 'reuse' ? tr('续用') : tr('新开') }),
     ...decision.breakdown.map((x) => `- ${x}`),
     '',
-    '请判断续用（reuse）还是新开（new），以 JSON 回答：{"decision":"reuse"|"new","reason":"一句话理由"}',
+    tr('请判断续用（reuse）还是新开（new），以 JSON 回答：{"decision":"reuse"|"new","reason":"一句话理由"}'),
   ]
     .filter((x) => x !== '')
     .join('\n');
@@ -104,7 +105,7 @@ function parseOutput<T>(stdout: string, pick: (v: unknown) => T | null): T | nul
   return found ?? fromText(stdout);
 }
 
-export function judgeCommand(opts: JudgeOptions, schemaFile: string, system = SYSTEM, schema: object = SCHEMA): { cmd: string; args: string[] } {
+export function judgeCommand(opts: JudgeOptions, schemaFile: string, system = judgeSystem(), schema: object = SCHEMA): { cmd: string; args: string[] } {
   if (opts.harness === 'claude') {
     return {
       cmd: 'claude',
@@ -127,7 +128,7 @@ export function judgeCommand(opts: JudgeOptions, schemaFile: string, system = SY
 
 /** 运行小模型；任何失败都返回 null，由调用方沿用规则的决定 */
 export async function runJudge(prompt: string, opts: JudgeOptions, env: NodeJS.ProcessEnv): Promise<JudgeVerdict | null> {
-  const out = await runModel(prompt, opts, env, SYSTEM, SCHEMA);
+  const out = await runModel(prompt, opts, env, judgeSystem(), SCHEMA);
   return out === null ? null : parseVerdict(out);
 }
 
@@ -167,13 +168,13 @@ async function runModel(prompt: string, opts: JudgeOptions, env: NodeJS.ProcessE
 
 /** 按小模型的判断改写决定；理由里同时留下规则得分 */
 export function applyVerdict(decision: SessionDecision, verdict: JudgeVerdict | null): SessionDecision {
-  if (!verdict) return { ...decision, reason: `${decision.reason}；小模型没有给出判断，按规则处理` };
-  const what = verdict.decision === 'reuse' ? '续用' : '新开';
-  const rule = `规则得分 ${decision.score}（${decision.breakdown.join('，')}）`;
+  if (!verdict) return { ...decision, reason: tr('{reason}；小模型没有给出判断，按规则处理', { reason: decision.reason }) };
+  const what = verdict.decision === 'reuse' ? tr('续用') : tr('新开');
+  const rule = tr('规则得分 {score}（{breakdown}）', { score: decision.score, breakdown: decision.breakdown.join(tr('，')) });
   return {
     ...decision,
     action: verdict.decision,
-    reason: `小模型判断${what}会话 ${short(decision.session!.id)}：${verdict.reason || '未说明'}；${rule}`,
+    reason: tr('小模型判断{what}会话 {short}：{v}；{rule}', { what, short: short(decision.session!.id), v: verdict.reason || tr('未说明'), rule }),
   };
 }
 
@@ -196,8 +197,8 @@ const CLAIM_SCHEMA = {
   additionalProperties: false,
 };
 
-const CLAIM_SYSTEM =
-  '你帮一个多 agent 协作平台的值守程序判断：任务池里的这个任务适不适合交给这个 agent 领取。适合（claim）就唤起它去领；明显不适合（能力、平台、环境对不上，或者别人显然更合适）就让出（pass）给下一个候选。拿不准时选 claim，让 agent 自己看。只根据给出的信息判断，用一句中文说明理由。';
+const claimSystem = () =>
+  tr('你帮一个多 agent 协作平台的值守程序判断：任务池里的这个任务适不适合交给这个 agent 领取。适合（claim）就唤起它去领；明显不适合（能力、平台、环境对不上，或者别人显然更合适）就让出（pass）给下一个候选。拿不准时选 claim，让 agent 自己看。只根据给出的信息判断，用一句中文说明理由。');
 
 export interface ClaimJudgeInput {
   agent: { name: string; platform: string; tags: string[]; cwd: string };
@@ -217,22 +218,22 @@ export function claimPrompt(x: ClaimJudgeInput) {
   const t = x.task;
   return [
     '## Agent',
-    `- 名字：${x.agent.name}，平台：${x.agent.platform}`,
-    `- 能力标签：${x.agent.tags.join('、') || '无'}`,
-    `- 工作目录：${x.agent.cwd}`,
-    `- 手上进行中的任务：${x.active} 个`,
+    tr('- 名字：{name}，平台：{platform}', { name: x.agent.name, platform: x.agent.platform }),
+    tr('- 能力标签：{v}', { v: x.agent.tags.join(tr('、')) || tr('无') }),
+    tr('- 工作目录：{cwd}', { cwd: x.agent.cwd }),
+    tr('- 手上进行中的任务：{active} 个', { active: x.active }),
     '',
-    `## 任务 ${t.id}：${t.title}`,
-    t.description ? t.description.slice(0, 3000) : '（没有描述）',
-    t.acceptance?.length ? `验收标准：\n${t.acceptance.map((a) => `- ${a}`).join('\n')}` : '',
-    t.required_tags?.length ? `所需能力：${t.required_tags.join('、')}` : '',
-    t.parent ? `父任务：${t.parent}` : '',
+    tr('## 任务 {id}：{title}', { id: t.id, title: t.title }),
+    t.description ? t.description.slice(0, 3000) : tr('（没有描述）'),
+    t.acceptance?.length ? tr('验收标准：\n{v}', { v: t.acceptance.map((a) => `- ${a}`).join('\n') }) : '',
+    t.required_tags?.length ? tr('所需能力：{required_tags}', { required_tags: t.required_tags.join(tr('、')) }) : '',
+    t.parent ? tr('父任务：{parent}', { parent: t.parent }) : '',
     '',
-    `## 平台算的匹配度：${x.fit.score}，在 ${x.fit.of} 个候选里排第 ${x.fit.rank}`,
+    tr('## 平台算的匹配度：{score}，在 {of} 个候选里排第 {rank}', { score: x.fit.score, of: x.fit.of, rank: x.fit.rank }),
     ...x.fit.reasons.map((r) => `- ${r}`),
-    ...x.fit.warnings.map((w) => `- 注意：${w}`),
+    ...x.fit.warnings.map((w) => tr('- 注意：{w}', { w })),
     '',
-    '请判断领取（claim）还是让出（pass），以 JSON 回答：{"decision":"claim"|"pass","reason":"一句话理由"}',
+    tr('请判断领取（claim）还是让出（pass），以 JSON 回答：{"decision":"claim"|"pass","reason":"一句话理由"}'),
   ]
     .filter((l) => l !== '')
     .join('\n');
@@ -247,6 +248,6 @@ export function parseClaimVerdict(stdout: string): ClaimVerdict | null {
 }
 
 export async function runClaimJudge(input: ClaimJudgeInput, opts: JudgeOptions, env: NodeJS.ProcessEnv): Promise<ClaimVerdict | null> {
-  const out = await runModel(claimPrompt(input), opts, env, CLAIM_SYSTEM, CLAIM_SCHEMA);
+  const out = await runModel(claimPrompt(input), opts, env, claimSystem(), CLAIM_SCHEMA);
   return out === null ? null : parseClaimVerdict(out);
 }

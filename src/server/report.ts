@@ -3,11 +3,12 @@ import { json } from './db.js';
 import { type Hub, type TaskView, taskCode } from './hub.js';
 import type { Part } from '../shared/model.js';
 import { dueNote } from './format.js';
+import { tr } from '../i18n/index.js';
 
 const LIVE = ['open', 'assigned', 'working', 'input_required'];
 
 const day = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-const hours = (h: number | null) => (h === null ? '—' : h < 1 ? `${Math.max(1, Math.round(h * 60))} 分钟` : h < 48 ? `${h} 小时` : `${Math.round(h / 24)} 天`);
+const hours = (h: number | null) => (h === null ? '—' : h < 1 ? tr('{n} 分钟', { n: Math.max(1, Math.round(h * 60)) }) : h < 48 ? tr('{h} 小时', { h }) : tr('{n} 天', { n: Math.round(h / 24) }));
 const oneLine = (s: string, n = 80) => {
   const t = s.replace(/\s+/g, ' ').trim();
   return t.length > n ? `${t.slice(0, n)}…` : t;
@@ -51,43 +52,43 @@ export function renderReport(hub: Hub, opts: { project?: string; days: number; n
   const by = (st: string) => tasks.filter((t) => t.status === st);
   const nowIso = now.toISOString();
   const overdue = tasks.filter((t) => LIVE.includes(t.status) && t.due_at && t.due_at < nowIso);
-  const who = (t: TaskView) => t.assignee_name ?? '未指派';
+  const who = (t: TaskView) => t.assignee_name ?? tr('未指派');
   const L: string[] = [];
-  L.push(`# 协作中枢报告：${scope ? `${scope.id}「${scope.name}」` : '全部项目'}`);
+  L.push(tr('# 协作中枢报告：{v}', { v: scope ? tr('{id}「{name}」', { id: scope.id, name: scope.name }) : tr('全部项目') }));
   L.push('');
-  L.push(`统计区间：${from} 至 ${day(now)}（${opts.days} 天）· 生成于 ${day(now)} ${now.toTimeString().slice(0, 5)}`);
+  L.push(tr('统计区间：{from} 至 {day}（{days} 天）· 生成于 {day} {v}', { from, day: day(now), days: opts.days, v: now.toTimeString().slice(0, 5) }));
   L.push('');
-  L.push('## 概览');
+  L.push(tr('## 概览'));
   L.push('');
-  L.push(`- 新建任务 ${s.totals.created} 个，完成 ${s.totals.completed} 个`);
-  L.push(`- 平均用时（开工到验收）：${hours(s.totals.avg_hours)}；退回率：${s.totals.reject_rate === null ? '—' : `${s.totals.reject_rate}%`}`);
+  L.push(tr('- 新建任务 {created} 个，完成 {completed} 个', { created: s.totals.created, completed: s.totals.completed }));
+  L.push(tr('- 平均用时（开工到验收）：{hours}；退回率：{v}', { hours: hours(s.totals.avg_hours), v: s.totals.reject_rate === null ? '—' : `${s.totals.reject_rate}%` }));
   L.push(
-    `- 当前：进行中 ${by('working').length}，待验收 ${by('review').length}，阻塞 ${by('input_required').length}，待领取 ${by('open').length}，已逾期 ${overdue.length}`,
+    tr('- 当前：进行中 {n}，待验收 {n2}，阻塞 {n3}，待领取 {n4}，已逾期 {n5}', { n: by('working').length, n2: by('review').length, n3: by('input_required').length, n4: by('open').length, n5: overdue.length }),
   );
   L.push('');
   const section = (title: string, list: string[]) => {
-    L.push(`## ${title}（${list.length}）`, '');
-    L.push(list.length ? list.join('\n') : '（无）', '');
+    L.push(tr('## {title}（{n}）', { title, n: list.length }), '');
+    L.push(list.length ? list.join('\n') : tr('（无）'), '');
   };
   section(
-    '本期完成',
+    tr('本期完成'),
     completed.map(({ task: t, id }) => {
       const d = delivery(id);
-      return `- **${t.id}** ${t.title} — ${who(t)} · ${finished.get(id)!.slice(0, 10)}${d ? `\n  - 交付：${d}` : ''}`;
+      return `- **${t.id}** ${t.title} — ${who(t)} · ${finished.get(id)!.slice(0, 10)}${d ? tr('\n  - 交付：{d}', { d }) : ''}`;
     }),
   );
   section(
-    '进行中',
+    tr('进行中'),
     by('working').map((t) => `- **${t.id}** ${t.title} — ${who(t)} · ${t.progress}%${t.progress_note ? ` · ${oneLine(t.progress_note, 60)}` : ''}${dueNote(t)}`),
   );
-  section('待验收', by('review').map((t) => `- **${t.id}** ${t.title} — ${who(t)}`));
-  section('阻塞', by('input_required').map((t) => `- **${t.id}** ${t.title} — ${who(t)} · 原因：${oneLine(t.block_reason, 60)}`));
-  section('已逾期', overdue.map((t) => `- **${t.id}** ${t.title} — ${who(t)}${dueNote(t)}`));
-  L.push('## 各 agent', '');
-  L.push('| Agent | 完成 | 平均用时 | 提交 / 被退回 | 进行中 | 逾期 |');
+  section(tr('待验收'), by('review').map((t) => `- **${t.id}** ${t.title} — ${who(t)}`));
+  section(tr('阻塞'), by('input_required').map((t) => tr('- **{id}** {title} — {who} · 原因：{v}', { id: t.id, title: t.title, who: who(t), v: oneLine(t.block_reason, 60) })));
+  section(tr('已逾期'), overdue.map((t) => `- **${t.id}** ${t.title} — ${who(t)}${dueNote(t)}`));
+  L.push(tr('## 各 agent'), '');
+  L.push(tr('| Agent | 完成 | 平均用时 | 提交 / 被退回 | 进行中 | 逾期 |'));
   L.push('| --- | ---: | ---: | ---: | ---: | ---: |');
   for (const a of s.agents) {
-    L.push(`| ${cell(a.name)}（${a.id}） | ${a.completed} | ${hours(a.avg_hours)} | ${a.submitted} / ${a.rejected} | ${a.working} | ${a.overdue} |`);
+    L.push(tr('| {cell}（{id}） | {completed} | {hours} | {submitted} / {rejected} | {working} | {overdue} |', { cell: cell(a.name), id: a.id, completed: a.completed, hours: hours(a.avg_hours), submitted: a.submitted, rejected: a.rejected, working: a.working, overdue: a.overdue }));
   }
   return L.join('\n') + '\n';
 }
@@ -100,20 +101,20 @@ const csvCell = (v: unknown) => {
 /** 所有任务一行一个；带 BOM，Excel 直接打开不会乱码 */
 export function tasksCsv(hub: Hub, project?: string) {
   const cols: [string, (t: TaskView) => unknown][] = [
-    ['编号', (t) => t.id],
-    ['项目', (t) => t.project],
-    ['标题', (t) => t.title],
-    ['状态', (t) => t.status_label],
-    ['优先级', (t) => t.priority],
-    ['负责人', (t) => (t.assignee ? `${t.assignee_name}（${t.assignee}）` : '')],
-    ['进度', (t) => `${t.progress}%`],
-    ['最近进展', (t) => t.progress_note],
-    ['能力标签', (t) => t.required_tags],
-    ['父任务', (t) => t.parent],
-    ['前置任务', (t) => t.depends_on],
-    ['截止时间', (t) => localTime(t.due_at)],
-    ['创建时间', (t) => localTime(t.created_at)],
-    ['更新时间', (t) => localTime(t.updated_at)],
+    [tr('编号'), (t) => t.id],
+    [tr('项目'), (t) => t.project],
+    [tr('标题'), (t) => t.title],
+    [tr('状态'), (t) => t.status_label],
+    [tr('优先级'), (t) => t.priority],
+    [tr('负责人'), (t) => (t.assignee ? tr('{assignee_name}（{assignee}）', { assignee_name: t.assignee_name, assignee: t.assignee }) : '')],
+    [tr('进度'), (t) => `${t.progress}%`],
+    [tr('最近进展'), (t) => t.progress_note],
+    [tr('能力标签'), (t) => t.required_tags],
+    [tr('父任务'), (t) => t.parent],
+    [tr('前置任务'), (t) => t.depends_on],
+    [tr('截止时间'), (t) => localTime(t.due_at)],
+    [tr('创建时间'), (t) => localTime(t.created_at)],
+    [tr('更新时间'), (t) => localTime(t.updated_at)],
   ];
   const tasks = hub.listTasks({ kind: 'owner' }, { project });
   const lines = [cols.map((c) => c[0]).join(','), ...tasks.map((t) => cols.map(([, f]) => csvCell(f(t))).join(','))];

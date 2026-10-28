@@ -6,9 +6,11 @@
     "moduleResolution": "Bundler",
     "jsx": "react-jsx",
     "strict": true,
+    "resolveJsonModule": true,
     "noEmit": true,
     "skipLibCheck": true,
     "types": []
   },
-  "include": ["src", "../src/shared"]
+  "include": ["src", "../src/shared"],
+  "exclude": ["../src/shared/mcp-tools.ts"]
 }
