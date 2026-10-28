@@ -118,6 +118,7 @@ interface TaskRow {
   parent_id: number | null;
   depends_on: string;
   refs: string;
+  attachments: string;
   required_tags: string;
   progress: number;
   progress_note: string;
@@ -233,6 +234,8 @@ export interface TaskView {
   depends_on: string[];
   /** 引用的同项目任务（参考资料，任意状态） */
   refs: string[];
+  /** 发布任务时带的附件（文件编号先通过 /api/v1/files 上传得到） */
+  attachments: Part[];
   required_tags: string[];
   progress: number;
   progress_note: string;
@@ -414,6 +417,8 @@ export interface HubOptions {
 }
 
 const ACTIVE_MINUTES = 10;
+/** 一个任务最多带几个附件（和一条评论一样） */
+const MAX_TASK_FILES = 10;
 
 export class Hub {
   readonly bus = new EventEmitter();
@@ -2013,10 +2018,29 @@ export class Hub {
     return [...new Set(ids)];
   }
 
-  /** 指派、发布时附在摘要后面，值守唤醒的提示词里就能看到要参考哪些任务。 */
+  /** 指派、发布时附在摘要后面，值守唤醒的提示词里就能看到要参考哪些任务、有哪些附件。 */
   private refNote(t: TaskRow) {
     const refs = json<number[]>(t.refs, []);
-    return refs.length ? `（参考任务：${refs.map((id) => this.codeOf(id)).join('、')}）` : '';
+    const files = this.attachmentParts(t);
+    return (
+      (refs.length ? `（参考任务：${refs.map((id) => this.codeOf(id)).join('、')}）` : '') +
+      (files.length ? `〔附件：${files.map((f) => f.name).join('、')}，可用 ahub download ${this.codeOf(t.id)} 下载〕` : '')
+    );
+  }
+
+  /** 校验附件：去重、最多 10 个，每个都必须是已上传的文件。 */
+  private resolveAttachments(fileIds: string[]): string[] {
+    const ids = [...new Set(fileIds.map((x) => x.replace(/^\/?files\//, '')))];
+    if (ids.length > MAX_TASK_FILES) throw invalid(`一个任务最多带 ${MAX_TASK_FILES} 个附件`);
+    for (const id of ids) this.filePart(id);
+    return ids;
+  }
+
+  private attachmentParts(t: TaskRow): Part[] {
+    return json<string[]>(t.attachments, [])
+      .map((id) => this.getFile(id))
+      .filter((f): f is NonNullable<typeof f> => !!f)
+      .map((f) => ({ kind: 'file', name: f.name, mime: f.mime, size: f.size, url: `/files/${f.id}` }));
   }
 
   taskView(t: TaskRow): TaskView {
@@ -2042,6 +2066,7 @@ export class Hub {
       parent: parent ? taskCode(parent.project_id, parent.num) : null,
       depends_on: deps,
       refs: json<number[]>(t.refs, []).map((id) => this.codeOf(id)),
+      attachments: this.attachmentParts(t),
       required_tags: json<string[]>(t.required_tags, []),
       progress: t.progress,
       progress_note: t.progress_note,
@@ -2171,6 +2196,7 @@ export class Hub {
       parent?: string | null;
       depends_on?: string[];
       refs?: string[];
+      files?: string[];
       required_tags?: string[];
       due_at?: string | null;
       draft?: boolean;
@@ -2219,6 +2245,7 @@ export class Hub {
       return d.id;
     });
     const refs = this.resolveRefs(input.refs ?? [], projectId);
+    const attachments = this.resolveAttachments(input.files ?? []);
     const status: TaskStatus = input.draft && actor.kind === 'owner' ? 'draft' : assignee ? 'assigned' : 'open';
     const creator = actor.kind === 'owner' ? 'owner' : agentCode(actor.agent.id);
 
@@ -2231,8 +2258,8 @@ export class Hub {
       const r = this.db
         .prepare(
           `INSERT INTO tasks (project_id, num, title, description, acceptance, status, priority, assignee_id, created_by,
-            parent_id, depends_on, refs, required_tags, due_at, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            parent_id, depends_on, refs, attachments, required_tags, due_at, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           projectId,
@@ -2247,6 +2274,7 @@ export class Hub {
           parent?.id ?? null,
           JSON.stringify(deps),
           JSON.stringify(refs),
+          JSON.stringify(attachments),
           JSON.stringify(input.required_tags ?? []),
           input.due_at ?? parent?.due_at ?? null,
           now,
@@ -2302,6 +2330,7 @@ export class Hub {
       required_tags?: string[];
       depends_on?: string[];
       refs?: string[];
+      files?: string[];
       due_at?: string | null;
       version?: number;
     },
@@ -2323,10 +2352,11 @@ export class Hub {
             }),
           );
     const refs = input.refs === undefined ? t.refs : JSON.stringify(this.resolveRefs(input.refs, t.project_id, t.id));
+    const attachments = input.files === undefined ? t.attachments : JSON.stringify(this.resolveAttachments(input.files));
     return this.write(() => {
       this.db
         .prepare(
-          `UPDATE tasks SET title = ?, description = ?, acceptance = ?, priority = ?, required_tags = ?, depends_on = ?, refs = ?, due_at = ?,
+          `UPDATE tasks SET title = ?, description = ?, acceptance = ?, priority = ?, required_tags = ?, depends_on = ?, refs = ?, attachments = ?, due_at = ?,
             due_warned = CASE WHEN due_at IS ? THEN due_warned ELSE 0 END, updated_at = ?, version = version + 1 WHERE id = ?`,
         )
         .run(
@@ -2337,6 +2367,7 @@ export class Hub {
           input.required_tags === undefined ? t.required_tags : JSON.stringify(input.required_tags),
           deps,
           refs,
+          attachments,
           due === undefined ? t.due_at : due,
           due === undefined ? t.due_at : due,
           this.iso(),
@@ -2344,7 +2375,7 @@ export class Hub {
         );
       const fields = Object.keys(input).filter((k) => k !== 'version' && (input as Record<string, unknown>)[k] !== undefined);
       // 任务内容变了，之前的让出理由可能不再成立：清空，大家重新排名
-      if (fields.some((f) => ['title', 'description', 'acceptance', 'required_tags'].includes(f))) {
+      if (fields.some((f) => ['title', 'description', 'acceptance', 'required_tags', 'files'].includes(f))) {
         const cleared = this.db.prepare('DELETE FROM task_passes WHERE task_id = ?').run(t.id).changes;
         if (cleared && t.status === 'open') this.db.prepare('UPDATE tasks SET opened_at = ? WHERE id = ?').run(this.iso(), t.id);
       }
@@ -3718,6 +3749,7 @@ function fieldLabel(f: string) {
       required_tags: '能力标签',
       depends_on: '依赖',
       refs: '引用的任务',
+      files: '附件',
       due_at: '截止时间',
     } as Record<string, string>
   )[f] ?? f;

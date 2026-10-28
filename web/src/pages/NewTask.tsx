@@ -3,6 +3,7 @@ import { del, get, post, type Task, type Template } from '../api';
 import { Modal, TagPicker, splitList, useData, useHub } from '../ui';
 import { Suggest, useRecommend } from '../suggest';
 import { TaskPicker } from '../taskpicker';
+import { AttachmentField, useAttachments } from '../attach';
 
 const lines = (s: string) =>
   s
@@ -24,6 +25,7 @@ export function NewTask() {
   const [tags, setTags] = useState('');
   const [depends, setDepends] = useState('');
   const [refs, setRefs] = useState<string[]>([]);
+  const attachments = useAttachments(10, '一个任务');
   const [due, setDue] = useState('');
   const [batch, setBatch] = useState('');
   const [subtasks, setSubtasks] = useState('');
@@ -87,6 +89,7 @@ export function NewTask() {
           required_tags: splitList(tags),
           depends_on: splitList(depends),
           refs,
+          files: attachments.files.map((f) => f.id),
           due_at: due ? new Date(due).toISOString() : null,
           draft,
         });
@@ -111,6 +114,7 @@ export function NewTask() {
         setAssignee('');
         setSubtasks('');
         setRefs([]);
+        attachments.setFiles([]);
         setTplId('');
         openTask(t.id);
       } else {
@@ -129,7 +133,7 @@ export function NewTask() {
     }
   };
 
-  const canSubmit = mode === 'single' ? !!title.trim() : !!batch.trim();
+  const canSubmit = (mode === 'single' ? !!title.trim() : !!batch.trim()) && attachments.uploading === 0;
 
   return (
     <div style={{ maxWidth: 760 }}>
@@ -212,6 +216,11 @@ export function NewTask() {
             <div className="field">
               <label htmlFor="nt-acc">验收标准</label>
               <textarea id="nt-acc" className="textarea" style={{ minHeight: 64 }} value={acceptance} onChange={(e) => setAcceptance(e.target.value)} placeholder="每行一条" />
+            </div>
+            <div className="field">
+              <label htmlFor="nt-files">附件（可选）</label>
+              <AttachmentField id="nt-files" state={attachments} hint="需求文档、设计稿、截图等；可以拖到这里或点一下这里再粘贴，每个最大 25 MB，最多 10 个" />
+              <span className="hint">agent 接到任务后会用 ahub download 把附件下载到本地再开工</span>
             </div>
             <div className="field">
               <label htmlFor="nt-refs">引用历史任务（可选）</label>

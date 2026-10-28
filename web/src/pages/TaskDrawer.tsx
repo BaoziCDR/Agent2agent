@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { get, markOwnerRead, patch, post, uploadFile, type Part, type TaskDetail, type Uploaded } from '../api';
+import { get, markOwnerRead, patch, post, type Part, type TaskDetail } from '../api';
 import { Modal, Receipts, StatusBadge, TagPicker, clock, dateTime, dueInfo, splitList, timeAgo, toLocalInput, useData, useHub } from '../ui';
 import { MentionTextarea, agentCandidates } from '../mention';
 import { Markdown } from '../markdown';
@@ -7,8 +7,7 @@ import { Suggest, useRecommend } from '../suggest';
 import { AnswerBox } from '../answer';
 import { Artifacts, FilePart } from './Artifacts';
 import { TaskPicker } from '../taskpicker';
-
-const fileSize = (n: number) => (n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`);
+import { AttachmentChips, AttachmentField, fromParts, renameScreenshot, useAttachments } from '../attach';
 
 const partText = (parts: Part[]) =>
   parts
@@ -26,8 +25,7 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
   const [comment, setComment] = useState('');
   const [dialog, setDialog] = useState<null | 'reject' | 'cancel' | 'edit' | 'subtask'>(null);
   const [reason, setReason] = useState('');
-  const [files, setFiles] = useState<Uploaded[]>([]);
-  const [uploading, setUploading] = useState(0);
+  const { files, setFiles, uploading, attach, remove: removeFile } = useAttachments(10, '一条评论');
   const [wide, setWide] = useState(() => {
     try {
       return localStorage.getItem('ahub.drawer-wide') === '1';
@@ -112,21 +110,6 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
     }
   };
 
-  const attach = async (list: File[]) => {
-    if (!list.length) return;
-    if (files.length + list.length > 10) return toast('一条评论最多带 10 个附件', true);
-    setUploading((n) => n + list.length);
-    for (const f of list) {
-      try {
-        const up = await uploadFile(f);
-        setFiles((cur) => [...cur, up]);
-      } catch (err) {
-        toast((err as Error).message, true);
-      } finally {
-        setUploading((n) => n - 1);
-      }
-    }
-  };
   const sendComment = async () => {
     if ((!comment.trim() && !files.length) || uploading) return;
     if (await act('comments', { text: comment, files: files.map((f) => f.id) })) {
@@ -248,6 +231,19 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
                 {t.description ? <Markdown text={t.description} agents={agents} /> : <span className="faint">（无）</span>}
               </div>
 
+              {t.attachments.length > 0 && (
+                <div className="section">
+                  <h4>
+                    附件<span className="h4-hint">agent 用 ahub download {t.id} 下载到本地</span>
+                  </h4>
+                  <div className="attachments">
+                    {t.attachments.map((p, i) => (
+                      <FilePart key={i} p={p} />
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {t.acceptance.length > 0 && (
                 <div className="section">
                   <h4>验收标准</h4>
@@ -321,8 +317,7 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
                     const list = [...e.clipboardData.files];
                     if (!list.length) return;
                     e.preventDefault();
-                    // 截图粘贴进来通常都叫 image.png，加上时间区分
-                    void attach(list.map((f) => (f.name === 'image.png' ? new File([f], `截图-${new Date().toLocaleTimeString('sv').replaceAll(':', '')}.png`, { type: f.type }) : f)));
+                    void attach(list.map(renameScreenshot));
                   }}
                   onDragOver={(e) => e.dataTransfer.types.includes('Files') && e.preventDefault()}
                   onDrop={(e) => {
@@ -340,20 +335,7 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
                     placeholder="写评论，支持 Markdown；输入 @ 提及 agent，可粘贴或拖入截图和文件（Ctrl+Enter 发表）"
                     aria-label="评论"
                   />
-                  {(files.length > 0 || uploading > 0) && (
-                    <div className="attachments">
-                      {files.map((f) => (
-                        <span key={f.id} className="file-chip">
-                          {f.name}
-                          <span className="faint">{fileSize(f.size)}</span>
-                          <button type="button" className="chip-x" aria-label={`移除 ${f.name}`} onClick={() => setFiles((cur) => cur.filter((x) => x.id !== f.id))}>
-                            ×
-                          </button>
-                        </span>
-                      ))}
-                      {uploading > 0 && <span className="faint">正在上传 {uploading} 个文件…</span>}
-                    </div>
-                  )}
+                  <AttachmentChips files={files} uploading={uploading} onRemove={removeFile} />
                   <div className="btn-row" style={{ marginTop: 6 }}>
                     <button className="btn" disabled={(!comment.trim() && !files.length) || uploading > 0}>
                       发表评论
@@ -596,6 +578,7 @@ function NewSubtask({ parent, onClose, onCreated }: { parent: TaskDetail; onClos
   const [assignee, setAssignee] = useState('');
   const [tags, setTags] = useState(parent.required_tags.join(', '));
   const [busy, setBusy] = useState(false);
+  const attachments = useAttachments(10, '一个任务');
   const members = agents.filter((a) => a.status === 'active' && a.projects.some((p) => p.id === parent.project));
   const create = async () => {
     setBusy(true);
@@ -609,6 +592,7 @@ function NewSubtask({ parent, onClose, onCreated }: { parent: TaskDetail; onClos
         priority,
         assignee: assignee || null,
         required_tags: splitList(tags),
+        files: attachments.files.map((f) => f.id),
       });
       toast(`已发布子任务 ${sub.id}`);
       onCreated();
@@ -657,8 +641,12 @@ function NewSubtask({ parent, onClose, onCreated }: { parent: TaskDetail; onClos
         <label htmlFor="st-tags">所需能力</label>
         <TagPicker id="st-tags" value={tags} onChange={setTags} />
       </div>
+      <div className="field">
+        <label htmlFor="st-files">附件</label>
+        <AttachmentField id="st-files" state={attachments} />
+      </div>
       <div className="btn-row">
-        <button className="btn primary" disabled={!title.trim() || busy} onClick={create}>
+        <button className="btn primary" disabled={!title.trim() || busy || attachments.uploading > 0} onClick={create}>
           发布子任务
         </button>
         <button className="btn" onClick={onClose}>
@@ -679,6 +667,8 @@ function EditTask({ task, onClose, onSaved }: { task: TaskDetail; onClose: () =>
   const [due, setDue] = useState(toLocalInput(task.due_at));
   const [deps, setDeps] = useState(task.depends_on.join(', '));
   const [refs, setRefs] = useState(task.refs);
+  const attachments = useAttachments(10, '一个任务', fromParts(task.attachments));
+  const fileIds = attachments.files.map((f) => f.id);
   return (
     <Modal title={`编辑 ${task.id}`} onClose={onClose}>
       <div className="field">
@@ -721,10 +711,14 @@ function EditTask({ task, onClose, onSaved }: { task: TaskDetail; onClose: () =>
         <TaskPicker id="ed-refs" project={task.project} value={refs} onChange={setRefs} exclude={task.id} />
         <div className="hint">同项目的历史任务都可以引用（不限状态），agent 开工前会参考它们</div>
       </div>
+      <div className="field">
+        <label htmlFor="ed-files">附件</label>
+        <AttachmentField id="ed-files" state={attachments} />
+      </div>
       <div className="btn-row">
         <button
           className="btn primary"
-          disabled={!title.trim()}
+          disabled={!title.trim() || attachments.uploading > 0}
           onClick={async () => {
             try {
               await patch(`/tasks/${task.id}`, {
@@ -736,6 +730,7 @@ function EditTask({ task, onClose, onSaved }: { task: TaskDetail; onClose: () =>
                 ...(due !== toLocalInput(task.due_at) ? { due_at: due ? new Date(due).toISOString() : null } : {}),
                 ...(splitList(deps).join(',') !== task.depends_on.join(',') ? { depends_on: splitList(deps).map((d) => d.toUpperCase()) } : {}),
                 ...(refs.join(',') !== task.refs.join(',') ? { refs } : {}),
+                ...(fileIds.join(',') !== fromParts(task.attachments).map((f) => f.id).join(',') ? { files: fileIds } : {}),
                 version: task.version,
               });
               toast('已保存');

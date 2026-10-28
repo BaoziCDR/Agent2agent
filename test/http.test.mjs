@@ -318,6 +318,43 @@ test('评论附件：上传后随评论发出，任务详情和 Markdown 里都�
   assert.match(md.text, /\*\*看这里\*\* 〔附件 \[报错截图\.png\]\(http:\/\/[^)]+\/files\/[\w-]+\)〕/);
 });
 
+test('任务附件：发布、编辑时带上，详情、Markdown 和通知里都能看到', async () => {
+  const { app, req, project, join: joinAgent } = await setup();
+  const a = await joinAgent('甲');
+  const upload = async (name, headers = { authorization: 'Bearer owner_test' }) =>
+    (
+      await app.inject({
+        method: 'POST',
+        url: '/api/v1/files?name=' + encodeURIComponent(name),
+        headers: { ...headers, 'content-type': 'application/octet-stream' },
+        payload: Buffer.from('hello'),
+      })
+    ).json();
+  const f1 = await upload('需求.md');
+  const f2 = await upload('设计稿.png');
+  assert.equal((await req('POST', '/api/v1/admin/tasks', { project: project.id, title: 'x', files: ['nope-nope-nope'] })).status, 400);
+  const tooMany = Array.from({ length: 11 }, (_, i) => `id${i}`);
+  assert.equal((await req('POST', '/api/v1/admin/tasks', { project: project.id, title: 'x', files: tooMany })).status, 400);
+  const t = (await req('POST', '/api/v1/admin/tasks', { project: project.id, title: '做页面', assignee: a.agent.id, files: [f1.id, f1.id] })).json();
+  assert.deepEqual(t.attachments.map((p) => p.name), ['需求.md']);
+  const ev = (await req('GET', '/api/v1/admin/events?limit=1')).json()[0];
+  assert.match(ev.summary, /〔附件：需求\.md，可用 ahub download P1-T\d+ 下载〕/);
+  // 编辑时整体替换附件列表
+  const ed = await req('PATCH', `/api/v1/admin/tasks/${t.id}`, { files: [f1.id, f2.url] });
+  assert.equal(ed.status, 200);
+  assert.deepEqual(ed.json().attachments.map((p) => p.name), ['需求.md', '设计稿.png']);
+  const md = await req('GET', `/api/v1/tasks/${t.id}?format=md`, undefined, a.headers);
+  assert.match(md.text, /## 附件\n\n- \[需求\.md\]\(http:\/\/[^)]+\/files\/[\w-]+\)（5 B）/);
+  assert.match(md.text, /ahub download/);
+  assert.equal((await req('PATCH', `/api/v1/admin/tasks/${t.id}`, { files: [] })).json().attachments.length, 0);
+  // agent 拆子任务也能带附件
+  await req('POST', `/api/v1/tasks/${t.id}/accept`, {}, a.headers);
+  const f3 = await upload('日志.txt', a.headers);
+  const sub = await req('POST', '/api/v1/tasks', { parent: t.id, title: '子任务', files: [f3.id] }, a.headers);
+  assert.equal(sub.status, 200, sub.text);
+  assert.deepEqual(sub.json().attachments.map((p) => p.name), ['日志.txt']);
+});
+
 test('阻塞提问：agent 给出选项，负责人点选后解除阻塞并通知 agent', async () => {
   const { req, project, join: joinAgent } = await setup();
   const a = await joinAgent('甲');

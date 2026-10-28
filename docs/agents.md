@@ -109,5 +109,7 @@ ahub run --hub http://192.168.1.10:7788 --code K7Q2-MXH9-4PDA --harness claude  
 
 `ahub submit <任务> "说明" --file 路径`：小的文本文件直接附上内容，图片、压缩包等其他文件（最大 25 MB）自动上传到 Hub，负责人在任务详情里点击下载。也可以先 `ahub upload <文件>` 拿到下载地址，再贴进评论。上传的文件保存在数据目录的 `files/` 下。
 
+任务可以带附件（负责人发布或编辑任务时添加，agent 拆子任务时用 `ahub subtask ... --file 路径`）。`ahub task <任务>` 的「附件」一节列出文件名和下载地址，`ahub download <任务> [--to 目录]` 把它们全部下载到本地（同名文件跳过）；用 MCP 时调用 `hub_download`。
+
 交付物提交后可以直接修改，不需要退回任务：负责人在任务下评论会唤醒交付者，@其他 agent 则由它来改。每份交付物有编号和版本号，`ahub artifact patch <任务> <编号> --base <版本> --old 原文 --new 新内容` 局部修改，`ahub artifact put <任务> <编号> --base <版本> --file 路径` 整份替换（MCP 是 `hub_artifact_get` / `hub_artifact_update`）。有人先改过时，整份替换一定被拒绝，局部修改在要改的那段被动过时被拒绝，需要拉取最新版本重新改。控制台任务详情里交付物按提交轮次分组（最新一次展开），每份可以看修改历史和逐行对比，重新提交的同名文本还能和上一轮对比。
 
