@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { t } from '../i18n';
 import type { Task } from '../api';
-import { useHub } from '../ui';
+import { statusLabel, useHub } from '../ui';
 
 const NODE_W = 196;
 const NODE_H = 58;
@@ -109,7 +110,7 @@ function layout(tasks: Task[], avail: number) {
   let shelf = 0;
   let width = 0;
   if (linked.length && single.length) {
-    labels.push({ y, text: '有关联的任务' });
+    labels.push({ y, text: t('有关联的任务') });
     y += LABEL_H;
   }
   for (const g of linked) {
@@ -127,7 +128,7 @@ function layout(tasks: Task[], avail: number) {
   if (linked.length) y += shelf + GROUP_GAP_Y;
   if (single.length) {
     if (linked.length) {
-      labels.push({ y, text: '独立任务' });
+      labels.push({ y, text: t('独立任务') });
       y += LABEL_H;
     }
     const perRow = Math.max(1, Math.floor((Math.max(avail, NODE_W) + GRID_GAP) / (NODE_W + GRID_GAP)));
@@ -162,15 +163,15 @@ export function Graph({ tasks }: { tasks: Task[] }) {
   return (
     <div className="grid" style={{ gap: 12 }} ref={ref}>
       {tasks.length === 0 ? (
-        <div className="card empty">没有符合筛选条件的任务</div>
+        <div className="card empty">{t('没有符合筛选条件的任务')}</div>
       ) : (
         <>
           <p className="faint graph-legend">
             <span>
-              <span className="legend-line" /> 前置任务（完成后才能开始，未完成时为蓝色）
+              <span className="legend-line" /> {t('前置任务（完成后才能开始，未完成时为蓝色）')}
             </span>
             <span>
-              <span className="legend-line dashed" /> 父任务与子任务
+              <span className="legend-line dashed" /> {t('父任务与子任务')}
             </span>
           </p>
           {projects.map((p) => (
@@ -213,7 +214,7 @@ function ProjectGraph({ tasks, title, avail, onOpen }: { tasks: Task[]; title: s
     <div className="card graph-card">
       {title && <h3>{title}</h3>}
       <div className="graph-scroll">
-        <svg width={width + PAD_X * 2} height={height + PAD_Y * 2} role="img" aria-label={`${title ?? ''}任务关系图`}>
+        <svg width={width + PAD_X * 2} height={height + PAD_Y * 2} role="img" aria-label={title ? t('{title}任务关系图', { title }) : t('任务关系图')}>
           <defs>
             <marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
               <path d="M0,0 L8,4 L0,8 z" className="graph-arrow" />
@@ -250,7 +251,7 @@ function ProjectGraph({ tasks, title, avail, onOpen }: { tasks: Task[]; title: s
                         {t.id}
                         <span className={`graph-pri ${t.priority}`}>{t.priority}</span>
                       </span>
-                      <span>{t.status_label}</span>
+                      <span>{statusLabel(t.status)}</span>
                     </span>
                     <span className="graph-title">{t.title}</span>
                   </button>

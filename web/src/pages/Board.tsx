@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { joinList, msg, t as tr, withCode } from '../i18n';
 import { get, post, type Task, type TaskStatus } from '../api';
 import { Modal, dueInfo, timeAgo, useData, useHub } from '../ui';
 import { Graph } from './Graph';
@@ -13,15 +14,15 @@ function dropAction(t: Task, to: TaskStatus): Drop | null {
   if (t.status === to) return null;
   switch (to) {
     case 'open':
-      if (t.status === 'draft') return { verb: 'publish', done: '已发布' };
-      return LIVE.includes(t.status) ? { verb: 'assign', body: { agent: null }, done: '已放回任务池' } : null;
+      if (t.status === 'draft') return { verb: 'publish', done: tr('已发布') };
+      return LIVE.includes(t.status) ? { verb: 'assign', body: { agent: null }, done: tr('已放回任务池') } : null;
     case 'assigned':
       return LIVE.includes(t.status) ? { dialog: 'assign' } : null;
     case 'working':
-      if (t.status === 'input_required') return { verb: 'unblock', done: '已解除阻塞' };
+      if (t.status === 'input_required') return { verb: 'unblock', done: tr('已解除阻塞') };
       return t.status === 'review' ? { dialog: 'reject' } : null;
     case 'completed':
-      return t.status === 'review' ? { verb: 'approve', done: '已验收通过' } : null;
+      return t.status === 'review' ? { verb: 'approve', done: tr('已验收通过') } : null;
     case 'archived':
       return ['completed', 'archived'].includes(t.status) ? null : { dialog: 'cancel' };
     default:
@@ -30,20 +31,20 @@ function dropAction(t: Task, to: TaskStatus): Drop | null {
 }
 
 const DIALOG_TITLE = {
-  assign: '指派给',
-  reject: '退回修改',
-  cancel: '归档任务',
+  assign: msg('指派给'),
+  reject: msg('退回修改'),
+  cancel: msg('归档任务'),
 };
 
 const COLUMNS: { status: TaskStatus; label: string }[] = [
-  { status: 'draft', label: '草稿' },
-  { status: 'open', label: '待领取' },
-  { status: 'assigned', label: '已指派' },
-  { status: 'working', label: '进行中' },
-  { status: 'input_required', label: '阻塞' },
-  { status: 'review', label: '待验收' },
-  { status: 'completed', label: '已完成' },
-  { status: 'archived', label: '已归档' },
+  { status: 'draft', label: msg('草稿') },
+  { status: 'open', label: msg('待领取') },
+  { status: 'assigned', label: msg('已指派') },
+  { status: 'working', label: msg('进行中') },
+  { status: 'input_required', label: msg('阻塞') },
+  { status: 'review', label: msg('待验收') },
+  { status: 'completed', label: msg('已完成') },
+  { status: 'archived', label: msg('已归档') },
 ];
 
 const PRIORITIES: Task['priority'][] = ['P0', 'P1', 'P2', 'P3'];
@@ -225,22 +226,22 @@ export function Board() {
     <div>
       <div className="btn-row" style={{ justifyContent: 'space-between', marginBottom: 12 }}>
         <div>
-          <h1 className="page-title">任务看板</h1>
+          <h1 className="page-title">{tr('任务看板')}</h1>
           <p className="page-sub" style={{ margin: 0 }}>
             {view === 'board'
-              ? '点击卡片查看详情；把卡片拖到其他列可以指派、放回任务池、验收、退回或归档'
-              : '任务之间的前置关系和父子关系，点击任务查看详情；上面的筛选同样生效'}
+              ? tr('点击卡片查看详情；把卡片拖到其他列可以指派、放回任务池、验收、退回或归档')
+              : tr('任务之间的前置关系和父子关系，点击任务查看详情；上面的筛选同样生效')}
           </p>
         </div>
         <div className="btn-row">
-          <div className="seg" role="tablist" aria-label="视图">
+          <div className="seg" role="tablist" aria-label={tr('视图')}>
             <button
               role="tab"
               aria-selected={view === 'board'}
               className={view === 'board' ? 'active' : ''}
               onClick={() => switchView('board')}
             >
-              看板
+              {tr('看板')}
             </button>
             <button
               role="tab"
@@ -248,7 +249,7 @@ export function Board() {
               className={view === 'graph' ? 'active' : ''}
               onClick={() => switchView('graph')}
             >
-              关系图
+              {tr('关系图')}
             </button>
           </div>
           <button
@@ -257,18 +258,18 @@ export function Board() {
             aria-controls="board-filters"
             onClick={() => setFiltersOpen((v) => !v)}
           >
-            筛选{activeCount + (f.showArchived ? 1 : 0) > 0 && <span className="badge accent">{activeCount + (f.showArchived ? 1 : 0)}</span>}
+            {tr('筛选')}{activeCount + (f.showArchived ? 1 : 0) > 0 && <span className="badge accent">{activeCount + (f.showArchived ? 1 : 0)}</span>}
           </button>
           <button className="btn primary" onClick={() => go('new')}>
-            发布任务
+            {tr('发布任务')}
           </button>
         </div>
       </div>
-      <div id="board-filters" className={`filter-bar ${filtersOpen ? '' : 'collapsed'}`} role="search" aria-label="筛选任务">
+      <div id="board-filters" className={`filter-bar ${filtersOpen ? '' : 'collapsed'}`} role="search" aria-label={tr('筛选任务')}>
         <input
           className="input"
           style={{ width: 170 }}
-          placeholder="搜索标题或编号"
+          placeholder={tr('搜索标题或编号')}
           value={f.query}
           onChange={(e) => set({ query: e.target.value })}
         />
@@ -277,17 +278,17 @@ export function Board() {
           style={{ width: 140 }}
           value={f.assignee}
           onChange={(e) => set({ assignee: e.target.value })}
-          aria-label="按负责人筛选"
+          aria-label={tr('按负责人筛选')}
         >
-          <option value="">全部负责人</option>
-          <option value="-">未指派</option>
+          <option value="">{tr('全部负责人')}</option>
+          <option value="-">{tr('未指派')}</option>
           {agents.map((a) => (
             <option key={a.id} value={a.id}>
-              {a.name}{a.status === 'deleted' ? '（已删除）' : ''}
+              {a.name}{a.status === 'deleted' ? tr('（已删除）') : ''}
             </option>
           ))}
         </select>
-        <div className="chip-group" role="group" aria-label="按优先级筛选">
+        <div className="chip-group" role="group" aria-label={tr('按优先级筛选')}>
           {PRIORITIES.map((p) => {
             const on = f.priorities.includes(p);
             return (
@@ -295,7 +296,7 @@ export function Board() {
                 key={p}
                 className={`filter-chip ${on ? 'on' : ''}`}
                 aria-pressed={on}
-                title={on ? `不再只看 ${p}` : `只看 ${p}（可多选）`}
+                title={tr(on ? msg('不再只看 {p}') : msg('只看 {p}（可多选）'), { p })}
                 onClick={() => set({ priorities: on ? f.priorities.filter((x) => x !== p) : [...f.priorities, p].sort() })}
               >
                 {p}
@@ -309,23 +310,23 @@ export function Board() {
             style={{ width: 92 }}
             value={f.dateField}
             onChange={(e) => set({ dateField: e.target.value as Filters['dateField'] })}
-            aria-label="按哪个日期筛选"
+            aria-label={tr('按哪个日期筛选')}
           >
-            <option value="created">创建于</option>
-            <option value="updated">更新于</option>
+            <option value="created">{tr('创建于')}</option>
+            <option value="updated">{tr('更新于')}</option>
           </select>
           <select
             className="select"
             style={{ width: 104 }}
             value={f.range}
             onChange={(e) => set({ range: e.target.value as DateRange })}
-            aria-label="日期范围"
+            aria-label={tr('日期范围')}
           >
-            <option value="">不限日期</option>
-            <option value="today">今天</option>
-            <option value="7d">近 7 天</option>
-            <option value="30d">近 30 天</option>
-            <option value="custom">自定义…</option>
+            <option value="">{tr('不限日期')}</option>
+            <option value="today">{tr('今天')}</option>
+            <option value="7d">{tr('近 7 天')}</option>
+            <option value="30d">{tr('近 30 天')}</option>
+            <option value="custom">{tr('自定义…')}</option>
           </select>
           {f.range === 'custom' && (
             <>
@@ -336,9 +337,9 @@ export function Board() {
                 value={f.from}
                 max={f.to || undefined}
                 onChange={(e) => set({ from: e.target.value })}
-                aria-label="开始日期"
+                aria-label={tr('开始日期')}
               />
-              <span className="faint">至</span>
+              <span className="faint">{tr('至')}</span>
               <input
                 type="date"
                 className="input"
@@ -346,16 +347,16 @@ export function Board() {
                 value={f.to}
                 min={f.from || undefined}
                 onChange={(e) => set({ to: e.target.value })}
-                aria-label="结束日期"
+                aria-label={tr('结束日期')}
               />
             </>
           )}
         </div>
         <label className="filter-check">
-          <input type="checkbox" checked={f.topOnly} onChange={(e) => set({ topOnly: e.target.checked })} /> 只看主任务
+          <input type="checkbox" checked={f.topOnly} onChange={(e) => set({ topOnly: e.target.checked })} /> {tr('只看主任务')}
         </label>
         <label className="filter-check">
-          <input type="checkbox" checked={f.showArchived} onChange={(e) => set({ showArchived: e.target.checked })} /> 显示已归档
+          <input type="checkbox" checked={f.showArchived} onChange={(e) => set({ showArchived: e.target.checked })} /> {tr('显示已归档')}
         </label>
         {f.showArchived && (
           <select
@@ -363,19 +364,19 @@ export function Board() {
             style={{ width: 112 }}
             value={f.archiveKind}
             onChange={(e) => set({ archiveKind: e.target.value as Filters['archiveKind'] })}
-            aria-label="归档方式"
+            aria-label={tr('归档方式')}
           >
-            <option value="">全部归档</option>
-            <option value="manual">手动归档</option>
-            <option value="auto">自动归档</option>
+            <option value="">{tr('全部归档')}</option>
+            <option value="manual">{tr('手动归档')}</option>
+            <option value="auto">{tr('自动归档')}</option>
           </select>
         )}
         <span className="filter-count faint">
-          {active ? `${filtered.length} / ${total} 个任务` : `${filtered.length} 个任务`}
+          {active ? tr('{n} / {total} 个任务', { n: filtered.length, total }) : tr('{n} 个任务', { n: filtered.length })}
         </span>
         {active && (
           <button className="btn small" onClick={() => setF({ ...EMPTY, showArchived: f.showArchived })}>
-            清除筛选
+            {tr('清除筛选')}
           </button>
         )}
       </div>
@@ -391,7 +392,7 @@ export function Board() {
               <section
                 key={col.status}
                 className={`column ${dragging ? (dropAction(dragging, col.status) ? 'droppable' : dragging.status === col.status ? '' : 'no-drop') : ''} ${over === col.status ? 'over' : ''}`}
-                aria-label={col.label}
+                aria-label={tr(col.label)}
                 onDragOver={(e) => {
                   if (!dragging || !dropAction(dragging, col.status)) return;
                   e.preventDefault();
@@ -405,7 +406,7 @@ export function Board() {
                 }}
               >
                 <div className="column-head">
-                  <span>{col.label}</span>
+                  <span>{tr(col.label)}</span>
                   <span className="badge">{items.length}</span>
                 </div>
                 {items.map((t) => (
@@ -424,7 +425,7 @@ export function Board() {
                     <div className="meta">
                       <span>
                         {t.id}
-                        {t.parent ? ` · 子任务` : children.get(t.id) ? ` · ${children.get(t.id)} 个子任务` : ''}
+                        {t.parent ? ` · ${tr('子任务')}` : children.get(t.id) ? ` · ${tr('{n} 个子任务', { n: children.get(t.id)! })}` : ''}
                       </span>
                       <span className={`badge ${t.priority}`}>{t.priority}</span>
                     </div>
@@ -440,8 +441,8 @@ export function Board() {
                       );
                     })()}
                     {t.stalled && (
-                      <div className="due warn" title="一直在报进度，但百分比 2 小时以上没变">
-                        ↻ 疑似原地打转
+                      <div className="due warn" title={tr('一直在报进度，但百分比 2 小时以上没变')}>
+                        {tr('↻ 疑似原地打转')}
                       </div>
                     )}
                     {['working', 'input_required', 'review'].includes(t.status) && (
@@ -450,10 +451,10 @@ export function Board() {
                       </div>
                     )}
                     <div className="meta" style={{ marginTop: 7 }}>
-                      <span>{t.assignee_name ?? (t.required_tags.length ? `需要：${t.required_tags.join('、')}` : '未指派')}</span>
+                      <span>{t.assignee_name ?? (t.required_tags.length ? tr('需要：{tags}', { tags: joinList(t.required_tags) }) : tr('未指派'))}</span>
                       {t.archive_kind ? (
-                        <span className={`badge archive-${t.archive_kind}`} title={t.archived_at ? `归档于 ${timeAgo(t.archived_at)}` : undefined}>
-                          {t.archive_kind === 'auto' ? '自动归档' : '手动归档'}
+                        <span className={`badge archive-${t.archive_kind}`} title={t.archived_at ? tr('归档于 {time}', { time: timeAgo(t.archived_at) }) : undefined}>
+                          {t.archive_kind === 'auto' ? tr('自动归档') : tr('手动归档')}
                         </span>
                       ) : (
                         <span>{timeAgo(t.updated_at)}</span>
@@ -477,15 +478,15 @@ export function Board() {
         </div>
       )}
       {pending && (
-        <Modal title={`${DIALOG_TITLE[pending.dialog]} · ${pending.task.id}`} onClose={() => setPending(null)}>
+        <Modal title={`${tr(DIALOG_TITLE[pending.dialog])} · ${pending.task.id}`} onClose={() => setPending(null)}>
           {pending.dialog === 'assign' ? (
             <div className="field">
-              <label htmlFor="dnd-agent">项目成员</label>
+              <label htmlFor="dnd-agent">{tr('项目成员')}</label>
               <select id="dnd-agent" className="select" value={text} onChange={(e) => setText(e.target.value)} autoFocus>
-                <option value="">选择 agent</option>
+                <option value="">{tr('选择 agent')}</option>
                 {members.map((a) => (
                   <option key={a.id} value={a.id}>
-                    {a.name}（{a.id}）{a.online ? '' : ' · 不在线'}
+                    {withCode(a.name, a.id)}{a.online ? '' : tr(' · 不在线')}
                   </option>
                 ))}
               </select>
@@ -493,7 +494,7 @@ export function Board() {
             </div>
           ) : (
             <div className="field">
-              <label htmlFor="dnd-text">{pending.dialog === 'reject' ? '修改意见' : '原因（可选）'}</label>
+              <label htmlFor="dnd-text">{pending.dialog === 'reject' ? tr('修改意见') : tr('原因（可选）')}</label>
               <textarea id="dnd-text" className="textarea" value={text} onChange={(e) => setText(e.target.value)} autoFocus />
             </div>
           )}
@@ -508,17 +509,17 @@ export function Board() {
                 const t = pending.task;
                 const ok =
                   pending.dialog === 'assign'
-                    ? await act(t, 'assign', { agent: text }, '已指派')
+                    ? await act(t, 'assign', { agent: text }, tr('已指派'))
                     : pending.dialog === 'reject'
-                      ? await act(t, 'reject', { reason: text }, '已退回')
-                      : await act(t, 'cancel', { reason: text || undefined }, '已归档');
+                      ? await act(t, 'reject', { reason: text }, tr('已退回'))
+                      : await act(t, 'cancel', { reason: text || undefined }, tr('已归档'));
                 if (ok) setPending(null);
               }}
             >
-              {pending.dialog === 'assign' ? '指派' : pending.dialog === 'reject' ? '退回' : '确认归档'}
+              {pending.dialog === 'assign' ? tr('指派') : pending.dialog === 'reject' ? tr('退回') : tr('确认归档')}
             </button>
             <button className="btn" onClick={() => setPending(null)}>
-              算了
+              {tr('算了')}
             </button>
           </div>
         </Modal>

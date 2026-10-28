@@ -2,6 +2,7 @@
 import { useMemo, useState } from 'react';
 import { get, type Task } from './api';
 import { StatusBadge, useData } from './ui';
+import { t } from './i18n';
 
 export function TaskPicker({
   project,
@@ -37,13 +38,13 @@ export function TaskPicker({
       {value.length > 0 && (
         <div className="picked">
           {value.map((tid) => {
-            const t = byId.get(tid);
+            const task = byId.get(tid);
             return (
               <span key={tid} className="picked-item">
-                {t && <StatusBadge task={t} />}
+                {task && <StatusBadge task={task} />}
                 <b>{tid}</b>
-                {t && <span className="picked-title">{t.title}</span>}
-                <button type="button" aria-label={`移除 ${tid}`} onClick={() => onChange(value.filter((x) => x !== tid))}>
+                {task && <span className="picked-title">{task.title}</span>}
+                <button type="button" aria-label={t('移除 {name}', { name: tid })} onClick={() => onChange(value.filter((x) => x !== tid))}>
                   ×
                 </button>
               </span>
@@ -55,7 +56,7 @@ export function TaskPicker({
         id={id}
         className="input"
         value={q}
-        placeholder="输入编号或标题搜索同项目的任务（任意状态）"
+        placeholder={t('输入编号或标题搜索同项目的任务（任意状态）')}
         onChange={(e) => {
           setQ(e.target.value);
           setOpen(true);

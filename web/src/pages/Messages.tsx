@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { t, withCode } from '../i18n';
 import { get, markOwnerRead, type Message, post } from '../api';
 import { Receipts, clock, useData, useHub } from '../ui';
 import { Markdown } from '../markdown';
@@ -19,26 +20,26 @@ export function Messages() {
 
   return (
     <div style={{ maxWidth: 900 }}>
-      <h1 className="page-title">私信与广播</h1>
-      <p className="page-sub">agent 之间的私信你都能看到。广播会出现在项目所有成员下一次同步的「需要你处理」里。</p>
+      <h1 className="page-title">{t('私信与广播')}</h1>
+      <p className="page-sub">{t('agent 之间的私信你都能看到。广播会出现在项目所有成员下一次同步的「需要你处理」里。')}</p>
       <div className="grid two-col" style={{ marginBottom: 16 }}>
         <div className="card">
-          <h3>发私信</h3>
+          <h3>{t('发私信')}</h3>
           <div className="field">
-            <label htmlFor="msg-to">发给</label>
+            <label htmlFor="msg-to">{t('发给')}</label>
             <select id="msg-to" className="select" value={to} onChange={(e) => setTo(e.target.value)}>
-              <option value="">选择 agent</option>
+              <option value="">{t('选择 agent')}</option>
               {agents
                 .filter((a) => a.status === 'active')
                 .map((a) => (
                   <option key={a.id} value={a.id}>
-                    {a.name}（{a.id}）
+                    {withCode(a.name, a.id)}
                   </option>
                 ))}
             </select>
           </div>
           <div className="field">
-            <label htmlFor="msg-text">内容</label>
+            <label htmlFor="msg-text">{t('内容')}</label>
             <textarea id="msg-text" ref={textRef} className="textarea" value={text} onChange={(e) => setText(e.target.value)} />
           </div>
           <button
@@ -48,20 +49,20 @@ export function Messages() {
               try {
                 await post('/messages', { to, text });
                 setText('');
-                toast('已发送');
+                toast(t('已发送'));
                 reload();
               } catch (err) {
                 toast((err as Error).message, true);
               }
             }}
           >
-            发送
+            {t('发送')}
           </button>
         </div>
         <div className="card">
-          <h3>项目广播</h3>
+          <h3>{t('项目广播')}</h3>
           <div className="field">
-            <label htmlFor="b-project">项目</label>
+            <label htmlFor="b-project">{t('项目')}</label>
             <select id="b-project" className="select" value={bProject} onChange={(e) => setBProject(e.target.value)}>
               {projects.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -71,8 +72,8 @@ export function Messages() {
             </select>
           </div>
           <div className="field">
-            <label htmlFor="b-text">内容</label>
-            <textarea id="b-text" className="textarea" value={bText} onChange={(e) => setBText(e.target.value)} placeholder="如：接口规范改了，请大家先看项目说明" />
+            <label htmlFor="b-text">{t('内容')}</label>
+            <textarea id="b-text" className="textarea" value={bText} onChange={(e) => setBText(e.target.value)} placeholder={t('如：接口规范改了，请大家先看项目说明')} />
           </div>
           <button
             className="btn primary"
@@ -81,19 +82,19 @@ export function Messages() {
               try {
                 await post('/broadcast', { project: bProject, text: bText });
                 setBText('');
-                toast('已广播');
+                toast(t('已广播'));
               } catch (err) {
                 toast((err as Error).message, true);
               }
             }}
           >
-            广播
+            {t('广播')}
           </button>
         </div>
       </div>
       <div className="card">
-        <h3>私信记录</h3>
-        {messages && messages.length === 0 && <div className="empty">还没有私信</div>}
+        <h3>{t('私信记录')}</h3>
+        {messages && messages.length === 0 && <div className="empty">{t('还没有私信')}</div>}
         <div className="list">
           {messages?.map((m) => (
             <div key={m.id} className="list-item">
@@ -114,7 +115,7 @@ export function Messages() {
                     textRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
                   }}
                 >
-                  回复
+                  {t('回复')}
                 </button>
               )}
             </div>

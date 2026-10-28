@@ -1,4 +1,5 @@
 import type { HubEvent, Part, Presence, TaskStatus } from '../../src/shared/model';
+import { lang, t } from './i18n';
 
 export type { HubEvent, Part, Presence, TaskStatus };
 
@@ -235,18 +236,25 @@ export class ApiError extends Error {
   }
 }
 
+/** 告诉 Hub 用哪种语言生成报错和说明文字（Hub 只有中文和英文，其他语言按英文） */
+const langHeader = () => ({ 'x-ahub-lang': lang() });
+
+/** 事件的一句话描述：中文界面用中文，其他语言用英文 */
+export const eventSummary = (e: Pick<HubEvent, 'summary' | 'summary_en'>) => (lang() === 'zh' ? e.summary : (e.summary_en ?? e.summary));
+
 export async function api<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(`/api/v1/admin${path}`, {
     method,
     headers: {
       authorization: `Bearer ${getToken() ?? ''}`,
+      ...langHeader(),
       ...(body === undefined ? {} : { 'content-type': 'application/json' }),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
-  if (!res.ok) throw new ApiError(res.status, data?.error?.message ?? `请求失败（${res.status}）`);
+  if (!res.ok) throw new ApiError(res.status, data?.error?.message ?? t('请求失败（{status}）', { status: res.status }));
   return data as T;
 }
 
@@ -262,10 +270,10 @@ export const markOwnerRead = (body: { seqs?: number[]; task?: string; from?: str
 
 /** 带令牌下载文件（导出报告、CSV 等），浏览器里另存为 filename。 */
 export async function download(path: string, filename: string) {
-  const res = await fetch(`/api/v1/admin${path}`, { headers: { authorization: `Bearer ${getToken() ?? ''}` } });
+  const res = await fetch(`/api/v1/admin${path}`, { headers: { authorization: `Bearer ${getToken() ?? ''}`, ...langHeader() } });
   if (!res.ok) {
     const data = await res.json().catch(() => null);
-    throw new ApiError(res.status, data?.error?.message ?? `下载失败（${res.status}）`);
+    throw new ApiError(res.status, data?.error?.message ?? t('下载失败（{status}）', { status: res.status }));
   }
   const url = URL.createObjectURL(await res.blob());
   const a = document.createElement('a');
@@ -289,11 +297,11 @@ export interface Uploaded {
 export async function uploadFile(file: File): Promise<Uploaded> {
   const res = await fetch(`/api/v1/files?name=${encodeURIComponent(file.name)}`, {
     method: 'POST',
-    headers: { authorization: `Bearer ${getToken() ?? ''}`, 'content-type': 'application/octet-stream' },
+    headers: { authorization: `Bearer ${getToken() ?? ''}`, 'content-type': 'application/octet-stream', ...langHeader() },
     body: file,
   });
   const data = await res.json().catch(() => null);
-  if (!res.ok) throw new ApiError(res.status, res.status === 413 ? `${file.name} 超过 25 MB` : (data?.error?.message ?? `上传失败（${res.status}）`));
+  if (!res.ok) throw new ApiError(res.status, res.status === 413 ? t('{name} 超过 25 MB', { name: file.name }) : (data?.error?.message ?? t('上传失败（{status}）', { status: res.status })));
   return data as Uploaded;
 }
 

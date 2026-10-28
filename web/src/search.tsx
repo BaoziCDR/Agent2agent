@@ -1,6 +1,7 @@
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { type Agent, get, type Task } from './api';
 import { StatusBadge, clock, useHub } from './ui';
+import { msg, t as tr } from './i18n';
 
 interface Hit {
   id: number;
@@ -50,9 +51,9 @@ export function GlobalSearch() {
   const mac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
   return (
     <>
-      <button className="search-trigger" onClick={() => setOpen(true)} aria-label="搜索">
+      <button className="search-trigger" onClick={() => setOpen(true)} aria-label={tr('搜索')}>
         <span aria-hidden>⌕</span>
-        <span className="search-trigger-text">搜索任务、评论、私信</span>
+        <span className="search-trigger-text">{tr('搜索任务、评论、私信')}</span>
         <kbd>{mac ? '⌘' : 'Ctrl'} K</kbd>
       </button>
       {open && <SearchPanel onClose={() => setOpen(false)} />}
@@ -91,7 +92,7 @@ function SearchPanel({ onClose }: { onClose: () => void }) {
     ? [
         ...res.tasks.map((t) => ({
           key: `t${t.id}`,
-          group: '任务',
+          group: msg('任务'),
           go: done(() => openTask(t.id)),
           body: (
             <>
@@ -100,14 +101,14 @@ function SearchPanel({ onClose }: { onClose: () => void }) {
                 <div>
                   <b>{t.id}</b> <Mark text={t.title} q={kw} />
                 </div>
-                <div className="faint">{[t.assignee_name, t.progress_note].filter(Boolean).join(' · ') || '未指派'}</div>
+                <div className="faint">{[t.assignee_name, t.progress_note].filter(Boolean).join(' · ') || tr('未指派')}</div>
               </div>
             </>
           ),
         })),
         ...res.comments.map((c) => ({
           key: `c${c.id}`,
-          group: '评论',
+          group: msg('评论'),
           go: done(() => c.task && openTask(c.task)),
           body: (
             <div className="search-main">
@@ -122,7 +123,7 @@ function SearchPanel({ onClose }: { onClose: () => void }) {
         })),
         ...res.messages.map((m) => ({
           key: `m${m.id}`,
-          group: '私信',
+          group: msg('私信'),
           go: done(() => go('messages')),
           body: (
             <div className="search-main">
@@ -137,7 +138,7 @@ function SearchPanel({ onClose }: { onClose: () => void }) {
         })),
         ...res.agents.map((a) => ({
           key: `a${a.id}`,
-          group: 'Agent',
+          group: msg('Agent'),
           go: done(() => go('agents')),
           body: (
             <div className="search-main">
@@ -159,11 +160,11 @@ function SearchPanel({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="modal-mask search-mask" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="search-panel" role="dialog" aria-label="搜索">
+      <div className="search-panel" role="dialog" aria-label={tr('搜索')}>
         <input
           className="input search-input"
           autoFocus
-          placeholder={`搜索${project ? ` ${project} 的` : ''}任务编号、标题、描述、笔记、评论、私信…`}
+          placeholder={project ? tr('搜索 {project} 的任务编号、标题、描述、笔记、评论、私信…', { project }) : tr('搜索任务编号、标题、描述、笔记、评论、私信…')}
           value={q}
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={(e) => {
@@ -176,18 +177,18 @@ function SearchPanel({ onClose }: { onClose: () => void }) {
           }}
         />
         <div className="search-results" ref={list}>
-          {!q.trim() && <div className="empty">输入关键字，或直接输入任务编号如 P1-T3</div>}
-          {res && rows.length === 0 && <div className="empty">没有找到「{res.query}」</div>}
+          {!q.trim() && <div className="empty">{tr('输入关键字，或直接输入任务编号如 P1-T3')}</div>}
+          {res && rows.length === 0 && <div className="empty">{tr('没有找到「{q}」', { q: res.query })}</div>}
           {rows.map((r, i) => (
             <div key={r.key}>
-              {(i === 0 || rows[i - 1].group !== r.group) && <div className="search-group">{r.group}</div>}
+              {(i === 0 || rows[i - 1].group !== r.group) && <div className="search-group">{tr(r.group)}</div>}
               <div className={`search-row ${i === sel ? 'active' : ''}`} onMouseEnter={() => setSel(i)} onClick={r.go}>
                 {r.body}
               </div>
             </div>
           ))}
         </div>
-        <div className="search-foot faint">↑↓ 选择 · Enter 打开 · Esc 关闭</div>
+        <div className="search-foot faint">{tr('↑↓ 选择 · Enter 打开 · Esc 关闭')}</div>
       </div>
     </div>
   );

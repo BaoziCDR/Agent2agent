@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { t } from '../i18n';
 import { download, get } from '../api';
 import { useData, useHub } from '../ui';
 
@@ -22,13 +23,14 @@ const RANGES = [7, 14, 30];
 
 const stamp = () => new Date().toLocaleDateString('sv').replaceAll('-', '');
 
-const hours = (h: number | null) => (h === null ? '–' : h < 1 ? `${Math.max(1, Math.round(h * 60))} 分钟` : h < 48 ? `${h} 小时` : `${Math.round(h / 24)} 天`);
+const hours = (h: number | null) =>
+  h === null ? '–' : h < 1 ? t('{n} 分钟', { n: Math.max(1, Math.round(h * 60)) }) : h < 48 ? t('{n} 小时', { n: h }) : t('{n} 天', { n: Math.round(h / 24) });
 
 export function Stats() {
   const { project, projects, toast } = useHub();
   const [days, setDays] = useState(14);
   const { data } = useData(() => get<StatsData>(`/stats?days=${days}${project ? `&project=${project}` : ''}`), [project, days]);
-  const t = data?.totals;
+  const totals = data?.totals;
   const q = project ? `&project=${project}` : '';
   const exportFile = (path: string, name: string) =>
     download(path, `${project ? `${project}-` : ''}${name}`).catch((err) => toast((err as Error).message, true));
@@ -36,75 +38,75 @@ export function Stats() {
     <div style={{ maxWidth: 1100 }}>
       <div className="btn-row" style={{ justifyContent: 'space-between', marginBottom: 14 }}>
         <div>
-          <h1 className="page-title">统计</h1>
+          <h1 className="page-title">{t('统计')}</h1>
           <p className="page-sub" style={{ margin: 0 }}>
-            {project ? projects.find((p) => p.id === project)?.name : '全部项目'} · 最近 {days} 天
+            {project ? projects.find((p) => p.id === project)?.name : t('全部项目')} · {t('最近 {n} 天', { n: days })}
           </p>
         </div>
         <div className="btn-row">
           <div className="tabs" style={{ marginBottom: 0, borderBottom: 'none' }}>
             {RANGES.map((d) => (
               <button key={d} className={`tab ${days === d ? 'active' : ''}`} onClick={() => setDays(d)}>
-                {d} 天
+                {t('{n} 天', { n: d })}
               </button>
             ))}
           </div>
           <button
             className="btn small"
-            title={`最近 ${days} 天的完成情况、进行中、待验收、阻塞和逾期任务，Markdown 格式，可直接贴到周报或文档里`}
+            title={t('最近 {n} 天的完成情况、进行中、待验收、阻塞和逾期任务，Markdown 格式，可直接贴到周报或文档里', { n: days })}
             onClick={() => exportFile(`/export/report?days=${days}${q}`, `ahub-report-${stamp()}.md`)}
           >
-            导出报告
+            {t('导出报告')}
           </button>
           <button
             className="btn small"
-            title="当前范围内的全部任务，Excel 可直接打开"
+            title={t('当前范围内的全部任务，Excel 可直接打开')}
             onClick={() => exportFile(`/export/tasks.csv${q ? `?${q.slice(1)}` : ''}`, `ahub-tasks-${stamp()}.csv`)}
           >
-            导出 CSV
+            {t('导出 CSV')}
           </button>
         </div>
       </div>
 
       <div className="grid stats">
         <div className="card stat">
-          <div className="stat-label">完成任务</div>
-          <div className="stat-value">{t?.completed ?? '–'}</div>
+          <div className="stat-label">{t('完成任务')}</div>
+          <div className="stat-value">{totals?.completed ?? '–'}</div>
         </div>
         <div className="card stat">
-          <div className="stat-label">新建任务</div>
-          <div className="stat-value">{t?.created ?? '–'}</div>
+          <div className="stat-label">{t('新建任务')}</div>
+          <div className="stat-value">{totals?.created ?? '–'}</div>
         </div>
         <div className="card stat">
-          <div className="stat-label">平均用时（开工到验收）</div>
-          <div className="stat-value">{t ? hours(t.avg_hours) : '–'}</div>
+          <div className="stat-label">{t('平均用时（开工到验收）')}</div>
+          <div className="stat-value">{totals ? hours(totals.avg_hours) : '–'}</div>
         </div>
-        <div className={`card stat ${t?.reject_rate ? 'warn' : ''}`}>
-          <div className="stat-label">退回率</div>
-          <div className="stat-value">{t?.reject_rate == null ? '–' : `${t.reject_rate}%`}</div>
+        <div className={`card stat ${totals?.reject_rate ? 'warn' : ''}`}>
+          <div className="stat-label">{t('退回率')}</div>
+          <div className="stat-value">{totals?.reject_rate == null ? '–' : `${totals.reject_rate}%`}</div>
         </div>
       </div>
 
       <div className="card" style={{ margin: '12px 0' }}>
-        <h3>每天完成的任务</h3>
+        <h3>{t('每天完成的任务')}</h3>
         {data && <DailyBars days={data.days} />}
       </div>
 
       <div className="card">
-        <h3>各 agent 表现</h3>
-        {data && data.agents.length === 0 && <div className="empty">还没有 agent</div>}
+        <h3>{t('各 agent 表现')}</h3>
+        {data && data.agents.length === 0 && <div className="empty">{t('还没有 agent')}</div>}
         {data && data.agents.length > 0 && (
           <div className="table-wrap">
             <table className="table stack">
               <thead>
                 <tr>
                   <th>Agent</th>
-                  <th className="num">完成</th>
-                  <th className="num">平均用时</th>
-                  <th className="num">提交 / 被退回</th>
-                  <th className="num">退回率</th>
-                  <th className="num">进行中</th>
-                  <th className="num">逾期</th>
+                  <th className="num">{t('完成')}</th>
+                  <th className="num">{t('平均用时')}</th>
+                  <th className="num">{t('提交 / 被退回')}</th>
+                  <th className="num">{t('退回率')}</th>
+                  <th className="num">{t('进行中')}</th>
+                  <th className="num">{t('逾期')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -113,14 +115,14 @@ export function Stats() {
                     <td data-label="Agent">
                       <b>{a.name}</b> <span className="faint">{a.id}</span>
                     </td>
-                    <td className="num" data-label="完成">{a.completed}</td>
-                    <td className="num" data-label="平均用时">{hours(a.avg_hours)}</td>
-                    <td className="num" data-label="提交 / 被退回">
+                    <td className="num" data-label={t('完成')}>{a.completed}</td>
+                    <td className="num" data-label={t('平均用时')}>{hours(a.avg_hours)}</td>
+                    <td className="num" data-label={t('提交 / 被退回')}>
                       {a.submitted} / {a.rejected}
                     </td>
-                    <td className="num" data-label="退回率">{a.reject_rate === null ? '–' : `${a.reject_rate}%`}</td>
-                    <td className="num" data-label="进行中">{a.working}</td>
-                    <td className="num" data-label="逾期" style={a.overdue ? { color: 'var(--bad)', fontWeight: 600 } : undefined}>
+                    <td className="num" data-label={t('退回率')}>{a.reject_rate === null ? '–' : `${a.reject_rate}%`}</td>
+                    <td className="num" data-label={t('进行中')}>{a.working}</td>
+                    <td className="num" data-label={t('逾期')} style={a.overdue ? { color: 'var(--bad)', fontWeight: 600 } : undefined}>
                       {a.overdue}
                     </td>
                   </tr>
@@ -160,7 +162,7 @@ function DailyBars({ days }: { days: StatsData['days'] }) {
   const h = hover === null ? null : days[hover];
   return (
     <div className="chart" ref={box} onMouseLeave={() => setHover(null)}>
-      <svg width={W} height={H} role="img" aria-label="每天完成的任务数">
+      <svg width={W} height={H} role="img" aria-label={t('每天完成的任务数')}>
         {[0, 1, 2, 3, 4].map((i) => (
           <g key={i}>
             <line x1={pad.l} x2={W - pad.r} y1={y(i * step)} y2={y(i * step)} className="grid-line" />
@@ -200,8 +202,8 @@ function DailyBars({ days }: { days: StatsData['days'] }) {
           }}
         >
           <b>{label(h.date)}</b>
-          <div>完成 {h.completed}</div>
-          <div className="faint">新建 {h.created}</div>
+          <div>{t('完成 {n}', { n: h.completed })}</div>
+          <div className="faint">{t('新建 {n}', { n: h.created })}</div>
         </div>
       )}
     </div>

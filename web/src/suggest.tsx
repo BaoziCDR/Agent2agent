@@ -1,5 +1,6 @@
 // 指派推荐：根据能力标签、在线与值守情况、手上任务量、历史表现和相似任务给出建议人选。
 import { useEffect, useState } from 'react';
+import { t } from './i18n';
 import { get, type Recommendation } from './api';
 
 export function useRecommend(q: { project?: string | null; task?: string; tags?: string; title?: string }, enabled = true) {
@@ -29,7 +30,7 @@ export function Suggest({
   list,
   selected,
   onPick,
-  label = '推荐',
+  label,
 }: {
   list: Recommendation[] | null;
   selected?: string;
@@ -40,7 +41,7 @@ export function Suggest({
   if (!top.length) return null;
   return (
     <div className="suggest">
-      <span className="faint">{label}</span>
+      <span className="faint">{label ?? t('推荐')}</span>
       {top.map((r) => (
         <button
           key={r.id}
