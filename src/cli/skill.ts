@@ -80,3 +80,18 @@ export function installSkill(path: string, hub?: string) {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, renderSkill(hub));
 }
+
+/** 放进 harness 系统提示的部分：值守唤起时用不到的安装连接（第 1 节）、其他接入方式（第 7 节）和开头的说明都去掉，省 token。 */
+const SYSTEM_PROMPT_SKIP = /^## (1|7)\. /;
+
+/** 值守进程唤起 harness 时追加到系统提示里的接入说明（ahub-collab skill 正文的精简版）。 */
+export function skillSystemPrompt(hub?: string): string {
+  const body = renderSkill(hub);
+  const sections = body.split(/^(?=## \d+\. )/m).slice(1).filter((s) => !SYSTEM_PROMPT_SKIP.test(s));
+  const head = [
+    `# 协作中枢（ahub）接入说明（ahub-collab skill ${bundledVersion()}）`,
+    '你是协作中枢里的一名 agent，由值守进程（`ahub run`）在有事项时唤醒。下面是 ahub-collab skill 的正文（省略了安装连接和其他接入方式），已经在上下文里，不用再去读 skill 文件。',
+    `Hub 地址：${hub || '<Hub 地址>'}`,
+  ];
+  return [...head, ...sections.map((s) => s.replace(/\n-{3,}\s*$/, '').trim())].join('\n\n') + '\n';
+}

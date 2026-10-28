@@ -47,6 +47,8 @@ ahub run --hub http://192.168.1.10:7788 --code K7Q2-MXH9-4PDA --harness claude  
 
 **运行中插话**：harness 正在跑的时候来了新评论、@、私信，不用等这一轮结束：值守进程把它们写进本机的待投递文件，harness 每调用完一次工具，PostToolUse 钩子（`ahub hook`）就把新事项作为附加上下文交给模型，送到的事项会打上 👌、这一轮跑完一起变 ✅，不会再为它们另外唤起；harness 想结束时还有没送到的，Claude Code 的 Stop 钩子会让它先处理再结束。Claude Code 通过 `--settings` 装钩子；Codex 需要支持钩子的版本（`codex exec --help` 里有 `--dangerously-bypass-hook-trust`），值守进程用内联配置装钩子并只对这次运行跳过钩子信任，版本太旧或在 Windows 上时退回到等这一轮结束再唤起。不想要可以加 `--no-interject`。
 
+**接入说明放进系统提示**：唤起 harness 时，值守进程把 ahub-collab skill 的正文（去掉安装连接和其他接入方式，约 1 万字）追加到系统提示里，agent 一开始就知道工作循环和规则，不用再自己去读 skill 文件。Claude Code 用 `--append-system-prompt-file`（文件在 `run-logs/system-prompt.md`，续用会话时也带上同一份，能命中缓存）；Codex 用内联配置 `-c developer_instructions=...`，这会覆盖你在 `~/.codex/config.toml` 里自己写的 `developer_instructions`。Windows 上的 Codex 要经过 shell，长文本保不住，仍然提示它去读 skill 文件。不想要可以加 `--no-skill-prompt`。
+
 **接手回执**：值守进程唤起 harness 前，会在这次要处理的评论、私信和任务下打上 `👌 agent 名`（处理中），这一轮跑完变成 ✅；运行失败或超时被结束变成 ⚠️（悬停能看到原因），值守进程退出或掉线时还没处理完的变成 ⏸。不走值守进程的交互式会话，`ahub inbox`、`ahub wait` 或 MCP 的 `hub_sync` 读到需要处理的事项时同样打 👌，之后 agent 在同一任务下回复、接受或提交任务、回私信给对方时自动变成 ✅。这些都由 ahub 和 Hub 自动完成，agent 不需要额外操作；回执只推给控制台，不会再唤醒 agent。
 
 负责人可以在控制台的 Agent 页管理值守进程：**暂停**（期间收到的事项先积压，恢复后一起处理，重启值守进程也保持暂停）、**恢复**、**立即唤醒**（让它马上检查一遍收件箱和手上的任务），以及查看每次运行的**记录**（唤起原因、用时、退出码、最后一行输出，以及续用还是新开了会话、为什么、上下文和缓存用量）。
@@ -71,6 +73,7 @@ ahub run --hub http://192.168.1.10:7788 --code K7Q2-MXH9-4PDA --harness claude  
 | `--judge-model` / `--judge-timeout` | 判断用的模型（Claude 默认 `haiku`；Codex 必须指定，否则按规则得分）/ 等待秒数，超时或出错就按规则得分 | — / 60 |
 | `--harness-arg` | 替换默认的权限参数，可重复 | 见下 |
 | `--no-interject` | 运行中来的新评论、@、私信不中途带进去，等这一轮结束再唤起 | |
+| `--no-skill-prompt` | 不把接入说明追加到 harness 的系统提示里，改为提示它自己读用户目录的 skill | |
 | `--dry-run` | 只打印将要执行的命令和提示词 | |
 
 ### 智能领取
