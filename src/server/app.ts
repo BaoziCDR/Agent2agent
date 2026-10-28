@@ -12,6 +12,7 @@ import { buildInstallPackage } from './pack.js';
 import { NOTIFY_TOPICS, type Notifier } from './notify.js';
 import type { Tagger } from './tagger.js';
 import type { HubEvent, Part } from '../shared/model.js';
+import { type Lang, currentLang, normalizeLang, tr, withLang } from '../i18n/index.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -66,26 +67,37 @@ const str = (v: unknown) => (typeof v === 'string' ? v : v == null ? undefined :
 const strArr = (v: unknown): string[] | undefined =>
   Array.isArray(v) ? v.map(String).filter(Boolean) : typeof v === 'string' && v ? v.split(/[,，]/).map((s) => s.trim()).filter(Boolean) : undefined;
 
+function requestLang(req: FastifyRequest): Lang {
+  const header = req.headers['x-ahub-lang'];
+  const query = (req.query as Record<string, string | undefined> | undefined)?.lang;
+  const accept = String(req.headers['accept-language'] ?? '').split(',')[0];
+  return normalizeLang(Array.isArray(header) ? header[0] : header) ?? normalizeLang(query) ?? normalizeLang(accept) ?? 'zh';
+}
+
 export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
   const app = Fastify({ logger: opts.logger ?? false, bodyLimit: 5 * 1024 * 1024, forceCloseConnections: true });
   const maxWait = opts.maxWaitSeconds ?? 50;
   const publicUrl = (req: FastifyRequest) => opts.publicUrl ?? `${req.protocol}://${req.headers.host}`;
 
+  // 每个请求按请求方的语言处理：x-ahub-lang 请求头（控制台和命令行会带）> ?lang= > Accept-Language > 中文。
+  // 旧版命令行不带语言，仍然是中文。
+  app.addHook('onRequest', (req, _reply, done) => withLang(requestLang(req), done));
+
   app.setErrorHandler((err: Error & { statusCode?: number; validation?: unknown }, req, reply) => {
     const status = err instanceof HubError ? err.status : (err.statusCode ?? 500);
     const code = err instanceof HubError ? err.code : status === 500 ? 'internal' : 'bad_request';
-    const message = status === 500 ? '服务器内部错误' : err.message;
+    const message = status === 500 ? tr('服务器内部错误') : err.message;
     if (status === 500) req.log.error(err);
     // Markdown 错误里看不到错误码，放在响应头里，命令行据此判断授权 ID 能否自动重连
     reply.header('x-ahub-error', code);
-    if (wantsMarkdown(req)) return reply.status(status).type('text/markdown; charset=utf-8').send(`**错误**：${message}\n`);
+    if (wantsMarkdown(req)) return reply.status(status).type('text/markdown; charset=utf-8').send(tr('**错误**：{message}\n', { message }));
     return reply.status(status).send({ error: { code, message } });
   });
 
   // ── 鉴权 ──
   const requireAgent = async (req: FastifyRequest) => {
     const token = tokenOf(req);
-    if (!token) throw new HubError(401, 'unauthorized', '缺少授权 ID：先用身份码换取（POST /api/v1/sessions）');
+    if (!token) throw new HubError(401, 'unauthorized', tr('缺少授权 ID：先用身份码换取（POST /api/v1/sessions）'));
     const { agent, session } = hub.authSession(token);
     hub.touchAgent(agent);
     req.agent = agent;
@@ -95,7 +107,7 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
   };
   const requireOwner = async (req: FastifyRequest) => {
     const token = tokenOf(req);
-    if (!token || !hub.isOwnerToken(token)) throw new HubError(401, 'unauthorized', '需要负责人令牌');
+    if (!token || !hub.isOwnerToken(token)) throw new HubError(401, 'unauthorized', tr('需要负责人令牌'));
     req.isOwner = true;
   };
   const actorOf = (req: FastifyRequest): Actor => (req.isOwner ? { kind: 'owner' } : { kind: 'agent', agent: req.agent! });
@@ -104,7 +116,7 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
   app.get('/api/v1/health', async () => ({ ok: true, name: 'ahub', last_seq: hub.lastSeq() }));
 
   app.get('/skill.md', async (req, reply) => {
-    const file = join(ROOT, 'skill', 'SKILL.md');
+    const file = join(ROOT, 'skill', currentLang() === 'en' ? 'SKILL.en.md' : 'SKILL.md');
     const text = existsSync(file) ? readFileSync(file, 'utf8') : '# ahub\n';
     return reply.type('text/markdown; charset=utf-8').send(text.replaceAll('{{HUB_URL}}', publicUrl(req)));
   });
@@ -113,7 +125,7 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
   let installPackage: Buffer | null | undefined;
   app.get('/ahub.tgz', async (_req, reply) => {
     if (installPackage === undefined) installPackage = buildInstallPackage(ROOT);
-    if (!installPackage) throw new HubError(404, 'not_found', '这个 Hub 没有可用的安装包（缺少构建产物，先运行 npm run build）');
+    if (!installPackage) throw new HubError(404, 'not_found', tr('这个 Hub 没有可用的安装包（缺少构建产物，先运行 npm run build）'));
     return reply.type('application/gzip').header('content-disposition', 'attachment; filename="ahub.tgz"').send(installPackage);
   });
 
@@ -206,12 +218,12 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
           result.wait = {
             skipped: skip,
             hint: daemon
-              ? '你的值守进程（ahub run）在线，有新事项会自动唤醒你。不用等待，直接结束本轮。'
+              ? tr('你的值守进程（ahub run）在线，有新事项会自动唤醒你。不用等待，直接结束本轮。')
               : resident
-                ? '这次等待没有新事件。你在常驻待命：立即再运行一次 `ahub wait --resident` 继续等待。'
+                ? tr('这次等待没有新事件。你在常驻待命：立即再运行一次 `ahub wait --resident` 继续等待。')
                 : skip
-                ? `你已经连续 ${idle + 1} 次等待都没有新事件。不要再循环等待：结束本轮，向用户简短汇报即可。需要常驻待命请让用户在工作目录运行 \`ahub run\`。`
-                : '这次等待没有新事件。可以结束本轮了，不要反复调用等待；需要常驻待命请让用户运行 `ahub run`。',
+                ? tr('你已经连续 {v} 次等待都没有新事件。不要再循环等待：结束本轮，向用户简短汇报即可。需要常驻待命请让用户在工作目录运行 `ahub run`。', { v: idle + 1 })
+                : tr('这次等待没有新事件。可以结束本轮了，不要反复调用等待；需要常驻待命请让用户运行 `ahub run`。'),
           };
         }
       }
@@ -263,14 +275,14 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
     agentApi.get('/api/v1/projects/:id', async (req, reply) => {
       const { id } = req.params as { id: string };
       const p = hub.getProject(id);
-      if (!hub.agentView(req.agent!).projects.some((x) => x.id === p.id)) throw new HubError(403, 'forbidden', `你不是项目 ${id} 的成员`);
-      return send(req, reply, p, () => `# ${p.id}「${p.name}」\n\n## 项目说明（负责人撰写）\n\n${p.description || '（无）'}\n\n## 成员\n\n${p.members_list.map((a) => `- ${a.name}（${a.id}）· ${a.platform}`).join('\n')}\n`);
+      if (!hub.agentView(req.agent!).projects.some((x) => x.id === p.id)) throw new HubError(403, 'forbidden', tr('你不是项目 {id} 的成员', { id }));
+      return send(req, reply, p, () => tr('# {id}「{name}」\n\n## 项目说明（负责人撰写）\n\n{v}\n\n## 成员\n\n{v2}\n', { id: p.id, name: p.name, v: p.description || tr('（无）'), v2: p.members_list.map((a) => tr('- {name}（{id}）· {platform}', { name: a.name, id: a.id, platform: a.platform })).join('\n') }));
     });
 
     agentApi.get('/api/v1/members', async (req, reply) => {
       const want = (req.query as Q).project?.toUpperCase();
       const mine = hub.agentView(req.agent!).projects.filter((x) => !want || x.id === want);
-      if (want && !mine.length) throw new HubError(403, 'forbidden', `你不是项目 ${want} 的成员`);
+      if (want && !mine.length) throw new HubError(403, 'forbidden', tr('你不是项目 {want} 的成员', { want }));
       const list = mine.map((x) => {
         const p = hub.getProject(x.id);
         return { project: p.id, name: p.name, members: p.members_list.map((a) => ({ id: a.id, name: a.name, platform: a.platform, online: a.online, tags: a.projects.find((y) => y.id === p.id)?.tags ?? [] })) };
@@ -279,11 +291,11 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
         list
           .map(
             (p) =>
-              `# ${p.project}「${p.name}」的成员\n\n` +
-              p.members.map((a) => `- ${a.name}（${a.id}）· ${a.platform}${a.tags.length ? ` · 标签：${a.tags.join('、')}` : ''}`).join('\n') +
+              tr('# {project}「{name}」的成员\n\n', { project: p.project, name: p.name }) +
+              p.members.map((a) => tr('- {name}（{id}）· {platform}{v}', { name: a.name, id: a.id, platform: a.platform, v: a.tags.length ? tr(' · 标签：{tags}', { tags: a.tags.join(tr('、')) }) : '' })).join('\n') +
               '\n',
           )
-          .join('\n') + '\n评论里用 @编号（如 @A-3）或 @完整名字 提及成员，@负责人 提及负责人。\n',
+          .join('\n') + tr('\n评论里用 @编号（如 @A-3）或 @完整名字 提及成员，@负责人 提及负责人。\n'),
       );
     });
 
@@ -318,25 +330,25 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
 
     const taskDone = (verb: string) => (r: unknown) => {
       const t = r as { id: string; title: string; status_label: string; progress: number };
-      return `已${verb}：**${t.id}** ${t.title}（当前状态：${t.status_label}，进度 ${t.progress}%）\n`;
+      return tr('已{verb}：**{id}** {title}（当前状态：{status_label}，进度 {progress}%）\n', { verb, id: t.id, title: t.title, status_label: t.status_label, progress: t.progress });
     };
 
-    action('/api/v1/tasks/:id/claim', (a, id) => hub.claim(a, id), taskDone('领取'));
+    action('/api/v1/tasks/:id/claim', (a, id) => hub.claim(a, id), taskDone(tr('领取')));
     action(
       '/api/v1/tasks/:id/pass',
       (a, id, b) => hub.pass(a, id, str(b.reason) ?? ''),
       (r) => {
         const x = r as { task: string; remaining: number };
-        return `已让出 ${x.task}。${x.remaining ? `还有 ${x.remaining} 个 agent 可以领取它。` : '没有其他 agent 可以自动领取了，已提醒负责人。'}\n`;
+        return tr('已让出 {task}。{v}\n', { task: x.task, v: x.remaining ? tr('还有 {remaining} 个 agent 可以领取它。', { remaining: x.remaining }) : tr('没有其他 agent 可以自动领取了，已提醒负责人。') });
       },
     );
     // 创建子任务的 agent 验收、退回、归档自己拆出来的子任务（规则见 hub.reviewer）；归档沿用 cancel 路径，archive 是别名
-    action('/api/v1/tasks/:id/approve', (a, id, b) => hub.approve(id, str(b.comment), { kind: 'agent', agent: a }), taskDone('验收通过'));
-    action('/api/v1/tasks/:id/reject', (a, id, b) => hub.reject(id, str(b.reason) ?? '', { kind: 'agent', agent: a }), taskDone('退回'));
+    action('/api/v1/tasks/:id/approve', (a, id, b) => hub.approve(id, str(b.comment), { kind: 'agent', agent: a }), taskDone(tr('验收通过')));
+    action('/api/v1/tasks/:id/reject', (a, id, b) => hub.reject(id, str(b.reason) ?? '', { kind: 'agent', agent: a }), taskDone(tr('退回')));
     for (const verb of ['cancel', 'archive'])
-      action(`/api/v1/tasks/:id/${verb}`, (a, id, b) => hub.cancel(id, str(b.reason), { kind: 'agent', agent: a }), taskDone('归档'));
-    action('/api/v1/tasks/:id/accept', (a, id) => hub.accept(a, id), taskDone('接受'));
-    action('/api/v1/tasks/:id/decline', (a, id, b) => hub.decline(a, id, str(b.reason) ?? ''), taskDone('拒绝'));
+      action(`/api/v1/tasks/:id/${verb}`, (a, id, b) => hub.cancel(id, str(b.reason), { kind: 'agent', agent: a }), taskDone(tr('归档')));
+    action('/api/v1/tasks/:id/accept', (a, id) => hub.accept(a, id), taskDone(tr('接受')));
+    action('/api/v1/tasks/:id/decline', (a, id, b) => hub.decline(a, id, str(b.reason) ?? ''), taskDone(tr('拒绝')));
     action(
       '/api/v1/tasks/:id/progress',
       (a, id, b) =>
@@ -345,20 +357,20 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
           note: str(b.note) ?? '',
           notes: str(b.notes),
         }),
-      taskDone('上报进度'),
+      taskDone(tr('上报进度')),
     );
-    action('/api/v1/tasks/:id/block', (a, id, b) => hub.block(a, id, str(b.reason) ?? '', strArr(b.options) ?? []), taskDone('标记阻塞'));
-    action('/api/v1/tasks/:id/unblock', (a, id, b) => hub.unblock({ kind: 'agent', agent: a }, id, str(b.note)), taskDone('解除阻塞'));
+    action('/api/v1/tasks/:id/block', (a, id, b) => hub.block(a, id, str(b.reason) ?? '', strArr(b.options) ?? []), taskDone(tr('标记阻塞')));
+    action('/api/v1/tasks/:id/unblock', (a, id, b) => hub.unblock({ kind: 'agent', agent: a }, id, str(b.note)), taskDone(tr('解除阻塞')));
     action(
       '/api/v1/tasks/:id/submit',
       (a, id, b) => hub.submit(a, id, { summary: str(b.summary) ?? '', artifacts: parseArtifacts(hub, b.artifacts) }),
-      taskDone('提交验收'),
+      taskDone(tr('提交验收')),
     );
-    action('/api/v1/tasks/:id/release', (a, id, b) => hub.release(a, id, str(b.reason) ?? ''), taskDone('放弃'));
+    action('/api/v1/tasks/:id/release', (a, id, b) => hub.release(a, id, str(b.reason) ?? ''), taskDone(tr('放弃')));
     action(
       '/api/v1/tasks/:id/comments',
       (a, id, b) => hub.comment({ kind: 'agent', agent: a }, id, str(b.text) ?? '', strArr(b.files)),
-      () => '已发表评论。\n',
+      () => tr('已发表评论。\n'),
     );
     action(
       '/api/v1/tasks',
@@ -381,7 +393,7 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
         ),
       (r) => {
         const t = r as { id: string; title: string; status_label: string };
-        return `已创建子任务 **${t.id}** ${t.title}（${t.status_label}）\n`;
+        return tr('已创建子任务 **{id}** {title}（{status_label}）\n', { id: t.id, title: t.title, status_label: t.status_label });
       },
     );
     // 交付物：读取、修改记录、整份替换（PUT）和局部修改（PATCH），都按版本号做冲突检测
@@ -401,7 +413,7 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
         const { id, aid } = req.params as { id: string; aid: string };
         const key = req.headers['idempotency-key'] as string | undefined;
         const a = hub.idempotent(req.agent!, key, () => hub.updateArtifact(actorOf(req), id, aid, artifactUpdate(hub, method, (req.body ?? {}) as B)));
-        return send(req, reply, a, () => `已把交付物 #${a.id}「${a.name}」改到第 ${a.rev} 版。\n`);
+        return send(req, reply, a, () => tr('已把交付物 #{id}「{name}」改到第 {rev} 版。\n', { id: a.id, name: a.name, rev: a.rev }));
       });
     agentApi.post('/api/v1/invites', async (req, reply) => {
       const b = (req.body ?? {}) as B;
@@ -411,13 +423,13 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
         publicUrl(req),
       );
       return send(req, reply, r, () =>
-        `已新建身份 ${r.agent.name || '（待命名）'}（${r.agent.id}，项目 ${r.project}）并通知了负责人。负责人会在控制台复制启动命令拉起它；拉起之前它是离线的，先不要指派任务给它。\n`,
+        tr('已新建身份 {v}（{id}，项目 {project}）并通知了负责人。负责人会在控制台复制启动命令拉起它；拉起之前它是离线的，先不要指派任务给它。\n', { v: r.agent.name || tr('（待命名）'), id: r.agent.id, project: r.project }),
       );
     });
     action(
       '/api/v1/messages',
       (a, _id, b) => hub.message({ kind: 'agent', agent: a }, str(b.to) ?? '', str(b.text) ?? str(b.body) ?? ''),
-      () => '私信已发送。\n',
+      () => tr('私信已发送。\n'),
     );
   });
 
@@ -427,7 +439,7 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
     done(null, body),
   );
   app.post('/api/v1/files', { bodyLimit: MAX_UPLOAD }, async (req, reply) => {
-    if (!opts.filesDir) throw new HubError(501, 'unsupported', '这个 Hub 没有开启文件上传');
+    if (!opts.filesDir) throw new HubError(501, 'unsupported', tr('这个 Hub 没有开启文件上传'));
     const token = tokenOf(req);
     let uploader: string | null = null;
     if (token && hub.isOwnerToken(token)) uploader = 'owner';
@@ -436,8 +448,8 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
       hub.touchAgent(agent);
       uploader = agentCode(agent.id);
     }
-    if (!uploader) throw new HubError(401, 'unauthorized', '缺少或无效的令牌');
-    if (!Buffer.isBuffer(req.body)) throw new HubError(400, 'invalid', '请用 Content-Type: application/octet-stream 上传文件内容');
+    if (!uploader) throw new HubError(401, 'unauthorized', tr('缺少或无效的令牌'));
+    if (!Buffer.isBuffer(req.body)) throw new HubError(400, 'invalid', tr('请用 Content-Type: application/octet-stream 上传文件内容'));
     const q = req.query as Q;
     const name = q.name ?? (req.headers['x-file-name'] ? decodeURIComponent(String(req.headers['x-file-name'])) : 'file');
     const mime = q.mime ?? guessMime(name);
@@ -452,7 +464,7 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
     const { id } = req.params as { id: string };
     const f = /^[\w-]{10,64}$/.test(id) ? hub.getFile(id) : null;
     const path = f && opts.filesDir ? join(opts.filesDir, f.id) : null;
-    if (!f || !path || !existsSync(path)) throw new HubError(404, 'not_found', '找不到这个文件');
+    if (!f || !path || !existsSync(path)) throw new HubError(404, 'not_found', tr('找不到这个文件'));
     const inline = /^(image\/(png|jpeg|gif|webp)|application\/pdf|text\/plain)$/.test(f.mime);
     reply
       .header('content-type', f.mime === 'text/plain' ? 'text/plain; charset=utf-8' : f.mime)
@@ -465,7 +477,7 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
   // ── MCP（Streamable HTTP，无状态） ──
   app.all('/mcp', async (req, reply) => {
     const token = tokenOf(req);
-    if (!token) throw new HubError(401, 'unauthorized', '缺少授权 ID（用 Authorization: Bearer 或 ?token=）；推荐用 ahub mcp 桥接，它会自动用身份码换取');
+    if (!token) throw new HubError(401, 'unauthorized', tr('缺少授权 ID（用 Authorization: Bearer 或 ?token=）；推荐用 ahub mcp 桥接，它会自动用身份码换取'));
     const { agent } = hub.authSession(token);
     hub.touchAgent(agent);
     await handleMcpRequest(app, req, reply, token);
@@ -544,7 +556,7 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
         enabled: typeof b.enabled === 'boolean' ? b.enabled : undefined,
       });
       const cid = (req: FastifyRequest) => Number((req.params as { id: string }).id);
-      admin.get(`${A}/notify/channels`, async () => ({ channels: notifier.list(), topics: NOTIFY_TOPICS }));
+      admin.get(`${A}/notify/channels`, async () => ({ channels: notifier.list(), topics: Object.fromEntries(Object.entries(NOTIFY_TOPICS).map(([k, v]) => [k, tr(v)])) }));
       admin.post(`${A}/notify/channels`, async (req) => notifier.create(channelInput((req.body ?? {}) as B)));
       admin.patch(`${A}/notify/channels/:id`, async (req) => notifier.update(cid(req), channelInput((req.body ?? {}) as B)));
       admin.delete(`${A}/notify/channels/:id`, async (req) => notifier.remove(cid(req)));
@@ -747,13 +759,13 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
       if (req.method === 'GET' && !req.url.startsWith('/api/') && !req.url.startsWith('/mcp')) {
         return reply.sendFile('index.html');
       }
-      return reply.status(404).send({ error: { code: 'not_found', message: '接口不存在' } });
+      return reply.status(404).send({ error: { code: 'not_found', message: tr('接口不存在') } });
     });
   } else {
     app.get('/', async (_req, reply) =>
       reply
         .type('text/html; charset=utf-8')
-        .send('<meta charset="utf-8"><p>ahub 正在运行。控制台尚未构建，请在仓库里运行 <code>npm run build:web</code>。</p>'),
+        .send(tr('<meta charset="utf-8"><p>ahub 正在运行。控制台尚未构建，请在仓库里运行 <code>npm run build:web</code>。</p>')),
     );
   }
 
@@ -775,11 +787,11 @@ const guessMime = (name: string) => MIME[name.split('.').pop()?.toLowerCase() ??
 function artifactUpdate(hub: Hub, method: 'put' | 'patch', b: B) {
   const base = { base_rev: b.base_rev === undefined ? undefined : Number(b.base_rev), note: str(b.note) };
   if (method === 'patch') {
-    if (!Array.isArray(b.edits)) throw new HubError(400, 'invalid', 'PATCH 需要 edits：[{"old":"原文片段","new":"替换后的内容"}]');
+    if (!Array.isArray(b.edits)) throw new HubError(400, 'invalid', tr('PATCH 需要 edits：[{"old":"原文片段","new":"替换后的内容"}]'));
     return { ...base, edits: (b.edits as { old?: unknown; new?: unknown }[]).map((e) => ({ old: str(e?.old) ?? '', new: str(e?.new) ?? '' })) };
   }
   if (b.file_id) return { ...base, parts: [hub.filePart(String(b.file_id))] };
-  if (typeof b.content !== 'string') throw new HubError(400, 'invalid', 'PUT 需要 content（新的完整内容）或 file_id');
+  if (typeof b.content !== 'string') throw new HubError(400, 'invalid', tr('PUT 需要 content（新的完整内容）或 file_id'));
   return { ...base, content: b.content };
 }
 
@@ -835,7 +847,7 @@ function streamEvents(
     'X-Accel-Buffering': 'no',
   });
   const write = (e: HubEvent) => res.write(`id: ${e.seq}\nevent: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`);
-  res.write(': ahub 事件流已连接\n\n');
+  res.write(tr(': ahub 事件流已连接\n\n'));
   let sent = 0;
   for (const e of backlog()) {
     write(e);
@@ -856,7 +868,7 @@ function streamEvents(
   };
   if (sessionId !== null) hub.bus.on('session.ended', onEnded);
   if (agentId !== null) hub.markLive(agentId, 1, 'stream');
-  const heartbeat = setInterval(() => res.write(': 心跳\n\n'), 20_000);
+  const heartbeat = setInterval(() => res.write(tr(': 心跳\n\n')), 20_000);
   req.raw.on('close', () => {
     clearInterval(heartbeat);
     hub.bus.off('event', onEvent);

@@ -574,5 +574,6 @@
   "已复制": "Copied",
   "复制": "Copy",
   "点选上面的标签，或输入自定义标签，用逗号分隔": "Pick tags above, or type your own, separated by commas",
-  "协作中枢 · 控制台": "Agent Hub · Console"
+  "协作中枢 · 控制台": "Agent Hub · Console",
+  "交付说明": "Delivery summary"
 }

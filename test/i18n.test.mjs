@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseSync } from 'rolldown/utils';
-import { STATUS_LABELS } from '../dist/shared/model.js';
+import { ARCHIVE_LABELS, PRESENCE_LABELS, STATUS_LABELS, TIER_LABELS } from '../dist/shared/model.js';
 
 const ROOT = join(import.meta.dirname, '..');
 const FUNCS = new Set(['t', 'tr', 'msg']);
@@ -59,4 +59,10 @@ test('控制台的文案都有英文译文', () => {
   const en = JSON.parse(readFileSync(join(ROOT, 'web/src/i18n/en.json'), 'utf8'));
   // 任务状态在界面上按枚举翻译（statusLabel），不用 Hub 返回的中文
   check('web', walk(join(ROOT, 'web/src')), en, Object.values(STATUS_LABELS));
+});
+
+test('命令行和 Hub 的文案都有英文译文', async () => {
+  const { en } = await import('../dist/i18n/en.js');
+  const files = walk(join(ROOT, 'src')).filter((f) => !f.includes(`${join('src', 'i18n')}`));
+  check('node', files, en, [...Object.values(STATUS_LABELS), ...Object.values(PRESENCE_LABELS), ...Object.values(TIER_LABELS), ...Object.values(ARCHIVE_LABELS)]);
 });

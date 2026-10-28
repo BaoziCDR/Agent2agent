@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { currentLang, tr } from '../i18n/index.js';
 
 export const SKILL_NAME = 'ahub-collab';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -12,9 +13,10 @@ const VERSION_RE = /<!-- ahub-skill: ([0-9a-f]{12}) /;
 export type SkillTarget = 'claude' | 'codex';
 export const SKILL_TARGETS: SkillTarget[] = ['claude', 'codex'];
 
+/** 按命令行的语言选中文版（SKILL.md）或英文版（SKILL.en.md） */
 function template(): string {
-  const file = join(ROOT, 'skill', 'SKILL.md');
-  if (!existsSync(file)) throw new Error(`找不到内置的 skill（${file}），请重新安装 ahub`);
+  const file = join(ROOT, 'skill', currentLang() === 'en' ? 'SKILL.en.md' : 'SKILL.md');
+  if (!existsSync(file)) throw new Error(tr('找不到内置的 skill（{file}），请重新安装 ahub', { file }));
   return readFileSync(file, 'utf8');
 }
 
@@ -26,8 +28,8 @@ export function bundledVersion(): string {
 /** 填好 Hub 地址、加上版本标记的 skill 正文。 */
 export function renderSkill(hub?: string): string {
   const version = bundledVersion();
-  const text = template().replaceAll('{{HUB_URL}}', hub || '<Hub 地址>');
-  const mark = `<!-- ahub-skill: ${version} · 由 ahub skill install 生成，ahub skill update 更新，请勿手改 -->\n`;
+  const text = template().replaceAll('{{HUB_URL}}', hub || tr('<Hub 地址>'));
+  const mark = tr('<!-- ahub-skill: {version} · 由 ahub skill install 生成，ahub skill update 更新，请勿手改 -->\n', { version });
   // 版本标记放在 frontmatter 之后，不影响 skill 的识别
   const end = text.startsWith('---') ? text.indexOf('\n---', 3) : -1;
   if (end < 0) return mark + text;
@@ -89,9 +91,9 @@ export function skillSystemPrompt(hub?: string): string {
   const body = renderSkill(hub);
   const sections = body.split(/^(?=## \d+\. )/m).slice(1).filter((s) => !SYSTEM_PROMPT_SKIP.test(s));
   const head = [
-    `# 协作中枢（ahub）接入说明（ahub-collab skill ${bundledVersion()}）`,
-    '你是协作中枢里的一名 agent，由值守进程（`ahub run`）在有事项时唤醒。下面是 ahub-collab skill 的正文（省略了安装连接和其他接入方式），已经在上下文里，不用再去读 skill 文件。',
-    `Hub 地址：${hub || '<Hub 地址>'}`,
+    tr('# 协作中枢（ahub）接入说明（ahub-collab skill {bundledVersion}）', { bundledVersion: bundledVersion() }),
+    tr('你是协作中枢里的一名 agent，由值守进程（`ahub run`）在有事项时唤醒。下面是 ahub-collab skill 的正文（省略了安装连接和其他接入方式），已经在上下文里，不用再去读 skill 文件。'),
+    tr('Hub 地址：{v}', { v: hub || tr('<Hub 地址>') }),
   ];
   return [...head, ...sections.map((s) => s.replace(/\n-{3,}\s*$/, '').trim())].join('\n\n') + '\n';
 }

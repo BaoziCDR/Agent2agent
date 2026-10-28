@@ -6,6 +6,7 @@ import { Hub } from './hub.js';
 import { buildApp } from './app.js';
 import { Notifier } from './notify.js';
 import { Tagger } from './tagger.js';
+import { tr } from '../i18n/index.js';
 
 export interface ServeOptions {
   port: number;
@@ -59,7 +60,7 @@ export async function serve(opts: ServeOptions) {
       hub.sweepArchive();
       hub.sweepPresence();
     } catch (err) {
-      console.error('租约/在线状态检查失败：', err);
+      console.error(tr('租约/在线状态检查失败：'), err);
     }
   }, 30_000);
   sweep.unref();
@@ -68,14 +69,14 @@ export async function serve(opts: ServeOptions) {
     opts.host === '0.0.0.0' || opts.host === '::'
       ? ['127.0.0.1', ...lanAddresses()].map((ip) => `http://${ip}:${opts.port}`)
       : [`http://${opts.host}:${opts.port}`];
-  console.log('ahub 协作中枢已启动');
-  console.log(`  控制台：${urls.join('  ')}`);
-  console.log(`  数据目录：${dataDir}`);
+  console.log(tr('ahub 协作中枢已启动'));
+  console.log(tr('  控制台：{urls}', { urls: urls.join('  ') }));
+  console.log(tr('  数据目录：{dataDir}', { dataDir }));
   if (token) {
-    console.log(`  负责人令牌：${token}`);
-    console.log(`  （已保存到 ${tokenFile}，用它登录控制台；丢失后可用 --reset-owner-token 重置）`);
+    console.log(tr('  负责人令牌：{token}', { token }));
+    console.log(tr('  （已保存到 {tokenFile}，用它登录控制台；丢失后可用 --reset-owner-token 重置）', { tokenFile }));
   } else {
-    console.log(`  负责人令牌：见 ${tokenFile}（首次启动时生成）`);
+    console.log(tr('  负责人令牌：见 {tokenFile}（首次启动时生成）', { tokenFile }));
   }
 
   const shutdown = async () => {

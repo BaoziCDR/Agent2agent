@@ -11,6 +11,9 @@ const isImage = (p: { mime?: string }) => /^image\/(png|jpeg|gif|webp)$/.test(p.
 /** 只有一段文本的交付物才能逐行对比和在线编辑。 */
 const textOf = (parts: Part[]) => (parts.length === 1 && parts[0].kind === 'text' && typeof parts[0].text === 'string' ? parts[0].text : null);
 
+/** 交付说明这份交付物的名字存的是中文，显示时按语言翻译 */
+const artifactName = (name: string) => (name === '交付说明' ? t('交付说明') : name);
+
 const who = (agents: Agent[], code: string | null) => (!code ? '' : code === 'owner' ? t('负责人') : agentLabel(agents, code));
 
 /** 文件：图片显示缩略图，其他显示文件名和大小。 */
@@ -95,7 +98,7 @@ function HistoryDialog({ task, artifact, onClose }: { task: string; artifact: Ar
   const curText = cur && textOf(cur.parts);
   const prevText = prev && textOf(prev.parts);
   return (
-    <Modal title={t('「{name}」的修改历史', { name: artifact.name })} onClose={onClose} wide>
+    <Modal title={t('「{name}」的修改历史', { name: artifactName(artifact.name) })} onClose={onClose} wide>
       <div className="history">
         <div className="history-list">
           {revs
@@ -146,7 +149,7 @@ function HistoryDialog({ task, artifact, onClose }: { task: string; artifact: Ar
 
 function CompareDialog({ before, after, onClose }: { before: Artifact; after: Artifact; onClose: () => void }) {
   return (
-    <Modal title={t('「{name}」：第 {a} 次提交 → 第 {b} 次提交', { name: after.name, a: before.round, b: after.round })} onClose={onClose} wide>
+    <Modal title={t('「{name}」：第 {a} 次提交 → 第 {b} 次提交', { name: artifactName(after.name), a: before.round, b: after.round })} onClose={onClose} wide>
       <DiffView before={textOf(before.parts) ?? ''} after={textOf(after.parts) ?? ''} />
     </Modal>
   );
@@ -174,7 +177,7 @@ function EditDialog({ task, artifact, onClose, onSaved }: { task: string; artifa
     }
   };
   return (
-    <Modal title={t('修改「{name}」（基于第 {n} 版）', { name: artifact.name, n: artifact.rev })} onClose={onClose} wide>
+    <Modal title={t('修改「{name}」（基于第 {n} 版）', { name: artifactName(artifact.name), n: artifact.rev })} onClose={onClose} wide>
       {stale && (
         <div className="notice warn" style={{ marginBottom: 10 }}>
           {t('在你编辑期间，这份交付物已经被别人改过了。为了不覆盖别人的修改，这次没有保存。请复制你的改动，关闭后重新打开最新版本再改。')}
@@ -219,10 +222,10 @@ export function Artifacts({ task, artifacts, onChanged }: { task: string; artifa
   const card = (a: Artifact) => {
     const prev = previousOf(a);
     return (
-      <div key={a.id} className="artifact" data-source={t('「{name}」（{author}）', { name: a.name, author: a.author })}>
+      <div key={a.id} className="artifact" data-source={t('「{name}」（{author}）', { name: artifactName(a.name), author: a.author })}>
         <div className="artifact-meta">
           <div className="artifact-title">
-            <b>{a.name}</b>
+            <b>{artifactName(a.name)}</b>
             <span className="faint">#{a.id}</span>
             <span className={`badge ${a.rev > 1 ? 'accent' : ''}`} title={t('版本号：每次修改加一')}>
               v{a.rev}

@@ -2,6 +2,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { type CliConfig, saveConfig } from './config.js';
+import { langHeaders, tr } from '../i18n/index.js';
 
 export type Client = 'cli' | 'run' | 'mcp';
 
@@ -50,13 +51,13 @@ function parseError(status: number, text: string): AuthError {
 /** 用身份码换授权 ID，结果写回配置（老邀请码会换成正式身份码保存）。 */
 export async function openSession(cfg: CliConfig, path: string | null, opts: OpenOptions): Promise<string> {
   const code = identityCode(cfg);
-  if (!cfg.hub) throw new AuthError('no_hub', '还没有配置 Hub 地址，请加 --hub http://地址:端口');
-  if (!code) throw new AuthError('no_code', '还没有身份码。请向负责人要身份码，然后运行 ahub join --code <身份码>');
+  if (!cfg.hub) throw new AuthError('no_hub', tr('还没有配置 Hub 地址，请加 --hub http://地址:端口'));
+  if (!code) throw new AuthError('no_code', tr('还没有身份码。请向负责人要身份码，然后运行 ahub join --code <身份码>'));
   let res: Response;
   try {
     res = await fetch(`${cfg.hub}/api/v1/sessions`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...langHeaders() },
       body: JSON.stringify({
         code,
         client: opts.client,
@@ -70,7 +71,7 @@ export async function openSession(cfg: CliConfig, path: string | null, opts: Ope
       }),
     });
   } catch (err) {
-    throw new AuthError('network', `连接 Hub 失败（${cfg.hub}）：${(err as Error).message}`);
+    throw new AuthError('network', tr('连接 Hub 失败（{hub}）：{message}', { hub: cfg.hub, message: (err as Error).message }));
   }
   const text = await res.text();
   if (!res.ok) throw parseError(res.status, text);
@@ -116,7 +117,7 @@ export async function hubFetch(cfg: CliConfig, path: string | null, url: string,
   const call = (session: string | undefined) =>
     fetch(cfg.hub + url, {
       ...init,
-      headers: { ...(init.headers as Record<string, string>), ...(session ? { authorization: `Bearer ${session}` } : {}) },
+      headers: { ...langHeaders(), ...(init.headers as Record<string, string>), ...(session ? { authorization: `Bearer ${session}` } : {}) },
     });
   if (fromEnv) return call(fromEnv);
   let session = cfg.session;

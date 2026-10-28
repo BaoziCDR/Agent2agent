@@ -1,3 +1,4 @@
+import { tr } from '../i18n/index.js';
 /**
  * 智能领取：Hub 在收件箱里给每个可领取任务带上匹配度和名次（fit），这里决定要不要、什么时候为它唤起 harness。
  * 第 1 名立即唤起，第 r 名在任务可领取后等 (r − 1) × 错峰间隔再唤起，前面的人领了或让出了名次就会变；
@@ -56,37 +57,37 @@ export const claimKey = (t: ClaimableTask) => `${t.id}@${t.fit?.open_since ?? ''
 export function planClaims(tasks: ClaimableTask[], active: number, cfg: ClaimSettings, now = Date.now()): ClaimPlan {
   const plan: ClaimPlan = { wake: [], later: [], skipped: [], capacity: Math.max(0, cfg.maxActive - active) };
   if (cfg.policy === 'off') {
-    for (const t of tasks) plan.skipped.push({ id: t.id, why: '设置为不自动领取' });
+    for (const t of tasks) plan.skipped.push({ id: t.id, why: tr('设置为不自动领取') });
     return plan;
   }
   if (cfg.policy === 'always') {
     plan.capacity = Math.max(plan.capacity, 1);
-    for (const t of tasks) plan.wake.push({ id: t.id, title: t.title, why: '任务池里有可领取的任务' });
+    for (const t of tasks) plan.wake.push({ id: t.id, title: t.title, why: tr('任务池里有可领取的任务') });
     return plan;
   }
   for (const t of tasks) {
     const f = t.fit;
     if (f?.passed) {
-      plan.skipped.push({ id: t.id, why: '你已经让出过这个任务' });
+      plan.skipped.push({ id: t.id, why: tr('你已经让出过这个任务') });
       continue;
     }
     if (!plan.capacity) {
-      plan.skipped.push({ id: t.id, why: `手上已有 ${active} 个进行中的任务，做完再领` });
+      plan.skipped.push({ id: t.id, why: tr('手上已有 {active} 个进行中的任务，做完再领', { active }) });
       continue;
     }
     if (!f) {
-      plan.wake.push({ id: t.id, title: t.title, why: '任务池里有可领取的任务' });
+      plan.wake.push({ id: t.id, title: t.title, why: tr('任务池里有可领取的任务') });
       continue;
     }
-    const desc = `匹配度 ${f.score}，第 ${f.rank}/${f.of} 名${f.reasons.length ? `（${f.reasons.slice(0, 3).join('、')}）` : ''}`;
+    const desc = tr('匹配度 {score}，第 {rank}/{of} 名{v}', { score: f.score, rank: f.rank, of: f.of, v: f.reasons.length ? tr('（{v}）', { v: f.reasons.slice(0, 3).join(tr('、')) }) : '' });
     if (f.score < cfg.minScore) {
-      plan.skipped.push({ id: t.id, why: `匹配度 ${f.score} 低于 ${cfg.minScore}${f.warnings.length ? `（${f.warnings.join('、')}）` : ''}` });
+      plan.skipped.push({ id: t.id, why: tr('匹配度 {score} 低于 {minScore}{v}', { score: f.score, minScore: cfg.minScore, v: f.warnings.length ? tr('（{warnings}）', { warnings: f.warnings.join(tr('、')) }) : '' }) });
       continue;
     }
     const since = Date.parse(f.open_since);
     const at = (Number.isNaN(since) ? now : since) + Math.max(0, f.rank - 1) * cfg.staggerMinutes * 60_000;
-    if (at <= now) plan.wake.push({ id: t.id, title: t.title, why: `任务池里有适合你的任务，${desc}`, gray: f.score < cfg.minScore + CLAIM_GRAY_BAND });
-    else plan.later.push({ id: t.id, at, why: `${desc}，${clock(at)} 还没人领就唤起` });
+    if (at <= now) plan.wake.push({ id: t.id, title: t.title, why: tr('任务池里有适合你的任务，{desc}', { desc }), gray: f.score < cfg.minScore + CLAIM_GRAY_BAND });
+    else plan.later.push({ id: t.id, at, why: tr('{desc}，{clock} 还没人领就唤起', { desc, clock: clock(at) }) });
   }
   return plan;
 }

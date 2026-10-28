@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { appendFileSync, existsSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
+import { tr } from '../i18n/index.js';
 
 /**
  * 运行中插话：harness 跑着的时候 Hub 上来了新评论、@、私信，值守进程把它们追加到一个待投递文件；
@@ -80,11 +81,11 @@ export function cleanup(file: string) {
 
 export function interjectText(items: InterjectItem[], stopping: boolean): string {
   return [
-    stopping ? '【值守进程】先别结束：你这一轮运行期间，Hub 上来了新事项：' : '【值守进程插话】你运行期间，Hub 上刚来了新事项：',
+    stopping ? tr('【值守进程】先别结束：你这一轮运行期间，Hub 上来了新事项：') : tr('【值守进程插话】你运行期间，Hub 上刚来了新事项：'),
     '',
     ...items.map((i) => `- ${i.summary}`),
     '',
-    '如果和你手上的工作有关，先看一下再继续（`ahub task <任务>` 可读全文），需要调整做法就调整；需要回复就用 `ahub comment` / `ahub msg`。和当前工作无关的，也在结束本轮前处理。',
+    tr('如果和你手上的工作有关，先看一下再继续（`ahub task <任务>` 可读全文），需要调整做法就调整；需要回复就用 `ahub comment` / `ahub msg`。和当前工作无关的，也在结束本轮前处理。'),
   ].join('\n');
 }
 

@@ -280,6 +280,8 @@ function migrate(db: Db) {
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS sessions_one_active ON sessions(agent_id) WHERE ended_at IS NULL');
   db.exec('CREATE INDEX IF NOT EXISTS sessions_agent ON sessions(agent_id, id)');
   if (!has('events', 'owner_read')) db.exec('ALTER TABLE events ADD COLUMN owner_read INTEGER NOT NULL DEFAULT 0');
+  // 事件描述的英文版；旧事件没有，读出时用中文
+  if (!has('events', 'summary_en')) db.exec('ALTER TABLE events ADD COLUMN summary_en TEXT');
   db.exec(`CREATE TABLE IF NOT EXISTS artifact_revisions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     artifact_id INTEGER NOT NULL REFERENCES artifacts(id),
