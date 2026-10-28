@@ -824,7 +824,7 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
 
-  log(`值守模式启动：${cfg.name ?? ''}（${cfg.agent ?? ''}）→ ${cfg.hub}，工作目录 ${cwd}，唤起 ${opts.harness}，空闲 ${opts.idleMinutes} 分钟无动静或运行满 ${opts.timeoutMinutes} 分钟结束`);
+  log(`值守模式启动：${cfg.name ?? ''}（${cfg.agent ?? ''}）→ ${cfg.hub}，工作目录 ${cwd}，唤起 ${opts.harness}；值守会一直运行，每次唤起的 harness 连续 ${opts.idleMinutes} 分钟没有动静、或单次运行满 ${opts.timeoutMinutes} 分钟会被结束`);
   try {
     paused = !!((await api('GET', '/api/v1/me')) as { daemon_paused?: boolean }).daemon_paused;
     if (paused) log('负责人在控制台暂停了值守，恢复前不会唤起');
