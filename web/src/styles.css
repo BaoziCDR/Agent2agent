@@ -445,21 +445,13 @@ pre {
 
 .column {
   flex: 1 1 0;
+  /* 所有列等宽、平铺占满；放不下时保持最小宽度横向滚动 */
   min-width: 172px;
-  /* 列少（空列都收窄）时不把卡片拉得很宽，多出的宽度留白 */
-  max-width: 320px;
   scroll-snap-align: start;
   background: var(--panel-2);
   border-radius: var(--radius);
   padding: 10px;
   min-height: 120px;
-}
-
-/* 空列收窄，把宽度让给有任务的列 */
-.column.col-empty {
-  flex: 0 0 auto;
-  min-width: 112px;
-  width: 112px;
 }
 
 .column.droppable {
@@ -2303,10 +2295,13 @@ table.table {
 
 @media (max-width: 960px) {
   .column {
-    min-width: min(78vw, 320px);
+    min-width: 240px;
   }
-  .column.col-empty {
-    min-width: 112px;
+}
+
+@media (max-width: 600px) {
+  .column {
+    min-width: 78vw;
   }
 }
 

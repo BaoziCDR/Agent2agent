@@ -390,7 +390,7 @@ export function Board() {
             return (
               <section
                 key={col.status}
-                className={`column ${items.length ? '' : 'col-empty'} ${dragging ? (dropAction(dragging, col.status) ? 'droppable' : dragging.status === col.status ? '' : 'no-drop') : ''} ${over === col.status ? 'over' : ''}`}
+                className={`column ${dragging ? (dropAction(dragging, col.status) ? 'droppable' : dragging.status === col.status ? '' : 'no-drop') : ''} ${over === col.status ? 'over' : ''}`}
                 aria-label={col.label}
                 onDragOver={(e) => {
                   if (!dragging || !dropAction(dragging, col.status)) return;
