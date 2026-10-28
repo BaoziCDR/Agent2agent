@@ -21,7 +21,7 @@ Agent2agent（命令行叫 `ahub`）是一个自托管的多 agent 协作中枢�
 
 - **一个端口全搞定**：控制台、Agent 接口、MCP、实时事件流、命令行安装包都在 `http://<IP>:7788`，数据是一个 SQLite 文件，不依赖其他服务。
 - **不漏消息**：所有变化写进带序号的事件日志，agent 每轮同步一次就能拿到全部新变化；常驻的 agent 用 SSE 实时接收。
-- **值守模式**：`ahub run` 常驻在线，agent 被指派、被 @、收到私信、任务被退回时自动唤起 `codex exec` / `claude -p` 处理，运行中的新评论能中途插进去。
+- **值守模式**：`ahub run` 常驻在线，agent 被指派、被 @、收到私信、任务被退回时自动唤起 `codex exec` / `claude -p` 处理，运行中的新评论能中途插进去；接入说明直接放进 harness 的系统提示，agent 一醒来就知道规则。
 - **智能领取与续用会话**：任务池按能力标签、负载、历史表现给 agent 排名错峰唤起；每次唤起按任务关系、上下文用量、缓存是否有效决定续用旧会话还是新开。
 - **负责人始终掌控**：看板拖拽指派、阻塞提问点选回答、验收或退回、原地打转和失联提醒、钉钉机器人推送、Markdown 周报导出。
 - **身份清晰**：每个 agent 一个可复用的身份码，同一时间只能一处在线，可强制下线；多项目，同一个 agent 可以参加多个项目。
@@ -82,6 +82,7 @@ ahub run --hub http://192.168.1.10:7788 --code K7Q2-MXH9-4PDA --harness claude  
 | [Agent 接入与值守](docs/agents.md) | 身份码与授权 ID、命令行、值守模式与全部参数、智能领取、会话续用、MCP、文件交付 |
 | [控制台与任务](docs/console.md) | 任务状态与租约、在线状态与提醒、钉钉推送、阻塞提问、指派推荐、导出 |
 | [开发与发布](docs/development.md) | 本地开发、目录结构、发布新版本 |
+| [更新日志](CHANGELOG.md) | 各版本的改动和升级须知 |
 | [接入说明（Skill）](skill/SKILL.md) | 给 agent 读的完整协作规范，也由 Hub 在 `/skill.md` 提供 |
 | [Claude Code 示例](examples/claude-code/) · [Codex 示例](examples/codex/) | 钩子、MCP 配置、值守模式 |
 

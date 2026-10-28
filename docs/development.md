@@ -37,7 +37,7 @@ docs/         文档
 
 ```bash
 npm version 1.1.0 --no-git-tag-version   # 更新 package.json 里的版本号（ahub.tgz 安装包和 MCP 服务用它）
-# 可选：写 docs/releases/v1.1.0.md 作为 Release 正文
+# 同时更新 CHANGELOG.md，并写 docs/releases/v1.1.0.md 作为 Release 正文（写清有没有表结构变化、agent 要不要重装 ahub）
 git commit -am "发布 1.1.0"
 git tag v1.1.0
 git push origin main v1.1.0

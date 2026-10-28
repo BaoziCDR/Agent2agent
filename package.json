@@ -1,6 +1,6 @@
 {
   "name": "agent2agent-hub",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "多 Agent 协作中枢：负责人发布和管理任务，Codex、Claude Code 等 agent 领取任务、汇报进度、互相协作",
   "type": "module",
   "license": "MIT",
