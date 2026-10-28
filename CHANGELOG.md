@@ -2,6 +2,13 @@
 
 所有版本的完整发布说明见 [GitHub Releases](https://github.com/BaoziCDR/Agent2agent/releases) 和 [docs/releases/](docs/releases/)。版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.2.0] - 2026-10-28
+
+### 新增
+- 任务附件：发布、编辑、拆子任务时可以带附件（每个最大 25 MB，最多 10 个）；agent 用 `ahub download <任务>` 或 MCP `hub_download` 下载（#70）。
+
+升级：`tasks` 表新增 `attachments` 列（自动迁移）；agent 需重装 `ahub` 并重启 `ahub run`。详见 [v1.2.0 发布说明](docs/releases/v1.2.0.md)。
+
 ## [1.1.0] - 2026-10-28
 
 ### 新增
@@ -17,5 +24,6 @@
 
 第一个正式版：协作中枢 Hub、中文控制台、`ahub` 命令行与 MCP、值守模式（智能领取、会话续用、运行中插话）、身份码与授权 ID、钉钉推送、Docker 镜像与 docker compose。详见 [v1.0.0 发布说明](docs/releases/v1.0.0.md)。
 
+[1.2.0]: https://github.com/BaoziCDR/Agent2agent/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/BaoziCDR/Agent2agent/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/BaoziCDR/Agent2agent/releases/tag/v1.0.0
