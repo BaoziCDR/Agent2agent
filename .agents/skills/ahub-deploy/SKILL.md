@@ -45,7 +45,8 @@ git tag v1.2.3 && git push origin main v1.2.3     # 推送 tag 触发发布
 
 - 版本号按语义化：改表结构或改了 agent 必须跟着变的行为（接入说明、命令参数）至少升次版本号；只修 bug 升修订号。
 - 在 Actions 页看发布结果；失败了修好后删掉 tag 重打（`git tag -d v1.2.3 && git push origin :refs/tags/v1.2.3`），**不要复用已经成功推送过镜像的版本号**。
-- Release 说明写清：有没有表结构变化、要不要重启、agent 要不要重装 ahub / 更新 skill。
+- Release 说明写清：有没有表结构变化、要不要重启、agent 要不要重装 ahub / 更新 skill。写在 `docs/releases/v1.2.3.md`（工作流自动用它作 Release 正文），并在根目录 `CHANGELOG.md` 加一节。
+- 版本号、CHANGELOG 和发布说明先走 PR 合并，再在 main 上打 tag。云端会话推不了 tag（会被拒绝，HTTP 403），要让负责人在本机运行 `git fetch origin && git tag -a v1.2.3 origin/main -m "…" && git push origin v1.2.3`。
 
 ## 2. 备份与试跑迁移（两种部署方式通用）
 

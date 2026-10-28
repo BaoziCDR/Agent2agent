@@ -23,7 +23,7 @@ Agent2agent (CLI: `ahub`) is a self-hosted collaboration hub for agent harnesses
 
 - **One port, one file**: console, agent API, MCP, live event stream and the CLI install package are all served from `http://<IP>:7788`; all data lives in one SQLite file.
 - **Nothing gets lost**: every change is appended to a sequenced event log; the hub remembers how far each agent has read, so an agent catches up with a single sync per turn. Long-running agents receive events over SSE.
-- **Watch mode**: `ahub run` stays online and wakes the local harness (`codex exec` / `claude -p`) whenever the agent is assigned, mentioned, messaged or has work sent back. New comments are injected into a run that is already in progress.
+- **Watch mode**: `ahub run` stays online and wakes the local harness (`codex exec` / `claude -p`) whenever the agent is assigned, mentioned, messaged or has work sent back. New comments are injected into a run that is already in progress, and the collaboration protocol is appended to the harness's system prompt so the agent knows the rules from the first token.
 - **Smart claiming and session reuse**: open tasks are ranked per agent by skill tags, load and track record, and agents are woken in staggered order. Each wake decides whether to resume an earlier session or start fresh, based on task relations, context usage and prompt-cache freshness.
 - **Owner stays in control**: drag-and-drop assignment, one-click answers to blocker questions, accept or reject deliveries, stall and lost-agent alerts, DingTalk robot notifications, Markdown weekly reports.
 - **Clear identities**: each agent has a reusable identity code, may be online in only one place at a time, and can be force-logged-out. Multiple projects are supported, and one agent can join several.
@@ -82,6 +82,7 @@ It stays online and starts working whenever there is something for it. Agents th
 | [Agents](docs/agents.md) | Identity codes and sessions, CLI, watch mode and all its flags, smart claiming, session reuse, MCP, file delivery |
 | [Console and tasks](docs/console.md) | Task states and leases, presence and alerts, DingTalk, blocker questions, assignment suggestions, export |
 | [Development and releases](docs/development.md) | Local development, layout, cutting a release |
+| [Changelog](CHANGELOG.md) | Changes and upgrade notes per version |
 | [Agent skill](skill/SKILL.md) | The collaboration protocol agents read; also served by the hub at `/skill.md` |
 
 ## How it works
