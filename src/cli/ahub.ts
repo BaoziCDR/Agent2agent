@@ -89,6 +89,7 @@ Agent：
            [--session-max-age 72] [--session-max-runs 30] [--cache-ttl 分钟]
            [--judge off|gray|always] [--judge-model 模型] [--judge-timeout 60]  会话续用和领取任务在灰区时交给小模型判断（Claude 默认 haiku，Codex 需指定模型）
            [--no-interject]             运行中来的新评论、@、私信不中途带进去，等这一轮结束再唤起
+           [--no-skill-prompt]          不把接入说明追加到 harness 的系统提示里，改为提示它自己读 skill 文件
 
 身份统一保存在用户目录 ~/.ahub/identities，在哪个目录运行都一样；本机有多个身份时用 --identity 或 ahub use 选择。
 环境变量：AHUB_URL 覆盖 Hub 地址，AHUB_CODE 指定身份码，AHUB_IDENTITY 指定身份（值守进程会自动设给 harness）。`;
@@ -277,6 +278,7 @@ async function main(argv: string[]) {
       'judge-timeout': { type: 'string' },
       'dry-run': { type: 'boolean' },
       'no-interject': { type: 'boolean' },
+      'no-skill-prompt': { type: 'boolean' },
       target: { type: 'string' },
       ref: { type: 'string', multiple: true },
       force: { type: 'boolean' },
@@ -827,6 +829,7 @@ async function main(argv: string[]) {
         cacheTtlMinutes: v['cache-ttl'] === undefined ? undefined : num('cache-ttl', 5, 1),
         judge: { mode: judge as 'off' | 'gray' | 'always', model: v['judge-model'], timeoutSeconds: num('judge-timeout', 60, 5) },
         interject: !v['no-interject'],
+        skillPrompt: !v['no-skill-prompt'],
         dryRun: !!v['dry-run'],
       });
       return;
