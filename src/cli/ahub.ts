@@ -15,7 +15,7 @@ import {
   selectIdentity,
   setCurrent,
 } from './config.js';
-import { fileArtifact, uploadFile } from './files.js';
+import { downloadAttachments, fileArtifact, uploadFile } from './files.js';
 import { AuthError, hubFetch, identityCode, isDeadIdentity, looksLikeInvite, openSession, releaseSession } from './auth.js';
 import { SKILL_TARGETS, type SkillTarget, bundledVersion, installSkill, projectCopies, removeProjectCopies, renderSkill, skillPath, skillStates } from './skill.js';
 
@@ -51,6 +51,7 @@ Agent：
                                        阻塞时把原因写成负责人能直接回答的问题，--option 给出可选答案
   ahub submit <任务> <交付说明> [--file 路径 ...] [--link URL ...]
   ahub release <任务> <理由>
+  ahub download <任务> [--to 目录]     下载任务附件到本地（默认当前目录，同名文件会跳过）
   ahub upload <文件>                   上传文件（最大 25 MB），返回下载地址；submit --file 遇到大文件或二进制文件会自动上传
   ahub comment <任务> <内容> [--file 路径 ...]  可用 @A-3、@成员名字 或 @负责人；--file 把文件作为附件上传
   ahub artifact show <任务> <编号> [--rev N] [--out 文件]
@@ -62,7 +63,7 @@ Agent：
   ahub artifact log <任务> <编号>      查看修改记录
   ahub members [--project P-1]         查看项目成员和编号（用于 @）
   ahub search <关键字> [--project P-1] 按编号、标题、描述、笔记、评论搜索任务
-  ahub subtask <父任务> <标题> [--desc 描述] [--assignee A-3] [--tags a,b] [--priority P1] [--accept "标准1;标准2"] [--due 2026-11-01T18:00+08:00] [--ref P1-T2 ...]
+  ahub subtask <父任务> <标题> [--desc 描述] [--assignee A-3] [--tags a,b] [--priority P1] [--accept "标准1;标准2"] [--due 2026-11-01T18:00+08:00] [--ref P1-T2 ...] [--file 路径 ...]
   ahub approve <子任务> [评语] | reject <子任务> <修改意见> | archive <子任务> [理由]
                                        验收、退回或归档你拆出来的子任务（归档限还没人开工的；cancel 是 archive 的旧名）
   ahub msg <A-3|owner> <内容>          私信
@@ -284,6 +285,7 @@ async function main(argv: string[]) {
       force: { type: 'boolean' },
       rev: { type: 'string' },
       out: { type: 'string' },
+      to: { type: 'string' },
       base: { type: 'string' },
       old: { type: 'string', multiple: true },
       new: { type: 'string', multiple: true },
@@ -571,6 +573,11 @@ async function main(argv: string[]) {
     case 'task':
       console.log(ok(await api(cfg, 'GET', `/api/v1/tasks/${enc(need(pos[0], '任务编号'))}`)));
       return;
+    case 'download': {
+      const id = need(pos[0], '任务编号');
+      console.log(await downloadAttachments(cfg, conn.path, id, v.to).catch((err: Error) => die(err.message)));
+      return;
+    }
     case 'claim':
     case 'accept': {
       const id = need(pos[0], '任务编号');
@@ -689,6 +696,9 @@ async function main(argv: string[]) {
         acceptance: v.accept ? v.accept.split(/[;；]/).map((s) => s.trim()).filter(Boolean) : undefined,
         due_at: v.due,
         refs: list(v.ref),
+        files: v.file?.length
+          ? await Promise.all(v.file.map((f) => uploadFile(cfg, f).then((r) => r.id, (err: Error) => die(err.message))))
+          : undefined,
       };
       console.log(ok(await api(cfg, 'POST', '/api/v1/tasks', body, { ack: true })));
       return;

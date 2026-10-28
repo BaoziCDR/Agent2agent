@@ -13,6 +13,8 @@ export interface ToolOptions {
   fileArtifact?: (path: string) => Promise<{ name: string; content?: string; file_id?: string }>;
   /** stdio 桥才提供：上传本机文件，返回文件编号 */
   uploadFile?: (path: string) => Promise<string>;
+  /** stdio 桥才提供：把任务附件下载到本机目录 */
+  downloadAttachments?: (task: string, to?: string) => Promise<string>;
 }
 
 const enc = encodeURIComponent;
@@ -402,10 +404,38 @@ export function createHubMcpServer(call: HubCall, opts: ToolOptions = {}): McpSe
         priority: z.enum(['P0', 'P1', 'P2', 'P3']).optional(),
         due_at: z.string().optional().describe('截止时间，ISO 格式，如 2026-11-01T18:00:00+08:00；不填时沿用父任务的截止时间'),
         refs: z.array(z.string()).optional().describe('引用同项目的其他任务作为参考，如 ["P1-T2"]，不限状态'),
+        ...(opts.uploadFile ? { files: z.array(z.string()).optional().describe('作为附件上传的本机文件路径（每个最大 25 MB，最多 10 个）') } : {}),
       },
     },
-    async (body) => reply(call('POST', '/api/v1/tasks?format=md', body)),
+    async ({ files, ...body }: { files?: string[] } & Record<string, unknown>) => {
+      const ids: string[] = [];
+      try {
+        for (const f of files ?? []) ids.push(await opts.uploadFile!(f));
+      } catch (err) {
+        return { content: [{ type: 'text' as const, text: (err as Error).message }], isError: true };
+      }
+      return reply(call('POST', '/api/v1/tasks?format=md', { ...body, ...(ids.length ? { files: ids } : {}) }));
+    },
   );
+
+  if (opts.downloadAttachments) {
+    const download = opts.downloadAttachments;
+    server.registerTool(
+      'hub_download',
+      {
+        title: '下载任务附件',
+        description: '把任务附件下载到本机目录（默认当前工作目录，同名文件跳过）。任务详情里有「附件」时，开工前先下载再打开来看。',
+        inputSchema: { task: z.string(), to: z.string().optional().describe('保存到哪个目录') },
+      },
+      async ({ task, to }) => {
+        try {
+          return { content: [{ type: 'text' as const, text: await download(task, to) }] };
+        } catch (err) {
+          return { content: [{ type: 'text' as const, text: (err as Error).message }], isError: true };
+        }
+      },
+    );
+  }
 
   server.registerTool(
     'hub_message',

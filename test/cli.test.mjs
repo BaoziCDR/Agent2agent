@@ -135,3 +135,31 @@ test('多个身份：在任何目录都能用，按 --identity / 默认身份选
   assert.equal((await run(['forget', '乙'])).code, 0);
   assert.deepEqual(identities().map((i) => i.agent).sort(), ['A-1', 'A-2']);
 });
+
+test('ahub download 下载任务附件，subtask --file 带附件拆子任务', async (t) => {
+  const { url, call, run, dir } = await setup(t);
+  const created = await call('POST', '/api/v1/admin/agents', { project: 'P-1', name: '前端' });
+  assert.equal((await run(['join', '--hub', url, '--code', created.code])).code, 0);
+  const up = await (
+    await fetch(url + '/api/v1/files?name=' + encodeURIComponent('需求.md'), {
+      method: 'POST',
+      headers: { authorization: 'Bearer owner_test', 'content-type': 'application/octet-stream' },
+      body: '# 需求',
+    })
+  ).json();
+  const task = await call('POST', '/api/v1/admin/tasks', { project: 'P-1', title: '做页面', assignee: 'A-2', files: [up.id] });
+  const none = await call('POST', '/api/v1/admin/tasks', { project: 'P-1', title: '没附件' });
+  assert.match((await run(['download', none.id])).stdout, /没有附件/);
+  const r = await run(['download', task.id, '--to', 'att']);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(readFileSync(join(dir, 'att', '需求.md'), 'utf8'), '# 需求');
+  assert.match((await run(['download', task.id, '--to', 'att'])).stdout, /跳过/);
+
+  await run(['accept', task.id]);
+  writeFileSync(join(dir, 'log.txt'), 'boom');
+  const sub = await run(['subtask', task.id, '查日志', '--file', 'log.txt']);
+  assert.equal(sub.code, 0, sub.stderr);
+  const detail = await call('GET', `/api/v1/admin/tasks/${task.id}`);
+  const child = await call('GET', `/api/v1/admin/tasks/${detail.subtasks[0].id}`);
+  assert.deepEqual(child.attachments.map((p) => p.name), ['log.txt']);
+});

@@ -75,6 +75,8 @@ export interface Task {
   depends_on: string[];
   /** 引用的同项目任务（参考资料） */
   refs: string[];
+  /** 发布任务时带的附件 */
+  attachments: Part[];
   required_tags: string[];
   progress: number;
   progress_note: string;

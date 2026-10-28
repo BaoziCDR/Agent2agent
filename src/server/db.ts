@@ -234,6 +234,8 @@ function migrate(db: Db) {
   if (!has('invites', 'agent_name')) db.exec("ALTER TABLE invites ADD COLUMN agent_name TEXT NOT NULL DEFAULT ''");
   // 任务可以引用同项目的其他任务（任意状态），作为参考资料
   if (!has('tasks', 'refs')) db.exec("ALTER TABLE tasks ADD COLUMN refs TEXT NOT NULL DEFAULT '[]'");
+  // 任务附件：先通过 /api/v1/files 上传，这里存文件编号（JSON 数组）
+  if (!has('tasks', 'attachments')) db.exec("ALTER TABLE tasks ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'");
   // 交付物可修改：rev 是当前版本号，round 是第几次提交；每个版本的内容存在 artifact_revisions
   if (!has('artifacts', 'rev')) {
     db.exec('ALTER TABLE artifacts ADD COLUMN rev INTEGER NOT NULL DEFAULT 1');

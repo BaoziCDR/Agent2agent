@@ -2326,3 +2326,21 @@ table.table {
     display: none;
   }
 }
+
+/* 发布任务、编辑任务里的附件区域 */
+.attach-drop {
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  outline: none;
+}
+.attach-drop.over,
+.attach-drop:focus-visible {
+  border-color: var(--accent);
+}
+.attach-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
