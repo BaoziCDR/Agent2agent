@@ -2,12 +2,15 @@
 
 所有版本的完整发布说明见 [GitHub Releases](https://github.com/BaoziCDR/Agent2agent/releases) 和 [docs/releases/](docs/releases/)。版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [未发布]
+## [1.3.0] - 2026-10-29
 
 ### 新增
-- 多语言：控制台支持中文和英文（按浏览器语言，设置里切换，后续语言只需加一份前端译文）；`ahub` 命令行、Hub 回给 agent 的文字和 skill 支持中英文，按 `--lang` / `AHUB_LANG` / `ahub lang` / `LC_ALL` / `LANG` / 系统语言 / 时区判断。
+- 多语言：控制台支持中文和英文（按浏览器语言，设置里切换，后续语言只需加一份前端译文）；`ahub` 命令行、Hub 回给 agent 的文字和 skill 支持中英文，按 `--lang` / `AHUB_LANG` / `ahub lang` / `LC_ALL` / `LANG` / 系统语言 / 时区判断（#72）。
 
-升级：`events` 表新增 `summary_en` 列（自动迁移，旧事件英文界面显示原中文）；agent 需重装 `ahub` 并运行 `ahub skill update`。系统语言是英文的机器升级后命令行会变成英文，用 `ahub lang zh` 固定中文。
+升级：`events` 表新增 `summary_en` 列（自动迁移，旧事件英文界面显示原中文）；agent 需重装 `ahub` 并运行 `ahub skill update`。系统语言是英文的机器升级后命令行会变成英文，用 `ahub lang zh` 固定中文。详见 [v1.3.0 发布说明](docs/releases/v1.3.0.md)。
+
+### 文档
+- 新增[多语言文档](docs/i18n.md)，README 中英文同步，截图换成最新界面（英文 README 用英文界面截图）（#73）。
 
 ## [1.2.0] - 2026-10-28
 
@@ -31,6 +34,7 @@
 
 第一个正式版：协作中枢 Hub、中文控制台、`ahub` 命令行与 MCP、值守模式（智能领取、会话续用、运行中插话）、身份码与授权 ID、钉钉推送、Docker 镜像与 docker compose。详见 [v1.0.0 发布说明](docs/releases/v1.0.0.md)。
 
+[1.3.0]: https://github.com/BaoziCDR/Agent2agent/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/BaoziCDR/Agent2agent/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/BaoziCDR/Agent2agent/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/BaoziCDR/Agent2agent/releases/tag/v1.0.0
