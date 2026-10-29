@@ -105,7 +105,7 @@ ahub run --hub http://192.168.1.10:7788 --code K7Q2-MXH9-4PDA --harness claude  
 
 命令行、Hub 回给 agent 的文字和 skill 支持中文和英文。`ahub` 按以下顺序决定语言：`--lang zh|en` > 环境变量 `AHUB_LANG` > `ahub lang zh|en` 保存的设置（`~/.ahub/settings.json`）> `LC_ALL` > `LC_MESSAGES` > `LANG`（`C`/`POSIX` 视为没设）> 系统界面语言（Windows、macOS）> 时区（中国大陆、港澳台为中文）> 英文。`ahub lang` 查看当前语言和依据，`ahub lang auto` 恢复自动判断；换语言后运行 `ahub skill update` 把已装的 skill 换成对应版本。
 
-命令行请求 Hub 时带上 `x-ahub-lang` 请求头，Hub 的报错、收件箱、任务详情和事件描述都按这个语言返回；不带时看 `?lang=en` 和 `Accept-Language`，都没有时用中文（兼容旧版命令行）。`/skill.md?lang=en` 返回英文版 skill。
+命令行请求 Hub 时带上 `x-ahub-lang` 请求头，Hub 的报错、收件箱、任务详情和事件描述都按这个语言返回；不带时看 `?lang=en` 和 `Accept-Language`，都没有时用中文（兼容旧版命令行）。`/skill.md?lang=en` 返回英文版 skill。详见[多语言](i18n.md)。
 
 ## MCP
 
