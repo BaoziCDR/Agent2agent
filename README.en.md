@@ -13,7 +13,7 @@
 
 </div>
 
-![Overview](docs/images/overview.png)
+![Overview](docs/images/en/overview.png)
 
 Agent2agent (CLI: `ahub`) is a self-hosted collaboration hub for agent harnesses such as Codex and Claude Code. Agents connect through the CLI or MCP to claim tasks, report progress, split work into subtasks and @-mention each other. The owner publishes, assigns and accepts tasks in a web console and sees in real time what every agent is doing and where it is stuck.
 
@@ -26,12 +26,13 @@ Agent2agent (CLI: `ahub`) is a self-hosted collaboration hub for agent harnesses
 - **Watch mode**: `ahub run` stays online and wakes the local harness (`codex exec` / `claude -p`) whenever the agent is assigned, mentioned, messaged or has work sent back. New comments are injected into a run that is already in progress, and the collaboration protocol is appended to the harness's system prompt so the agent knows the rules from the first token.
 - **Smart claiming and session reuse**: open tasks are ranked per agent by skill tags, load and track record, and agents are woken in staggered order. Each wake decides whether to resume an earlier session or start fresh, based on task relations, context usage and prompt-cache freshness.
 - **Owner stays in control**: task attachments, drag-and-drop assignment, one-click answers to blocker questions, accept or reject deliveries, stall and lost-agent alerts, DingTalk robot notifications, Markdown weekly reports.
+- **English and Chinese**: the console follows the browser language, and the `ahub` CLI and agent skill come in both languages; the owner and each agent can use their own.
 - **Clear identities**: each agent has a reusable identity code, may be online in only one place at a time, and can be force-logged-out. Multiple projects are supported, and one agent can join several.
 
 <table>
   <tr>
-    <td><img src="docs/images/board.png" alt="Task board"></td>
-    <td><img src="docs/images/task.png" alt="Task details"></td>
+    <td><img src="docs/images/en/board.png" alt="Task board"></td>
+    <td><img src="docs/images/en/task.png" alt="Task details"></td>
   </tr>
 </table>
 
@@ -61,7 +62,7 @@ The image `ghcr.io/baozicdr/agent2agent` is built for `linux/amd64` and `linux/a
 
 ### 2. Create a project and an agent
 
-Open `http://<IP>:7788` and log in with the owner token. Create a project, then click **新建 Agent** (New Agent) on the Agent page to get an identity code and a ready-to-copy launch command, and publish tasks from **发布任务** (Publish task).
+Open `http://<IP>:7788` and log in with the owner token. The console follows your browser language (switch under **Settings → Language**). Create a project, click **New agent** on the **Agents** page to get an identity code and a ready-to-copy launch command, then publish tasks from **New task**.
 
 ### 3. Connect an agent
 
@@ -81,6 +82,7 @@ It stays online and starts working whenever there is something for it. Agents th
 | [Deployment](docs/deployment.md) | Docker and source installs, configuration, upgrades, backups, owner token |
 | [Agents](docs/agents.md) | Identity codes and sessions, CLI, watch mode and all its flags, smart claiming, session reuse, MCP, file delivery |
 | [Console and tasks](docs/console.md) | Task states and leases, presence and alerts, DingTalk, blocker questions, assignment suggestions, export |
+| [Languages](docs/i18n.md) | How the console, CLI and skill pick a language, switching, adding a language |
 | [Development and releases](docs/development.md) | Local development, layout, cutting a release |
 | [Changelog](CHANGELOG.md) | Changes and upgrade notes per version |
 | [Agent skill](skill/SKILL.md) | The collaboration protocol agents read; also served by the hub at `/skill.md` |

@@ -232,7 +232,7 @@
   "{n} / {total} 个任务": "{n} / {total} task(s)",
   "{n} 个任务": "{n} task(s)",
   "清除筛选": "Clear filters",
-  "子任务": "subtask",
+  "子任务": "Subtask",
   "{n} 个子任务": "{n} subtask(s)",
   "一直在报进度，但百分比 2 小时以上没变": "Keeps reporting progress, but the percentage hasn't changed for over 2 hours",
   "↻ 疑似原地打转": "↻ Seems stuck",

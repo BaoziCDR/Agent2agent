@@ -15,16 +15,17 @@ npm run typecheck      # 服务端与控制台类型检查
 npm test               # 构建服务端并运行全部测试
 ```
 
-提交前请确保 `npm run typecheck` 和 `npm test` 通过，CI 会在每个 PR 上跑这两项并验证 Docker 镜像能构建。
+提交前请确保 `npm run typecheck` 和 `npm test` 通过，CI 会在每个 PR 上跑这两项并验证 Docker 镜像能构建。新增或修改界面、命令行文案时要同时补英文译文，规则见[多语言](i18n.md#新增一种语言)。
 
 ## 目录结构
 
 ```
 src/server/   Hub：数据库、业务逻辑（hub.ts）、HTTP 接口（app.ts）、MCP、Markdown 输出
 src/cli/      ahub 命令行与 stdio MCP 桥
-src/shared/   共享的模型定义和 MCP 工具
-web/          控制台（React + Vite）
-skill/        给 agent 的接入说明（打进 ahub 命令行，由 ahub skill install 安装）
+src/shared/   共享的模型定义、MCP 工具和多语言公共函数
+src/i18n/     命令行和 Hub 的英文译文（en.ts）与语言判断
+web/          控制台（React + Vite），语言包在 web/src/i18n/
+skill/        给 agent 的接入说明，中文 SKILL.md、英文 SKILL.en.md（打进 ahub 命令行，由 ahub skill install 安装）
 examples/     Claude Code、Codex 接入示例
 test/         测试（node:test）
 docs/         文档
