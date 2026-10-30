@@ -163,3 +163,27 @@ test('ahub download 下载任务附件，subtask --file 带附件拆子任务', 
   const child = await call('GET', `/api/v1/admin/tasks/${detail.subtasks[0].id}`);
   assert.deepEqual(child.attachments.map((p) => p.name), ['log.txt']);
 });
+
+test('ahub progress：上次读收件箱后有未读消息时，提醒先运行 ahub inbox', async (t) => {
+  const { url, call, run } = await setup(t);
+  const created = await call('POST', '/api/v1/admin/agents', { project: 'P-1', name: '后端' });
+  assert.equal((await run(['join', '--hub', url, '--code', created.code])).code, 0);
+  const task = await call('POST', '/api/v1/admin/tasks', { project: 'P-1', title: '写接口', assignee: 'A-2' });
+  await run(['accept', task.id]);
+  await run(['inbox']);
+  const quiet = await run(['progress', task.id, '10', '开工']);
+  assert.equal(quiet.code, 0, quiet.stderr);
+  assert.match(quiet.stdout, /已上报进度/);
+  assert.doesNotMatch(quiet.stdout, /未读提醒/);
+
+  await call('POST', '/api/v1/admin/messages', { to: 'A-2', text: '接口先用 REST' });
+  const r = await run(['progress', task.id, '20', '写了一半']);
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, /已上报进度[\s\S]*【未读提醒】进度已上报，但你还有 1 条未读消息[\s\S]*接口先用 REST[\s\S]*请先运行 ahub inbox/);
+  // 提醒只看不确认：再报一次仍会提醒，读过收件箱后就不再提醒
+  assert.match((await run(['progress', task.id, '25', '继续'])).stdout, /未读提醒/);
+  assert.match((await run(['inbox'])).stdout, /接口先用 REST/);
+  assert.doesNotMatch((await run(['progress', task.id, '30', '继续'])).stdout, /未读提醒/);
+  await call('POST', '/api/v1/admin/messages', { to: 'A-2', text: 'use REST' });
+  assert.match((await run(['progress', task.id, '35', 'go', '--lang', 'en'])).stdout, /\[Unread\][\s\S]*Run ahub inbox first/);
+});

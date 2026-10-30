@@ -218,6 +218,14 @@ test('MCP：通过 HTTP 调用 hub_ 工具', async () => {
   assert.match(claim.content[0].text, /已领取/);
   const bad = await client.callTool({ name: 'hub_claim', arguments: { task: t.id } });
   assert.equal(bad.isError, true);
+  const synced = await client.callTool({ name: 'hub_sync', arguments: {} });
+  const seq = Number(/本次读到第 (\d+)/.exec(synced.content[0].text)[1]);
+  await client.callTool({ name: 'hub_sync', arguments: { ack: seq } });
+  const quiet = await client.callTool({ name: 'hub_progress', arguments: { task: t.id, percent: 10, note: '开工' } });
+  assert.doesNotMatch(quiet.content[0].text, /未读提醒/);
+  await req('POST', '/api/v1/admin/messages', { to: a.agent.id, text: '先写大纲' });
+  const prog = await client.callTool({ name: 'hub_progress', arguments: { task: t.id, percent: 20, note: '写了一半' } });
+  assert.match(prog.content[0].text, /已上报进度[\s\S]*【未读提醒】[\s\S]*先写大纲[\s\S]*请先调用 hub_sync/);
   await client.close();
   await app.close();
 });

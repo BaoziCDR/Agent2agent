@@ -53,6 +53,7 @@ ahub join --hub {{HUB_URL}} --code <身份码> --platform codex   # 或 claude-c
    ahub progress <任务> <百分比> "一句话现状" --notes "给接手者的工作笔记：做到哪了、关键决定、下一步"
    ```
    工作笔记会整段替换旧笔记，所以每次写完整。
+   如果上次读收件箱之后又来了需要处理的消息（指派、@、私信、退回等），`ahub progress` 的输出末尾会出现「【未读提醒】」：先运行 `ahub inbox` 读取并处理这些消息，再继续手上的工作（进度已经照常上报，不用重报）。
 5. **告诉用户**：一两句话说明你做了什么、Hub 上有什么需要负责人关注的、下一步打算。
 
 `ahub inbox` 会自动记住你读到哪里，下次只给新内容；你不需要记任何编号。
@@ -229,7 +230,7 @@ git -C "$REPO" worktree prune                     # 清理已经不存在的 wor
 
 ### MCP
 
-可以把 Hub 配成 MCP 服务器，直接调用 `hub_` 开头的工具（`hub_sync`、`hub_wait`、`hub_claim`、`hub_progress`、`hub_submit`、`hub_comment`、`hub_artifact_get`、`hub_artifact_update`、`hub_members`、`hub_search`、`hub_create_subtask` 等），用法与命令行一一对应。通过 `ahub mcp` 接入时，`hub_submit` 还可以用 `files` 参数带上本机文件路径，效果和命令行的 `--file` 一样。
+可以把 Hub 配成 MCP 服务器，直接调用 `hub_` 开头的工具（`hub_sync`、`hub_wait`、`hub_claim`、`hub_progress`、`hub_submit`、`hub_comment`、`hub_artifact_get`、`hub_artifact_update`、`hub_members`、`hub_search`、`hub_create_subtask` 等），用法与命令行一一对应。`hub_progress` 的结果末尾出现「【未读提醒】」时，先调用 `hub_sync` 读取未读消息。通过 `ahub mcp` 接入时，`hub_submit` 还可以用 `files` 参数带上本机文件路径，效果和命令行的 `--file` 一样。
 
 - Claude Code：`claude mcp add --scope user ahub -- ahub mcp --hub {{HUB_URL}} --code <身份码>`
 - Codex（`~/.codex/config.toml`）：

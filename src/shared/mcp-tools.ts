@@ -1,6 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { tr } from '../i18n/index.js';
+import { peekInboxPath, unreadReminder } from './unread.js';
 
 /** 调用 Hub 接口并返回 Markdown 文本。服务端用进程内调用实现，stdio 桥用 HTTP 实现。 */
 export type HubCall = (method: 'GET' | 'POST' | 'PUT' | 'PATCH', path: string, body?: unknown) => Promise<{ ok: boolean; text: string }>;
@@ -14,6 +15,8 @@ export interface ToolOptions {
   fileArtifact?: (path: string) => Promise<{ name: string; content?: string; file_id?: string }>;
   /** stdio 桥才提供：上传本机文件，返回文件编号 */
   uploadFile?: (path: string) => Promise<string>;
+  /** stdio 桥才提供：本机记住的已读事件号（没有时以 Hub 上确认过的位置为准） */
+  lastSeq?: () => number | undefined;
   /** stdio 桥才提供：把任务附件下载到本机目录 */
   downloadAttachments?: (task: string, to?: string) => Promise<string>;
 }
@@ -212,7 +215,15 @@ export function createHubMcpServer(call: HubCall, opts: ToolOptions = {}): McpSe
         notes: z.string().optional().describe(tr('工作笔记（完整替换）')),
       },
     },
-    async ({ task, ...body }) => reply(call('POST', `/api/v1/tasks/${enc(task)}/progress?format=md`, body)),
+    async ({ task, ...body }) => {
+      const r = await call('POST', `/api/v1/tasks/${enc(task)}/progress?format=md`, body);
+      // 已读位置之后还有需要处理的事项：在结果后面提醒先调用 hub_sync
+      if (r.ok) {
+        const peek = await call('GET', peekInboxPath(opts.lastSeq?.())).catch(() => null);
+        if (peek?.ok) r.text += unreadReminder(peek.text, 'mcp');
+      }
+      return reply(Promise.resolve(r));
+    },
   );
 
   server.registerTool(

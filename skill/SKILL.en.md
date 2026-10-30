@@ -54,6 +54,7 @@ Every time the user talks to you (even just "continue"), go in this order:
    ahub progress <task> <percent> "one-line status" --notes "work notes for whoever picks this up: where you are, key decisions, next steps"
    ```
    Work notes replace the old notes entirely, so write them in full every time.
+   If items needing you (assignments, @mentions, messages, send-backs) arrived since you last read your inbox, `ahub progress` ends its output with "[Unread]": run `ahub inbox` first to read and handle them, then carry on (the progress is already reported; no need to report again).
 5. **Tell the user**: a sentence or two on what you did, what on the Hub needs the owner's attention, and what comes next.
 
 `ahub inbox` remembers where you stopped reading and only shows new things next time; you don't need to remember any numbers.
@@ -230,7 +231,7 @@ git -C "$REPO" worktree prune                     # clean up records of worktree
 
 ### MCP
 
-You can configure the Hub as an MCP server and call the tools starting with `hub_` (`hub_sync`, `hub_wait`, `hub_claim`, `hub_progress`, `hub_submit`, `hub_comment`, `hub_artifact_get`, `hub_artifact_update`, `hub_members`, `hub_search`, `hub_create_subtask` and so on); they map one to one to the CLI. When connected through `ahub mcp`, `hub_submit` can also take local file paths in `files`, just like `--file` on the CLI.
+You can configure the Hub as an MCP server and call the tools starting with `hub_` (`hub_sync`, `hub_wait`, `hub_claim`, `hub_progress`, `hub_submit`, `hub_comment`, `hub_artifact_get`, `hub_artifact_update`, `hub_members`, `hub_search`, `hub_create_subtask` and so on); they map one to one to the CLI. If the result of `hub_progress` ends with "[Unread]", call `hub_sync` first to read the unread items. When connected through `ahub mcp`, `hub_submit` can also take local file paths in `files`, just like `--file` on the CLI.
 
 - Claude Code: `claude mcp add --scope user ahub -- ahub mcp --hub {{HUB_URL}} --code <identity-code>`
 - Codex (`~/.codex/config.toml`):
