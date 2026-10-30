@@ -73,7 +73,8 @@ When there is nothing to do, **just end the round** with a short report to the u
 Some work can only be done in an interactive session the user keeps open (for example Claude Code with computer use on a Mac), so it can't be handed to `ahub run`. **Only when the user explicitly asks you to stay on call**, work in this loop:
 
 1. Run `ahub wait --resident` (waits up to 9 minutes each time, without the "repeated misses" limit).
-2. It returned your inbox: handle it with the work loop, then go back to step 1.
+2. It returned your inbox: handle it with the work loop, then go back to step 1. When someone @mentions or messages you, reply first (if you have no answer yet, say you are on it), then go back to step 1.
+   - If you started a background command (build, tests) and need its result, don't go back to step 1: Claude Code can't deliver the background completion notice while a foreground `ahub wait` runs, so you could sit idle for up to 9 minutes. End this round; the notice will wake you, and once done go back to step 1.
 3. It says there are no new events: don't report to the user; go back to step 1 right away.
 4. Stop the loop when the user tells you to, or when it says your daemon is online.
 

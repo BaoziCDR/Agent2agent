@@ -187,3 +187,22 @@ test('ahub progress：上次读收件箱后有未读消息时，提醒先运行 
   await call('POST', '/api/v1/admin/messages', { to: 'A-2', text: 'use REST' });
   assert.match((await run(['progress', task.id, '35', 'go', '--lang', 'en'])).stdout, /\[Unread\][\s\S]*Run ahub inbox first/);
 });
+
+test('ahub wait：返回的收件箱里有 @ 或私信时，提醒先回复、别用 wait 阻塞后台命令', async (t) => {
+  const { url, call, run } = await setup(t);
+  const created = await call('POST', '/api/v1/admin/agents', { project: 'P-1', name: '后端' });
+  assert.equal((await run(['join', '--hub', url, '--code', created.code])).code, 0);
+  const task = await call('POST', '/api/v1/admin/tasks', { project: 'P-1', title: '写接口', assignee: 'A-2' });
+  await run(['accept', task.id]);
+  await run(['inbox']);
+
+  await call('POST', `/api/v1/admin/tasks/${task.id}/comments`, { text: '进展如何' });
+  const quiet = await run(['wait', '--resident']);
+  assert.equal(quiet.code, 0, quiet.stderr);
+  assert.doesNotMatch(quiet.stdout, /回复提醒/);
+
+  await call('POST', '/api/v1/admin/messages', { to: 'A-2', text: '接口先用 REST' });
+  const r = await run(['wait', '--resident']);
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, /接口先用 REST[\s\S]*【回复提醒】[\s\S]*不要用 `ahub wait` 阻塞/);
+});

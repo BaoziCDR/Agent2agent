@@ -487,6 +487,7 @@ async function main(rawArgv: string[]) {
         if (resident) q.set('resident', '1');
         const json = JSON.parse(ok(await api(cfg, 'GET', `/api/v1/inbox?${q}&format=json`, undefined, { md: false }))) as {
           events: unknown[];
+          needs_action?: { type: string }[];
           wait?: { skipped: boolean; hint: string };
         };
         if (json.wait?.skipped) {
@@ -503,6 +504,10 @@ async function main(rawArgv: string[]) {
             save();
           }
           console.log(text);
+          // 有人 @ 或私信时，提醒先回复；常见的卡顿是 agent 开了后台命令又回到 wait，前台阻塞期间收不到后台完成通知
+          if (json.needs_action?.some((e) => e.type === 'mention' || e.type === 'message.direct')) {
+            console.log(tr('\n【回复提醒】上面有人 @ 你或私信你：先回复对方（一时给不出结论就先说一句在处理），再继续等待。如果开了后台命令（编译、测试）等结果，不要用 `ahub wait` 阻塞：前台命令结束前收不到后台完成通知。直接结束本轮，完成通知会唤醒你，回复完再继续待命。'));
+          }
           return;
         }
       }
