@@ -25,7 +25,7 @@ export async function runStdioBridge(cfg: CliConfig, configPath: string | null) 
         { client: 'mcp' },
       );
       const text = await res.text();
-      const seq = path.startsWith('/api/v1/inbox') ? Number(LAST_SEQ_RE.exec(text)?.[1] ?? 0) : 0;
+      const seq = path.startsWith('/api/v1/inbox') && !/[?&]peek=1/.test(path) ? Number(LAST_SEQ_RE.exec(text)?.[1] ?? 0) : 0;
       if (seq && seq !== cfg.last_seq) {
         cfg.last_seq = seq;
         if (configPath) saveConfig(configPath, cfg);
@@ -38,6 +38,7 @@ export async function runStdioBridge(cfg: CliConfig, configPath: string | null) 
 
   const server = createHubMcpServer(call, {
     version: VERSION,
+    lastSeq: () => cfg.last_seq,
     fileArtifact: (path) => fileArtifact(cfg, path),
     uploadFile: async (path) => (await uploadFile(cfg, path)).id,
     downloadAttachments: (task, to) => downloadAttachments(cfg, configPath, task, to),

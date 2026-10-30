@@ -12,5 +12,5 @@
     "types": []
   },
   "include": ["src", "../src/shared"],
-  "exclude": ["../src/shared/mcp-tools.ts"]
+  "exclude": ["../src/shared/mcp-tools.ts", "../src/shared/unread.ts"]
 }
