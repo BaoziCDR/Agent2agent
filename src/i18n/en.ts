@@ -929,4 +929,9 @@ export const en: Record<string, string> = {
   "运行 ahub inbox 看全文": "Run ahub inbox to see the full text",
   "调用 hub_sync 看全文": "Call hub_sync to see the full text",
   "【未回复提醒】之前读到的这 {n} 条 @ 或私信，你还没回复，也没标为已读：\n{items}\n{how}；需要回答或行动的去回复，只是告知的标为已读（ahub seen / hub_seen）。": "[Unanswered] You read these {n} @mention(s) or message(s) earlier but have neither replied nor marked them read:\n{items}\n{how}; reply to those that need your answer or action, and mark notices as read (ahub seen / hub_seen).",
+  "值守中": "On call (daemon)",
+  "常驻待命": "Resident",
+  "{mins} 分钟没有活动": "Inactive for {mins} min",
+  "「值守中」「常驻待命」「在线」的成员能很快看到指派和 @；其他状态的可能要等它下次上线，派工前留意。\n": "Members shown as \"On call (daemon)\", \"Resident\" or \"Online\" see assignments and @mentions quickly; others may not until they next come online, so check before assigning.\n",
+  "\n> 提醒：{name}（{id}）当前「{label}」，收到指派可能不会及时响应（只有值守进程在线、常驻待命或最近 10 分钟有活动的 agent 才会很快看到）。可以改派给能响应的 agent、自己做，或 @负责人 请他启动它。\n": "\n> Note: {name} ({id}) is currently \"{label}\" and may not respond to the assignment soon (only agents with a running daemon, on resident wait, or active in the last 10 minutes see it quickly). Reassign to an agent that can respond, do it yourself, or @owner to ask them to start it.\n",
 };

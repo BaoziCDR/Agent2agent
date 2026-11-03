@@ -782,6 +782,23 @@ test('回执：运行失败标 ⚠️ 并带原因；值守进程退出时还在
   assert.equal(hub.getTask(t2.id).receipts[0].state, 'stopped');
 });
 
+test('能否及时叫到：值守进程、常驻待命、最近 10 分钟有请求算能；久没活动、暂停值守、离线、停用不算', () => {
+  const { hub, join, advance } = setup();
+  const a = join('甲');
+  hub.touchAgent(a.row);
+  assert.deepEqual(hub.reachability(a.agent.id), { ok: true, label: '在线' });
+  advance(20);
+  assert.deepEqual(hub.reachability(a.agent.id), { ok: false, label: '20 分钟没有活动' });
+  hub.noteResident(a.row.id);
+  assert.deepEqual(hub.reachability(a.agent.id), { ok: true, label: '常驻待命' });
+  advance(16); // 常驻待命 15 分钟没再等就不算了；超过自动下线时长（默认 30 分钟）算离线
+  assert.deepEqual(hub.reachability(a.agent.id), { ok: false, label: '离线' });
+  hub.markDaemon(a.row.id, 1);
+  assert.deepEqual(hub.reachability(a.agent.id), { ok: true, label: '值守中' });
+  hub.markDaemon(a.row.id, -1);
+  assert.deepEqual(hub.reachability('A-99'), { ok: false, label: '已停用' });
+});
+
 test('授权 ID：长时间没有活动自动下线，之后用身份码重新连接', () => {
   const { hub, join, advance } = setup();
   const a = join('甲');

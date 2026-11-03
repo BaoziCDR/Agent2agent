@@ -291,17 +291,26 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
       if (want && !mine.length) throw new HubError(403, 'forbidden', tr('你不是项目 {want} 的成员', { want }));
       const list = mine.map((x) => {
         const p = hub.getProject(x.id);
-        return { project: p.id, name: p.name, members: p.members_list.map((a) => ({ id: a.id, name: a.name, platform: a.platform, online: a.online, tags: a.projects.find((y) => y.id === p.id)?.tags ?? [] })) };
+        return {
+          project: p.id,
+          name: p.name,
+          members: p.members_list.map((a) => {
+            const r = hub.reachability(a.id);
+            return { id: a.id, name: a.name, platform: a.platform, online: a.online, reachable: r.ok, state: r.label, tags: a.projects.find((y) => y.id === p.id)?.tags ?? [] };
+          }),
+        };
       });
       return send(req, reply, list, () =>
         list
           .map(
             (p) =>
               tr('# {project}「{name}」的成员\n\n', { project: p.project, name: p.name }) +
-              p.members.map((a) => tr('- {name}（{id}）· {platform}{v}', { name: a.name, id: a.id, platform: a.platform, v: a.tags.length ? tr(' · 标签：{tags}', { tags: a.tags.join(tr('、')) }) : '' })).join('\n') +
+              p.members.map((a) => tr('- {name}（{id}）· {platform}{v}', { name: a.name, id: a.id, platform: a.platform, v: a.tags.length ? tr(' · 标签：{tags}', { tags: a.tags.join(tr('、')) }) : '' }) + ` · ${a.state}`).join('\n') +
               '\n',
           )
-          .join('\n') + tr('\n评论里用 @编号（如 @A-3）或 @完整名字 提及成员，@负责人 提及负责人。\n'),
+          .join('\n') +
+          tr('\n评论里用 @编号（如 @A-3）或 @完整名字 提及成员，@负责人 提及负责人。\n') +
+          tr('「值守中」「常驻待命」「在线」的成员能很快看到指派和 @；其他状态的可能要等它下次上线，派工前留意。\n'),
       );
     });
 
@@ -325,13 +334,13 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
     const action = (
       path: string,
       fn: (agent: AgentRow, id: string, body: B) => unknown,
-      done: (r: unknown) => string,
+      done: (r: unknown, agent: AgentRow) => string,
     ) =>
       agentApi.post(path, async (req, reply) => {
         const id = (req.params as { id?: string }).id ?? '';
         const key = req.headers['idempotency-key'] as string | undefined;
         const result = hub.idempotent(req.agent!, key, () => fn(req.agent!, id, (req.body ?? {}) as B));
-        return send(req, reply, result, () => done(result));
+        return send(req, reply, result, () => done(result, req.agent!));
       });
 
     const taskDone = (verb: string) => (r: unknown) => {
@@ -397,9 +406,18 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
             due_at: str(b.due_at) ?? null,
           },
         ),
-      (r) => {
-        const t = r as { id: string; title: string; status_label: string };
-        return tr('已创建子任务 **{id}** {title}（{status_label}）\n', { id: t.id, title: t.title, status_label: t.status_label });
+      (r, a) => {
+        const t = r as { id: string; title: string; status_label: string; assignee: string | null; assignee_name: string | null };
+        let text = tr('已创建子任务 **{id}** {title}（{status_label}）\n', { id: t.id, title: t.title, status_label: t.status_label });
+        // 指派给了现在叫不醒的 agent：提醒一下，免得任务挂着没人做
+        const reach = t.assignee && t.assignee !== `A-${a.id}` ? hub.reachability(t.assignee) : null;
+        if (reach && !reach.ok) {
+          text += tr(
+            '\n> 提醒：{name}（{id}）当前「{label}」，收到指派可能不会及时响应（只有值守进程在线、常驻待命或最近 10 分钟有活动的 agent 才会很快看到）。可以改派给能响应的 agent、自己做，或 @负责人 请他启动它。\n',
+            { name: t.assignee_name ?? t.assignee, id: t.assignee, label: reach.label },
+          );
+        }
+        return text;
       },
     );
     // 交付物：读取、修改记录、整份替换（PUT）和局部修改（PATCH），都按版本号做冲突检测
