@@ -2548,6 +2548,13 @@ export class Hub {
     return this.iso(LEASE_MINUTES[agent.tier] ?? 240);
   }
 
+  /** 按负责的 agent 重新计算租约（阻塞解除后从现在算起，免得一恢复就被当成失联） */
+  private assigneeLease(t: TaskRow): string | null {
+    if (t.assignee_id === null) return t.lease_until;
+    const agent = this.db.prepare('SELECT * FROM agents WHERE id = ?').get(t.assignee_id) as unknown as AgentRow | undefined;
+    return agent ? this.lease(agent) : t.lease_until;
+  }
+
   private requireAssignee(agent: AgentRow, t: TaskRow, code: string) {
     if (t.assignee_id !== agent.id) throw forbidden(tr('{code} 不在你名下', { code }));
   }
@@ -2736,6 +2743,7 @@ export class Hub {
       this.addComment('owner', t, tr('**回答**「{v}」：{text}', { v: excerpt(t.block_reason, 80), text }));
       return this.taskView(
         this.setStatus(this.taskById(t.id), 'owner', 'working', {
+          lease: this.assigneeLease(t),
           summary: () => tr('负责人回答了 {code} 的问题：{text}', { code, text }),
           data: { answer: text, question: t.block_reason },
         }),
@@ -2751,6 +2759,7 @@ export class Hub {
     return this.write(() =>
       this.taskView(
         this.setStatus(t, who, 'working', {
+          lease: this.assigneeLease(t),
           summary: () => tr('{v}解除了 {code} 的阻塞{v2}', { v: this.actorName(who), code, v2: note ? tr('：{note}', { note }) : '' }),
           data: { note: note ?? '' },
         }),
@@ -2976,6 +2985,11 @@ export class Hub {
     const assignee = t.assignee_id === null ? null : agentCode(t.assignee_id);
     const commentId = Number(r.lastInsertRowid);
     const targets = [...new Set(this.mentionTargets(text, t.project_id))].filter((x) => x !== author);
+    // 负责的 agent 在自己进行中的任务下发言，说明还在干活：顺带续期租约
+    if (t.status === 'working' && t.assignee_id !== null && author === agentCode(t.assignee_id)) {
+      const agent = this.db.prepare('SELECT * FROM agents WHERE id = ?').get(t.assignee_id) as unknown as AgentRow;
+      this.db.prepare('UPDATE tasks SET lease_until = ?, lease_warned = 0 WHERE id = ?').run(this.lease(agent), t.id);
+    }
     // agent 在任务下回复了，它在这个任务里接手的指派算处理完；评论只结清回复对象（@ 到的人）发的那几条，
     // 没 @ 任何人时当作回复整个讨论，全部结清。没回到的那条要么另行回复，要么 ahub seen 标为已读
     const self = parseId(author, 'A');
@@ -3445,9 +3459,19 @@ export class Hub {
     let n = 0;
     this.write(() => {
       for (const t of rows) {
+        // 在等子任务不算打转
+        if (this.hasLiveSubtasks(t.id)) continue;
+        // 只看最近一次进入「进行中」之后的上报：阻塞等回答期间报的「还在等」不算
+        const resumed = (
+          this.db
+            .prepare(
+              "SELECT MAX(at) AS at FROM events WHERE task_id = ? AND type = 'task.status_changed' AND json_extract(data, '$.to') = 'working'",
+            )
+            .get(t.id) as { at: string | null }
+        ).at;
         const logs = this.db
-          .prepare('SELECT percent, created_at FROM progress_log WHERE task_id = ? ORDER BY id DESC LIMIT 50')
-          .all(t.id) as { percent: number; created_at: string }[];
+          .prepare('SELECT percent, created_at FROM progress_log WHERE task_id = ? AND created_at >= ? ORDER BY id DESC LIMIT 50')
+          .all(t.id, resumed ?? '') as { percent: number; created_at: string }[];
         if (!logs.length || logs[0].percent !== t.progress || t.progress >= 100) continue;
         // 从最新往前数，进度一直是同一个值的那几次上报
         let same = 0;
@@ -3481,15 +3505,26 @@ export class Hub {
     return n;
   }
 
+  /**
+   * 定时调用：进行中的任务租约到期、负责的 agent 又像是失联了，提醒一次（不自动收回）。
+   * 阻塞中的任务在等别人回答，不算失联；agent 最近 10 分钟还在请求 Hub（在线待命、刚发过评论等），
+   * 或者任务下还有没结束的子任务（在等子任务），都只是悄悄续期。返回提醒的条数。
+   */
   sweepLeases(): number {
     const rows = this.db
-      .prepare(
-        `SELECT * FROM tasks WHERE lease_until IS NOT NULL AND lease_until < ? AND lease_warned = 0 AND status IN ('working','input_required')`,
-      )
+      .prepare(`SELECT * FROM tasks WHERE lease_until IS NOT NULL AND lease_until < ? AND lease_warned = 0 AND status = 'working'`)
       .all(this.iso()) as unknown as TaskRow[];
     if (rows.length === 0) return 0;
+    let n = 0;
     this.write(() => {
       for (const t of rows) {
+        const agent = t.assignee_id === null ? undefined : (this.db.prepare('SELECT * FROM agents WHERE id = ?').get(t.assignee_id) as unknown as AgentRow | undefined);
+        const present = agent ? ['online', 'active'].includes(this.presenceOf(agent)) : false;
+        if (agent && (present || this.hasLiveSubtasks(t.id))) {
+          this.db.prepare('UPDATE tasks SET lease_until = ? WHERE id = ?').run(this.lease(agent), t.id);
+          continue;
+        }
+        n++;
         this.db.prepare('UPDATE tasks SET lease_warned = 1 WHERE id = ?').run(t.id);
         const who = t.assignee_id === null ? null : agentCode(t.assignee_id);
         this.emit('task.lease_expiring', 'owner', {
@@ -3500,7 +3535,14 @@ export class Hub {
         });
       }
     });
-    return rows.length;
+    return n;
+  }
+
+  /** 任务下还有没结束的子任务（负责人在等子任务，不是失联或打转） */
+  private hasLiveSubtasks(taskId: number): boolean {
+    return !!this.db
+      .prepare("SELECT 1 FROM tasks WHERE parent_id = ? AND status IN ('assigned', 'working', 'input_required', 'review') LIMIT 1")
+      .get(taskId);
   }
 
   // ───────────── 幂等 ─────────────

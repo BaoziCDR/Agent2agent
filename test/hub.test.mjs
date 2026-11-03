@@ -312,6 +312,54 @@ test('租约到期只提醒一次，不自动收回', () => {
   assert.equal(hub.overview().counts.lost, 0);
 });
 
+test('租约：阻塞中不提醒；agent 还在请求 Hub、在任务下发言或在等子任务时悄悄续期；解除阻塞后从现在起算', () => {
+  const { hub, p1, join, advance } = setup();
+  const a = join('甲');
+  const b = join('乙');
+  const leaseOf = (id) => hub.getTask(id).lease_until;
+  const t = hub.createTask({ kind: 'owner' }, { project: p1.id, title: '在线待命' });
+  hub.claim(a.row, t.id);
+
+  // 租约过了，但甲 10 分钟内还在请求 Hub（比如 ahub wait --resident）：不提醒，续期
+  const before = leaseOf(t.id);
+  advance(40);
+  hub.touchAgent(a.row);
+  assert.equal(hub.sweepLeases(), 0);
+  assert.ok(leaseOf(t.id) > before);
+  assert.equal(hub.overview().counts.lost, 0);
+  // 甲在自己的任务下发言也算还在干活
+  advance(25);
+  hub.comment({ kind: 'agent', agent: a.row }, t.id, '还在跑测试');
+  advance(25);
+  assert.equal(hub.sweepLeases(), 0);
+  // 真的没动静了才提醒
+  advance(40);
+  assert.equal(hub.sweepLeases(), 1);
+  assert.equal(hub.overview().counts.lost, 1);
+
+  // 阻塞中的任务在等回答，再久也不提醒；回答后租约从现在起算，不会一恢复就报失联
+  const blocked = hub.createTask({ kind: 'owner' }, { project: p1.id, title: '等授权' });
+  hub.claim(b.row, blocked.id);
+  hub.block(b.row, blocked.id, '能不能新建分支？');
+  advance(600);
+  assert.equal(hub.sweepLeases(), 0);
+  hub.answer(blocked.id, '可以');
+  assert.equal(hub.sweepLeases(), 0);
+  advance(31);
+  assert.equal(hub.sweepLeases(), 1);
+
+  // 协调者在等子任务：不提醒；子任务都结束了还没动静，照常提醒
+  const parent = hub.createTask({ kind: 'owner' }, { project: p1.id, title: '父任务' });
+  hub.claim(a.row, parent.id);
+  const sub = hub.createTask({ kind: 'agent', agent: a.row }, { parent: parent.id, title: '子', assignee: b.agent.id });
+  advance(120);
+  assert.equal(hub.sweepLeases(), 0);
+  hub.cancel(sub.id, '不做了');
+  advance(31);
+  assert.equal(hub.sweepLeases(), 1);
+  assert.equal(hub.eventsForOwner({ limit: 1 })[0].task, parent.id);
+});
+
 test('统计：按天完成数、平均用时和退回率', () => {
   const { hub, p1, join, advance } = setup();
   const a = join('甲');
@@ -511,6 +559,32 @@ test('原地打转检测：进度长时间不变但一直在报，提醒负责�
   hub.progress(a.row, t.id, { percent: 50, note: '有进展' });
   assert.equal(hub.getTask(t.id).stalled, false);
   assert.equal(hub.overview().counts.stalled, 0);
+});
+
+test('原地打转检测：阻塞等回答期间报的进度不算；在等子任务不算', () => {
+  const { hub, p1, join, advance } = setup();
+  const a = join('甲');
+  const b = join('乙');
+  const t = hub.createTask({ kind: 'owner' }, { project: p1.id, title: '等分支授权', assignee: a.agent.id });
+  hub.progress(a.row, t.id, { percent: 5, note: '开工' });
+  hub.block(a.row, t.id, '能不能新建分支？');
+  for (let i = 0; i < 4; i++) {
+    advance(60);
+    hub.progress(a.row, t.id, { percent: 5, note: '还在等授权' });
+  }
+  hub.answer(t.id, '可以');
+  hub.progress(a.row, t.id, { percent: 5, note: '恢复' });
+  assert.equal(hub.sweepStalls(), 0);
+
+  // 协调者等子任务时反复报同一个进度，也不算打转
+  const parent = hub.createTask({ kind: 'owner' }, { project: p1.id, title: '父任务', assignee: a.agent.id });
+  hub.progress(a.row, parent.id, { percent: 20, note: '已派子任务' });
+  hub.createTask({ kind: 'agent', agent: a.row }, { parent: parent.id, title: '子', assignee: b.agent.id });
+  for (let i = 0; i < 3; i++) {
+    advance(60);
+    hub.progress(a.row, parent.id, { percent: 20, note: '等子任务' });
+  }
+  assert.equal(hub.sweepStalls(), 0);
 });
 
 test('交付物修改：局部补丁、整份替换的版本冲突、补丁只在改动区域冲突、重新提交算新一轮', () => {
