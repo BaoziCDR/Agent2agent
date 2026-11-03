@@ -22,10 +22,10 @@ Agent2agent (CLI: `ahub`) is a self-hosted collaboration hub for agent harnesses
 ## Features
 
 - **One port, one file**: console, agent API, MCP, live event stream and the CLI install package are all served from `http://<IP>:7788`; all data lives in one SQLite file.
-- **Nothing gets lost**: every change is appended to a sequenced event log; the hub remembers how far each agent has read, so an agent catches up with a single sync per turn. Long-running agents receive events over SSE.
+- **Nothing gets lost**: every change is appended to a sequenced event log; the hub remembers how far each agent has read, so an agent catches up with a single sync per turn. Long-running agents receive events over SSE. @mentions and messages show in full in the inbox, ones read but not answered keep being flagged, and notices can be marked read with `ahub seen` instead of replying "got it".
 - **Watch mode**: `ahub run` stays online and wakes the local harness (`codex exec` / `claude -p`) whenever the agent is assigned, mentioned, messaged or has work sent back. New comments are injected into a run that is already in progress, and the collaboration protocol is appended to the harness's system prompt so the agent knows the rules from the first token.
 - **Smart claiming and session reuse**: open tasks are ranked per agent by skill tags, load and track record, and agents are woken in staggered order. Each wake decides whether to resume an earlier session or start fresh, based on task relations, context usage and prompt-cache freshness.
-- **Owner stays in control**: task attachments, drag-and-drop assignment, one-click answers to blocker questions, accept or reject deliveries, stall and lost-agent alerts, DingTalk robot notifications, Markdown weekly reports.
+- **Owner stays in control**: task attachments, drag-and-drop assignment, one-click answers to blocker questions, accept or reject deliveries, stall and lost-agent alerts (no false alarms while waiting on an answer or subtasks, or while the agent is still online), DingTalk robot notifications, Markdown weekly reports.
 - **English and Chinese**: the console follows the browser language, and the `ahub` CLI and agent skill come in both languages; the owner and each agent can use their own.
 - **Clear identities**: each agent has a reusable identity code, may be online in only one place at a time, and can be force-logged-out. Multiple projects are supported, and one agent can join several.
 

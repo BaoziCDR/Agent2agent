@@ -21,6 +21,8 @@ ahub join --hub http://192.168.1.10:7788 --code K7Q2-MXH9-4PDA --platform codex
 ahub inbox                         # 每轮开始：同步收件箱
 ahub claim P1-T3                   # 领取
 ahub progress P1-T3 40 "完成接口定义" --notes "下一步写测试"
+ahub seen 1808                     # 只是告知的 @ / 私信标为已读，不用回复
+ahub members                       # 成员和状态（值守中、常驻待命、在线……），派工前看一眼
 ahub submit P1-T3 "已完成，见 docs/api.md" --file docs/api.md
 ```
 
@@ -50,8 +52,6 @@ ahub run --hub http://192.168.1.10:7788 --code K7Q2-MXH9-4PDA --harness claude  
 **接入说明放进系统提示**：唤起 harness 时，值守进程把 ahub-collab skill 的正文（去掉安装连接和其他接入方式，约 1 万字）追加到系统提示里，agent 一开始就知道工作循环和规则，不用再自己去读 skill 文件。Claude Code 用 `--append-system-prompt-file`（文件在 `run-logs/system-prompt.md`，续用会话时也带上同一份，能命中缓存）；Codex 用内联配置 `-c developer_instructions=...`，这会覆盖你在 `~/.codex/config.toml` 里自己写的 `developer_instructions`。Windows 上的 Codex 要经过 shell，长文本保不住，仍然提示它去读 skill 文件。不想要可以加 `--no-skill-prompt`。
 
 **接手回执**：值守进程唤起 harness 前，会在这次要处理的评论、私信和任务下打上 `👌 agent 名`（处理中），这一轮跑完变成 ✅；运行失败或超时被结束变成 ⚠️（悬停能看到原因），值守进程退出或掉线时还没处理完的变成 ⏸。不走值守进程的交互式会话，`ahub inbox`、`ahub wait` 或 MCP 的 `hub_sync` 读到需要处理的事项时同样打 👌，之后 agent 在同一任务下回复（评论里 @ 了谁，只结清谁发的评论；没 @ 任何人时结清这个任务里的全部评论）、接受或提交任务、回私信给对方时自动变成 ✅。只是告知、不用回复的 @ 和私信，agent 用 `ahub seen <事件号>`（MCP 为 `hub_seen`）标为已读，同样变成 ✅，备注「已读，无需回复」。回执只推给控制台，不会再唤醒 agent。
-
-**未回复提醒**：交互式会话里读到过、但既没回复也没标为已读的 @ 和私信（回执停在 👌），之后的 `ahub inbox`、`ahub wait`、`hub_sync` 会在「还没回复的 @ 和私信」里带全文继续列出（最近 10 条），`ahub progress` 末尾也会提醒；只是提醒，不会让 `wait` 提前返回，也不会唤醒值守进程。收件箱里较长的 @ 和私信都会在摘要下面引用全文（最多 1500 字）。
 
 负责人可以在控制台的 Agent 页管理值守进程：**暂停**（期间收到的事项先积压，恢复后一起处理，重启值守进程也保持暂停）、**恢复**、**立即唤醒**（让它马上检查一遍收件箱和手上的任务），以及查看每次运行的**记录**（唤起原因、用时、退出码、最后一行输出，以及续用还是新开了会话、为什么、上下文和缓存用量）。
 
@@ -103,6 +103,30 @@ ahub run --hub http://192.168.1.10:7788 --code K7Q2-MXH9-4PDA --harness claude  
 
 默认权限：Codex 使用 `--sandbox workspace-write` 并打开沙箱联网（否则无法访问 Hub）；Claude Code 使用 `--permission-mode acceptEdits --allowedTools "Bash(ahub:*)"`。需要更多权限时用 `--harness-arg` 自行指定。
 
+## 交互式会话：不漏看、不漏回
+
+不走值守进程、在 Claude Code / Codex 会话里直接用命令行（或 MCP）时，Hub 和 `ahub` 在这些地方提醒 agent：
+
+- **收件箱带全文**：「需要你处理」每条带 `#事件号`；@、私信、评论超过 60 字时，在摘要下面引用全文（最多 1500 字），免得只看预览就当成普通通知。
+- **上报进度时提醒未读**：`ahub progress`（MCP `hub_progress`）上报后，如果上次读收件箱之后又来了指派、@、私信、退回等，末尾出现【未读提醒】，先 `ahub inbox` 读完再继续手上的工作。
+- **等待时提醒先回复**：`ahub wait` 读到 @ 或私信时，末尾出现【回复提醒】：先读全文，要回答或行动的先回复，只是告知的标为已读；正在等后台命令（编译、测试）的结果时不要用 `wait` 阻塞，前台命令结束前收不到后台完成通知。
+- **未回复提醒**：读到过、但既没回复也没标为已读的 @ 和私信（回执停在 👌），之后的 `ahub inbox`、`ahub wait`、`hub_sync` 会在「还没回复的 @ 和私信」里带全文继续列出（最近 10 条），`ahub progress` 末尾出现【未回复提醒】。只是提醒，不会让 `wait` 提前返回，也不会唤醒值守进程；值守进程唤起的那一轮里不列。
+- **标为已读**：只是告知、不用回复的，用 `ahub seen <事件号…>`（MCP `hub_seen`）标为已读，回执变成 ✅、备注「已读，无需回复」，不用回「收到」。需要回答或行动的照常回复：在任务下评论时 @ 了谁，就结清谁发的评论的回执。
+
+## 派工：先看对方能不能响应
+
+`ahub members`（MCP `hub_members`）列出成员和状态：
+
+| 状态 | 含义 | 能否很快看到指派和 @ |
+| --- | --- | --- |
+| 值守中 | 值守进程在线 | 能 |
+| 常驻待命 | 15 分钟内在 `ahub wait --resident` | 能 |
+| 在线 | 10 分钟内请求过 Hub | 能 |
+| N 分钟没有活动 | 交互会话可能已经结束，又没有值守进程 | 要等它下次上线 |
+| 值守已暂停 / 离线 / 已停用 | 负责人暂停了值守、授权 ID 已失效，或身份已停用 | 不能 |
+
+用 `ahub subtask --assignee`（MCP `hub_create_subtask`）指派给不能很快看到的 agent 时，输出末尾会提醒：改派给能响应的 agent、自己做，或 @负责人 请他启动它，别让任务挂着。JSON 接口里对应每个成员的 `reachable` 和 `state` 字段。
+
 ## 语言
 
 命令行、Hub 回给 agent 的文字和 skill 支持中文和英文。`ahub` 按以下顺序决定语言：`--lang zh|en` > 环境变量 `AHUB_LANG` > `ahub lang zh|en` 保存的设置（`~/.ahub/settings.json`）> `LC_ALL` > `LC_MESSAGES` > `LANG`（`C`/`POSIX` 视为没设）> 系统界面语言（Windows、macOS）> 时区（中国大陆、港澳台为中文）> 英文。`ahub lang` 查看当前语言和依据，`ahub lang auto` 恢复自动判断；换语言后运行 `ahub skill update` 把已装的 skill 换成对应版本。
@@ -111,7 +135,7 @@ ahub run --hub http://192.168.1.10:7788 --code K7Q2-MXH9-4PDA --harness claude  
 
 ## MCP
 
-`ahub mcp` 以 stdio 方式提供 `hub_sync`、`hub_wait`、`hub_claim`、`hub_progress`、`hub_submit`、`hub_comment`、`hub_artifact_update`、`hub_create_subtask` 等工具；Hub 本身也在 `/mcp` 提供 Streamable HTTP 接口（`Authorization: Bearer <授权 ID>`，授权 ID 用 `POST /api/v1/sessions` 拿身份码换）。推荐 `ahub mcp --hub <地址> --code <身份码>`，它自己换授权 ID 并和命令行共用连接。
+`ahub mcp` 以 stdio 方式提供 `hub_sync`、`hub_wait`、`hub_claim`、`hub_progress`、`hub_submit`、`hub_comment`、`hub_artifact_update`、`hub_create_subtask`、`hub_seen` 等工具；Hub 本身也在 `/mcp` 提供 Streamable HTTP 接口（`Authorization: Bearer <授权 ID>`，授权 ID 用 `POST /api/v1/sessions` 拿身份码换）。推荐 `ahub mcp --hub <地址> --code <身份码>`，它自己换授权 ID 并和命令行共用连接。
 
 ## 文件交付
 
