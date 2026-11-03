@@ -60,6 +60,35 @@ test('成员列表：agent 只能看自己项目的成员', async () => {
   assert.equal((await req('GET', '/api/v1/members?project=P-9', undefined, a.headers)).status, 403);
 });
 
+test('派工提醒：子任务指派给叫不醒的 agent 时提醒；成员列表显示能否及时响应', async () => {
+  const { req, join, project } = await setup();
+  const a = await join('甲');
+  const b = await join('乙');
+  // 丙由负责人建好但从没连接过：离线
+  const c = (await req('POST', '/api/v1/admin/agents', { project: project.id, name: '丙' })).json();
+  const parent = (await req('POST', '/api/v1/admin/tasks', { project: project.id, title: '父任务', assignee: 'A-1' })).json();
+  await req('POST', `/api/v1/tasks/${parent.id}/accept`, {}, a.headers);
+
+  const toOffline = await req('POST', '/api/v1/tasks?format=md', { parent: parent.id, title: '给丙', assignee: c.agent.id }, a.headers);
+  assert.equal(toOffline.status, 200, toOffline.text);
+  assert.match(toOffline.text, /已创建子任务[\s\S]*> 提醒：丙（A-3）当前「离线」，收到指派可能不会及时响应[\s\S]*@负责人 请他启动它/);
+  // 乙刚请求过 Hub，算在线，不提醒；指派给自己也不提醒
+  const toOnline = await req('POST', '/api/v1/tasks?format=md', { parent: parent.id, title: '给乙', assignee: b.agent.id }, a.headers);
+  assert.doesNotMatch(toOnline.text, /提醒/);
+  const toSelf = await req('POST', '/api/v1/tasks?format=md', { parent: parent.id, title: '自己做', assignee: 'A-1' }, a.headers);
+  assert.doesNotMatch(toSelf.text, /提醒/);
+
+  const md = await req('GET', '/api/v1/members?format=md', undefined, a.headers);
+  assert.match(md.text, /乙（A-2）· codex · 在线/);
+  assert.match(md.text, /丙（A-3）[^\n]*· 离线/);
+  assert.match(md.text, /派工前留意/);
+  const json = (await req('GET', '/api/v1/members', undefined, a.headers)).json();
+  assert.deepEqual(
+    json[0].members.map((m) => [m.id, m.reachable, m.state]),
+    [['A-1', true, '在线'], ['A-2', true, '在线'], ['A-3', false, '离线']],
+  );
+});
+
 test('长轮询：有新事件时立即返回', async () => {
   const { req, join, project } = await setup();
   const a = await join('甲');

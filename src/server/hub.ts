@@ -858,6 +858,23 @@ export class Hub {
     return at !== undefined && this.now().getTime() - at < 15 * 60_000;
   }
 
+  /**
+   * 这个 agent 现在能不能被及时叫到：值守进程在线（没暂停）、常驻待命，或最近 10 分钟有请求都算能。
+   * 派工和 @ 之前看一眼；label 是给人看的简短状态。
+   */
+  reachability(code: string): { ok: boolean; label: string } {
+    const id = parseId(code, 'A');
+    const a = id === null ? undefined : (this.db.prepare('SELECT * FROM agents WHERE id = ?').get(id) as unknown as AgentRow | undefined);
+    if (!a || a.status !== 'active') return { ok: false, label: tr('已停用') };
+    if (this.hasDaemon(a.id)) return a.daemon_paused ? { ok: false, label: tr('值守已暂停') } : { ok: true, label: tr('值守中') };
+    if (this.isResident(a.id)) return { ok: true, label: tr('常驻待命') };
+    const presence = this.presenceOf(a);
+    if (presence === 'online' || presence === 'active') return { ok: true, label: tr('在线') };
+    if (presence === 'offline') return { ok: false, label: tr('离线') };
+    const mins = Math.max(1, Math.round((this.now().getTime() - Date.parse(a.last_seen_at ?? '')) / 60_000));
+    return { ok: false, label: tr('{mins} 分钟没有活动', { mins }) };
+  }
+
   isLive(agentId: number) {
     return (this.live.get(agentId) ?? 0) > 0;
   }
