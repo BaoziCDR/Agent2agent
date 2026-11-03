@@ -265,6 +265,12 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
       });
     });
 
+    // 只是告知、不用回复的 @ 和私信：标为已读（回执直接变成已处理）
+    agentApi.post('/api/v1/me/seen', async (req) => {
+      const b = (req.body ?? {}) as Record<string, unknown>;
+      return hub.markSeen(req.agent!, { seqs: Array.isArray(b.seqs) ? b.seqs.map(Number) : undefined });
+    });
+
     agentApi.post('/api/v1/me/activity', async (req) => {
       const b = (req.body ?? {}) as Record<string, unknown>;
       return hub.reportActivity(req.agent!, { state: str(b.state), note: str(b.note) });

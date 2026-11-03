@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { openDb } from '../dist/server/db.js';
 import { Hub } from '../dist/server/hub.js';
+import { renderInbox } from '../dist/server/format.js';
 
 process.removeAllListeners('warning');
 
@@ -695,6 +696,71 @@ test('回执：交互式会话读收件箱时打 👌，回复评论、回私信
   assert.equal(hub.getTask(t.id).comments[0].receipts[0].state, 'done');
   hub.message({ kind: 'agent', agent: a.row }, 'owner', '能交');
   assert.equal(hub.listMessages().find((m) => m.sender === 'owner').receipts[0].state, 'done');
+});
+
+test('未回复提醒：读过没回的 @ 带全文继续列出，回复对方或标为已读后消失；值守运行中不列', () => {
+  const { hub, p1, join } = setup();
+  const a = join('甲');
+  const b = join('乙');
+  const t = hub.createTask({ kind: 'owner' }, { project: p1.id, title: '网关', assignee: b.agent.id });
+  const long = '@甲 已读新增开关与按工作站网关契约；会合并后对齐，真实矩阵继续等待新清单确认。当前工具清单快照已完整贴出。你现在若有空可分担 command.rs 的执行器';
+  hub.comment({ kind: 'agent', agent: b.row }, t.id, long);
+
+  // 第一次读到：在「需要你处理」里，带事件号和全文
+  const first = hub.inbox(a.row, { mark: true });
+  const mention = first.needs_action.find((e) => e.type === 'mention');
+  assert.ok(mention);
+  assert.deepEqual(first.unanswered, []);
+  const md = renderInbox(first);
+  assert.match(md, new RegExp(`#${mention.seq} `));
+  assert.match(md, /\n  > @甲 已读新增开关[^\n]*分担 command\.rs 的执行器/);
+  hub.ack(a.row, first.last_seq);
+
+  // 读过但没回：之后的收件箱继续列出，带全文
+  const msgText = '接口文档放在 docs/api.md 了，有空看一下即可';
+  hub.message({ kind: 'agent', agent: b.row }, a.agent.id, msgText);
+  const second = hub.inbox(a.row, { mark: true });
+  assert.deepEqual(second.needs_action.map((e) => e.type), ['message.direct']);
+  assert.deepEqual(second.unanswered.map((u) => [u.seq, u.text]), [[mention.seq, long]]);
+  assert.match(renderInbox(second), /## 还没回复的 @ 和私信[\s\S]*ahub seen[\s\S]*分担 command\.rs/);
+  hub.ack(a.row, second.last_seq);
+  const msgSeq = second.needs_action[0].seq;
+  assert.deepEqual(hub.inbox(a.row).unanswered.map((u) => u.seq), [mention.seq, msgSeq]);
+
+  // 值守进程唤起的这一轮里不列（回执由 ahub run 统一结清）
+  hub.reportActivity(a.row, { state: 'working', note: '处理' });
+  assert.deepEqual(hub.inbox(a.row).unanswered, []);
+  hub.reportActivity(a.row, { state: 'idle' });
+
+  // 只是告知的私信标为已读；别人拿事件号标不上，不给事件号报错
+  assert.equal(hub.markSeen(b.row, { seqs: [msgSeq] }).updated, 0);
+  assert.throws(() => hub.markSeen(a.row, { seqs: [] }), /事件号/);
+  assert.equal(hub.markSeen(a.row, { seqs: [msgSeq] }).updated, 1);
+  assert.equal(hub.markSeen(a.row, { seqs: [msgSeq] }).updated, 0);
+  const receipt = hub.listMessages().find((m) => m.body === msgText).receipts[0];
+  assert.deepEqual([receipt.state, receipt.note], ['done', '已读，无需回复']);
+  assert.deepEqual(hub.inbox(a.row).unanswered.map((u) => u.seq), [mention.seq]);
+
+  // 在同一任务下回复了别人（@负责人）不算回复乙；@乙 回复后才结清
+  hub.comment({ kind: 'agent', agent: a.row }, t.id, '@负责人 清单已定稿');
+  assert.deepEqual(hub.inbox(a.row).unanswered.map((u) => u.seq), [mention.seq]);
+  hub.comment({ kind: 'agent', agent: a.row }, t.id, '@乙 我接手 command.rs');
+  assert.deepEqual(hub.inbox(a.row).unanswered, []);
+  assert.equal(hub.getTask(t.id).comments[0].receipts[0].state, 'done');
+});
+
+test('标为已读：还没读到（没打回执）的 @ 也能直接标成已处理', () => {
+  const { hub, p1, join } = setup();
+  const a = join('甲');
+  const b = join('乙');
+  const t = hub.createTask({ kind: 'owner' }, { project: p1.id, title: '网关', assignee: b.agent.id });
+  hub.comment({ kind: 'agent', agent: b.row }, t.id, '@甲 仅告知：接口已合入');
+  const seq = hub.inbox(a.row).needs_action[0].seq;
+  assert.equal(hub.markSeen(a.row, { seqs: [seq] }).updated, 1);
+  const r = hub.getTask(t.id).comments[0].receipts[0];
+  assert.deepEqual([r.state, r.note], ['done', '已读，无需回复']);
+  hub.ack(a.row, seq);
+  assert.deepEqual(hub.inbox(a.row, { mark: true }).unanswered, []);
 });
 
 test('回执：运行失败标 ⚠️ 并带原因；值守进程退出时还在处理中的标 ⏸', () => {

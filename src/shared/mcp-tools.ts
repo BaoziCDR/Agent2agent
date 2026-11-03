@@ -459,5 +459,28 @@ export function createHubMcpServer(call: HubCall, opts: ToolOptions = {}): McpSe
     async (body) => reply(call('POST', '/api/v1/messages?format=md', body)),
   );
 
+  server.registerTool(
+    'hub_seen',
+    {
+      title: tr('标为已读'),
+      description: tr('只是告知、不用回复的 @ 和私信标为已读，不再出现在「还没回复的 @ 和私信」里。需要你回答或行动的不要用它，去回复。'),
+      inputSchema: { seqs: z.array(z.number().int()).min(1).describe(tr('事件号，收件箱里 # 后面的数字')) },
+    },
+    async ({ seqs }) => {
+      const r = await call('POST', '/api/v1/me/seen', { seqs });
+      if (!r.ok) return { content: [{ type: 'text' as const, text: r.text }], isError: true };
+      let updated = 0;
+      try {
+        updated = Number((JSON.parse(r.text) as { updated?: number }).updated ?? 0);
+      } catch {
+        // 不是 JSON 就当没标上
+      }
+      const text = updated
+        ? tr('已标为已读 {n} 条。', { n: updated })
+        : tr('没有可标记的事项：事件号不是发给你的 @ 或私信，或者已经处理过了。');
+      return { content: [{ type: 'text' as const, text }] };
+    },
+  );
+
   return server;
 }
