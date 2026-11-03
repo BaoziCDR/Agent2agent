@@ -11,6 +11,28 @@ const artifactName = (name: string) => (name === '交付说明' ? tr('交付说�
 const time = (iso: string) => iso.slice(0, 16).replace('T', ' ');
 const fileSize = (n: number) => (n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`);
 
+const actorTag = (actor: string) => (actor === 'owner' ? tr('〔负责人〕') : `〔${actor}〕`);
+
+/** 全文最多附这么多字，再长的去任务里看 */
+const FULL_TEXT_MAX = 1500;
+
+/**
+ * 事件摘要只截了开头一段（约 60 字）。原文更长时把全文引用在下面，免得只看预览就误判成普通通知。
+ * 摘要已经是全文时返回空串。
+ */
+export function quoteFull(text: string, task: string | null): string {
+  const s = text.trim();
+  if (s.replace(/\s+/g, ' ').length <= 60) return '';
+  const cut = s.length > FULL_TEXT_MAX;
+  const body = (cut ? s.slice(0, FULL_TEXT_MAX) : s)
+    .split('\n')
+    .map((l) => `  > ${l}`.trimEnd())
+    .join('\n');
+  if (!cut) return '\n' + body;
+  const n = s.length - FULL_TEXT_MAX;
+  return '\n' + body + '\n' + (task ? tr('  > ……（还有 {n} 字，到任务 {task} 的讨论里看全文）', { n, task }) : tr('  > ……（还有 {n} 字）', { n }));
+}
+
 function taskLine(t: TaskView) {
   const who = t.assignee ? tr(' · {assignee_name}（{assignee}）', { assignee_name: t.assignee_name, assignee: t.assignee }) : '';
   const progress = ['working', 'input_required'].includes(t.status) ? ` · ${t.progress}%` : '';
@@ -215,11 +237,22 @@ export function renderInbox(r: InboxResult) {
   for (const t of r.pending_assignments) actions.push(tr('- 指派待接受：**{id}** {title}（{priority}）', { id: t.id, title: t.title, priority: t.priority }));
   for (const e of r.needs_action) {
     if (e.type === 'task.assigned') continue; // 已在上面按任务列出
-    const tag = e.actor === 'owner' ? tr('〔负责人〕') : `〔${e.actor}〕`;
-    actions.push(`- ${tag} ${summaryOf(e)}`);
+    const text = ['mention', 'message.direct', 'comment.created'].includes(e.type) ? String(e.data.text ?? e.data.body ?? '') : '';
+    actions.push(`- ${actorTag(e.actor)} #${e.seq} ${summaryOf(e)}${quoteFull(text, e.task)}`);
   }
   lines.push(actions.length ? actions.join('\n') : tr('（无）'));
   lines.push('');
+
+  if (r.unanswered?.length) {
+    lines.push(tr('## 还没回复的 @ 和私信'));
+    lines.push('');
+    lines.push(
+      tr('以下是之前读到的，你还没回复，也没标为已读。需要你回答或行动的，现在回复；只是告知、不用回的，用 `ahub seen <事件号>`（MCP 用 hub_seen）标为已读，不要回「收到」。'),
+    );
+    lines.push('');
+    for (const u of r.unanswered) lines.push(`- ${actorTag(u.actor)} #${u.seq} ${time(u.at)} ${summaryOf(u)}${quoteFull(u.text, u.task)}`);
+    lines.push('');
+  }
 
   lines.push(tr('## 你手上的任务'));
   lines.push('');

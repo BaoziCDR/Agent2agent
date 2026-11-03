@@ -361,12 +361,26 @@ export interface InboxResult {
   more: boolean;
   events: HubEvent[];
   needs_action: HubEvent[];
+  /** 以前读到、但还没回复也没标为已读的 @ 和私信（回执停在「处理中」）；值守进程唤起的这一轮里不列 */
+  unanswered: UnansweredItem[];
   my_tasks: TaskView[];
   pending_assignments: TaskView[];
   claimable: (TaskView & { fit: ClaimFit })[];
   projects: { id: string; name: string }[];
   /** 长轮询等待落空时给 agent 的提示；skipped 表示这次没有真正等待就直接返回了 */
   wait?: { skipped: boolean; hint: string };
+}
+
+/** 读过却还没处理的 @ 或私信：事件号、谁发的、在哪个任务下，以及全文 */
+export interface UnansweredItem {
+  seq: number;
+  at: string;
+  actor: string;
+  type: string;
+  task: string | null;
+  summary: string;
+  summary_en?: string;
+  text: string;
 }
 
 /** 状态的中文名；归档的带上归档方式，如「已归档（自动）」 */
@@ -1094,11 +1108,48 @@ export class Hub {
       more,
       events,
       needs_action: needs,
+      unanswered: this.activity.get(agent.id)?.state === 'working' ? [] : this.unansweredFor(agent, since),
       my_tasks: mine.filter((t) => t.status !== 'assigned').map((t) => this.taskView(t)),
       pending_assignments: mine.filter((t) => t.status === 'assigned').map((t) => this.taskView(t)),
       claimable: this.claimableFor(agent, projectFilter).map((t) => ({ ...this.taskView(t), fit: this.claimFit(t, agent) })),
       projects: this.agentProjects(agent.id).map((p) => ({ id: p.id, name: p.name })),
     };
+  }
+
+  /**
+   * 交互式会话读到过（since 及以前）、回执还停在「处理中」的评论和私信：既没在任务下回复对方、没回私信，
+   * 也没用 ahub seen 标为已读。只取最近 10 条，按事件号排序。
+   */
+  private unansweredFor(agent: AgentRow, since: number): UnansweredItem[] {
+    const me = agentCode(agent.id);
+    const rows = this.db
+      .prepare(
+        `SELECT kind, target_id FROM receipts WHERE agent_id = ? AND state = 'working' AND kind IN ('comment', 'message')
+         ORDER BY created_at DESC LIMIT 10`,
+      )
+      .all(agent.id) as { kind: ReceiptKind; target_id: number }[];
+    const out: UnansweredItem[] = [];
+    for (const r of rows) {
+      const sql =
+        r.kind === 'comment'
+          ? "SELECT * FROM events WHERE type IN ('mention', 'comment.created') AND json_extract(data, '$.comment_id') = ? AND seq <= ? ORDER BY seq"
+          : "SELECT * FROM events WHERE type = 'message.direct' AND json_extract(data, '$.message_id') = ? AND seq <= ? ORDER BY seq";
+      const e = (this.db.prepare(sql).all(r.target_id, since) as unknown as EventRow[])
+        .map((row) => this.toEvent(row))
+        .find((x) => this.canSee(agent, x) && this.needsAction(x, me));
+      if (!e) continue;
+      out.push({
+        seq: e.seq,
+        at: e.at,
+        actor: e.actor,
+        type: e.type,
+        task: e.task,
+        summary: e.summary,
+        summary_en: e.summary_en,
+        text: String(e.data.text ?? e.data.body ?? ''),
+      });
+    }
+    return out.sort((a, b) => a.seq - b.seq);
   }
 
   private needsAction(e: HubEvent, me: string): boolean {
@@ -2924,10 +2975,11 @@ export class Hub {
     if (author === 'owner') this.db.prepare(`UPDATE events SET owner_read = 1 WHERE type = 'mention' AND audience = '[]' AND task_id = ?`).run(t.id);
     const assignee = t.assignee_id === null ? null : agentCode(t.assignee_id);
     const commentId = Number(r.lastInsertRowid);
-    // agent 在任务下回复了，它在这个任务里接手的评论和指派都算处理完
-    const self = parseId(author, 'A');
-    if (self !== null) this.settleOwn(self, { task: t.id, comments: true });
     const targets = [...new Set(this.mentionTargets(text, t.project_id))].filter((x) => x !== author);
+    // agent 在任务下回复了，它在这个任务里接手的指派算处理完；评论只结清回复对象（@ 到的人）发的那几条，
+    // 没 @ 任何人时当作回复整个讨论，全部结清。没回到的那条要么另行回复，要么 ahub seen 标为已读
+    const self = parseId(author, 'A');
+    if (self !== null) this.settleOwn(self, { task: t.id, comments: true, authors: targets.length ? targets : undefined });
     this.emit('comment.created', author, {
       task: t,
       // mentions：评论 @ 了哪些 agent。@ 了别人、没 @ 任务负责的 agent 时，不唤醒它（它在动态里照样看得到）
@@ -3004,6 +3056,41 @@ export class Hub {
     return { ok: true, updated };
   }
 
+  /**
+   * agent 看过、判断不需要回复的 @ 和私信（只是告知）：直接标成已处理，备注「已读，无需回复」。
+   * 只认发给它、需要它处理的事件；已经处理完的不动。返回标记的条数。
+   */
+  markSeen(agent: AgentRow, input: { seqs?: number[] }) {
+    const me = agentCode(agent.id);
+    const seqs = (input.seqs ?? []).filter((n) => Number.isInteger(n) && n > 0).slice(0, 200);
+    if (!seqs.length) throw invalid(tr('请给出要标为已读的事件号'));
+    const rows = this.db
+      .prepare(`SELECT * FROM events WHERE seq IN (${seqs.map(() => '?').join(',')})`)
+      .all(...seqs) as unknown as EventRow[];
+    const targets = rows
+      .map((row) => this.toEvent(row))
+      .filter((e) => ['mention', 'message.direct', 'comment.created'].includes(e.type) && this.canSee(agent, e) && this.needsAction(e, me))
+      .flatMap((e) => this.receiptTargets(e));
+    const note = tr('已读，无需回复');
+    const updated = this.write(() => {
+      const at = this.iso();
+      const changed: { kind: ReceiptKind; id: number }[] = [];
+      for (const t of targets) {
+        const r = this.db
+          .prepare(
+            `INSERT INTO receipts (kind, target_id, agent_id, state, note, created_at, updated_at) VALUES (?, ?, ?, 'done', ?, ?, ?)
+             ON CONFLICT (kind, target_id, agent_id) DO UPDATE SET state = 'done', note = excluded.note, updated_at = excluded.updated_at
+             WHERE receipts.state = 'working'`,
+          )
+          .run(t.kind, t.id, agent.id, note, at, at);
+        if (r.changes) changed.push(t);
+      }
+      this.receiptEvent(agent, 'done', changed);
+      return changed.length;
+    });
+    return { ok: true, updated };
+  }
+
   /** 写入回执并通知控制台；working 新建或重新打开，其他状态只结束「处理中」的。返回改动的条数。 */
   private applyReceipts(agent: AgentRow, targets: { kind: ReceiptKind; id: number }[], state: ReceiptState, note = ''): number {
     const at = this.iso();
@@ -3035,17 +3122,19 @@ export class Hub {
   private settleReceipts(
     agent: AgentRow,
     state: ReceiptState,
-    scope: { note?: string; task?: number; comments?: boolean; replyTo?: string } = {},
+    scope: { note?: string; task?: number; comments?: boolean; authors?: string[]; replyTo?: string } = {},
   ): number {
     const where = ["agent_id = ?", "state = 'working'"];
     const params: (string | number)[] = [agent.id];
     if (scope.task !== undefined) {
+      const authors = scope.authors ?? [];
+      const byAuthor = authors.length ? ` AND author IN (${authors.map(() => '?').join(',')})` : '';
       where.push(
         scope.comments
-          ? "((kind = 'task' AND target_id = ?) OR (kind = 'comment' AND target_id IN (SELECT id FROM comments WHERE task_id = ?)))"
+          ? `((kind = 'task' AND target_id = ?) OR (kind = 'comment' AND target_id IN (SELECT id FROM comments WHERE task_id = ?${byAuthor})))`
           : "kind = 'task' AND target_id = ?",
       );
-      params.push(scope.task, ...(scope.comments ? [scope.task] : []));
+      params.push(scope.task, ...(scope.comments ? [scope.task, ...authors] : []));
     } else if (scope.replyTo !== undefined) {
       where.push("kind = 'message' AND target_id IN (SELECT id FROM messages WHERE sender = ? AND recipient = ?)");
       params.push(scope.replyTo, agentCode(agent.id));
@@ -3066,7 +3155,7 @@ export class Hub {
    * agent 自己回复、接受或提交时顺手把相关回执标成已处理。
    * 值守进程唤起的这一轮还没跑完时不动，等跑完再由 ahub run 统一标记，免得回了一句「收到」就显示处理完。
    */
-  private settleOwn(agentId: number, scope: { task?: number; comments?: boolean; replyTo?: string }) {
+  private settleOwn(agentId: number, scope: { task?: number; comments?: boolean; authors?: string[]; replyTo?: string }) {
     if (this.activity.get(agentId)?.state === 'working') return;
     const agent = this.db.prepare('SELECT * FROM agents WHERE id = ?').get(agentId) as unknown as AgentRow | undefined;
     if (agent) this.settleReceipts(agent, 'done', scope);

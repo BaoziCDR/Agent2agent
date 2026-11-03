@@ -206,3 +206,39 @@ test('ahub wait：返回的收件箱里有 @ 或私信时，提醒先回复、�
   assert.equal(r.code, 0, r.stderr);
   assert.match(r.stdout, /接口先用 REST[\s\S]*【回复提醒】[\s\S]*不要用 `ahub wait` 阻塞/);
 });
+
+test('未回复提醒：@ 带全文；读过没回的在 progress、wait 里继续提醒，ahub seen 标为已读后消失', async (t) => {
+  const { url, call, run } = await setup(t);
+  const created = await call('POST', '/api/v1/admin/agents', { project: 'P-1', name: '后端' });
+  assert.equal((await run(['join', '--hub', url, '--code', created.code])).code, 0);
+  const task = await call('POST', '/api/v1/admin/tasks', { project: 'P-1', title: '写接口', assignee: 'A-2' });
+  await run(['accept', task.id]);
+  await run(['inbox']);
+
+  const long = '@A-2 新契约已读，会合并后对齐，真实矩阵继续等待新清单确认，当前工具清单快照已完整贴出。你现在若有空可分担 command.rs 的执行器，请明确回复';
+  await call('POST', `/api/v1/admin/tasks/${task.id}/comments`, { text: long });
+  const w = await run(['wait', '--resident']);
+  assert.equal(w.code, 0, w.stderr);
+  // 摘要后面引用了全文，提醒里给出标为已读的办法
+  assert.match(w.stdout, /\n  > @A-2 新契约已读[^\n]*分担 command\.rs 的执行器，请明确回复/);
+  assert.match(w.stdout, /【回复提醒】[\s\S]*ahub seen/);
+  const seq = /#(\d+) /.exec(w.stdout)[1];
+
+  // 没回复也没标已读：progress 末尾提醒
+  const p = await run(['progress', task.id, '10', '开工']);
+  assert.match(p.stdout, new RegExp(`【未回复提醒】[\\s\\S]*#${seq} `));
+  assert.doesNotMatch(p.stdout, /【未读提醒】/);
+
+  // 下一次 wait 被别的事件叫醒时，未回复的那条带全文再列一遍
+  await call('POST', '/api/v1/admin/messages', { to: 'A-2', text: '顺便看下文档' });
+  const w2 = await run(['wait', '--resident']);
+  assert.match(w2.stdout, /## 还没回复的 @ 和私信[\s\S]*分担 command\.rs/);
+  const msgSeq = [...w2.stdout.matchAll(/#(\d+) /g)].map((m) => m[1]).find((x) => x !== seq);
+
+  assert.match((await run(['seen', `#${seq}`, msgSeq])).stdout, /已标为已读 2 条/);
+  assert.match((await run(['seen', seq])).stdout, /没有可标记的事项/);
+  assert.notEqual((await run(['seen', 'abc'])).code, 0);
+  assert.doesNotMatch((await run(['progress', task.id, '20', '继续'])).stdout, /未回复提醒/);
+  const detail = await call('GET', `/api/v1/admin/tasks/${task.id}`);
+  assert.deepEqual(detail.comments.at(-1).receipts.map((r) => [r.state, r.note]), [['done', '已读，无需回复']]);
+});
