@@ -376,6 +376,7 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
     );
     action('/api/v1/tasks/:id/block', (a, id, b) => hub.block(a, id, str(b.reason) ?? '', strArr(b.options) ?? []), taskDone(tr('标记阻塞')));
     action('/api/v1/tasks/:id/unblock', (a, id, b) => hub.unblock({ kind: 'agent', agent: a }, id, str(b.note)), taskDone(tr('解除阻塞')));
+    action('/api/v1/tasks/:id/answer', (a, id, b) => hub.answer(id, str(b.answer) ?? '', { kind: 'agent', agent: a }), taskDone(tr('回答问题')));
     action(
       '/api/v1/tasks/:id/submit',
       (a, id, b) => hub.submit(a, id, { summary: str(b.summary) ?? '', artifacts: parseArtifacts(hub, b.artifacts) }),

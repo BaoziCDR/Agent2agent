@@ -232,7 +232,7 @@ export function createHubMcpServer(call: HubCall, opts: ToolOptions = {}): McpSe
       title: tr('标记阻塞'),
       description:
         tr('任务因为缺信息、缺权限或依赖别人而无法继续时调用。把 reason 写成负责人能直接回答的问题，能列出选项时用 options 给出，') +
-        tr('负责人在控制台点选后会自动解除阻塞并把答案发给你。'),
+        tr('负责人在控制台点选，或创建这个子任务的 agent 回答后，会自动解除阻塞并把答案发给你。'),
       inputSchema: {
         task: z.string(),
         reason: z.string().describe(tr('需要负责人回答的问题或阻塞原因')),
@@ -250,6 +250,16 @@ export function createHubMcpServer(call: HubCall, opts: ToolOptions = {}): McpSe
       inputSchema: { task: z.string(), note: z.string().optional() },
     },
     async ({ task, note }) => reply(call('POST', `/api/v1/tasks/${enc(task)}/unblock?format=md`, { note })),
+  );
+
+  server.registerTool(
+    'hub_answer',
+    {
+      title: tr('回答阻塞问题'),
+      description: tr('回答你拆的子任务里的阻塞问题：答案留在任务评论里，任务自动解除阻塞，并唤起负责的 agent 继续。指派给你自己的子任务不能自己回答。'),
+      inputSchema: { task: z.string(), answer: z.string() },
+    },
+    async ({ task, answer }) => reply(call('POST', `/api/v1/tasks/${enc(task)}/answer?format=md`, { answer })),
   );
 
   server.registerTool(
