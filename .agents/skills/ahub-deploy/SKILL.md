@@ -106,7 +106,7 @@ docker compose up -d
 > 第 3 步只验证迁移能跑通；要逐表对比行数，就在宿主机上 checkout 同一个 tag、`npm ci && npm run build:server` 后用 `trial-migrate.mjs`。
 > 容器内路径、`.env` 变量以仓库里的 `Dockerfile` 和 `docker-compose.yml` 为准，不一致时以它们为准并更新本节。
 
-查负责人令牌：`docker compose exec ahub cat /data/owner-token.txt`。重置：`docker compose stop ahub && docker compose run --rm ahub serve --reset-owner-token`，看到新令牌后 Ctrl+C，再 `docker compose up -d`（源码部署用 `npm start -- --reset-owner-token`）。设了 `AHUB_OWNER_TOKEN` 时以它为准，重置前先改掉或清空它。
+查负责人令牌：`docker compose exec ahub cat /data/owner-token.txt`。重置：`docker compose stop ahub && docker compose run --rm ahub serve --reset-owner-token`，看到启动信息后 Ctrl+C，再 `docker compose up -d`（源码部署用 `npm start -- --reset-owner-token`），新令牌写在 `owner-token.txt`，不会打印。设了 `AHUB_OWNER_TOKEN` 时以它为准，重置前先改掉或清空它。
 
 想用本地代码构建镜像：把 compose 里的 `image:` 换成 `build: .`（文件里有注释），`docker compose up -d --build`。
 

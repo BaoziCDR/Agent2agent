@@ -74,7 +74,7 @@ npm install          # 会自动构建服务端和控制台
 npm start            # 等同于 node dist/cli/ahub.js serve
 ```
 
-启动后终端会打印控制台地址和**负责人令牌**（同时保存在 `.ahub-data/owner-token.txt`）。
+启动后终端会打印控制台地址；**负责人令牌**保存在 `.ahub-data/owner-token.txt`，不会打印出来。
 
 ## 配置项
 
@@ -133,14 +133,21 @@ docker compose start ahub
 
 ## 负责人令牌
 
-- 首次启动时生成，打印在日志里，并保存在数据目录的 `owner-token.txt`：`docker compose exec ahub cat /data/owner-token.txt`。
+- 首次启动时生成，保存在数据目录的 `owner-token.txt`，不会打印到日志：`docker compose exec ahub cat /data/owner-token.txt`。
 - 忘记或泄露时重置：
 
   ```bash
   docker compose stop ahub
-  docker compose run --rm ahub serve --reset-owner-token   # 打印出新令牌后按 Ctrl+C
+  docker compose run --rm ahub serve --reset-owner-token   # 看到启动信息后按 Ctrl+C
   docker compose up -d
+  docker compose exec ahub cat /data/owner-token.txt       # 新令牌
   ```
 
-  源码运行时：`npm start -- --reset-owner-token`。
+  源码运行时：`npm start -- --reset-owner-token`，新令牌同样写进 `owner-token.txt`。
 - 也可以在 `.env` 里用 `AHUB_OWNER_TOKEN` 指定一个固定令牌，每次启动生效。
+
+## 令牌与日志
+
+- 所有接口的令牌和授权 ID 都只从请求头 `Authorization: Bearer` 读取，URL 里的 `?token=` 不再有效。以前版本的控制台会把负责人令牌放进事件流的 URL，用过的话，反向代理的访问日志里可能还留着旧令牌：升级后重置一次令牌，旧日志就没有用了。升级后已经打开的控制台页面要刷新一次。
+- `hub.db` 里明文保存身份码和通知渠道的密钥，备份文件也一样，都要当作密钥保管。
+- 身份码用 `ahub join --save-only` 保存到本机（文件权限 600）后，`ahub run`、`ahub mcp` 用 `--hub <地址> --identity <编号>` 指定身份，不用再写身份码。仍然用 `--code` 时，进程启动后会把它从进程列表里抹掉，但它还是会留在 shell 历史里。

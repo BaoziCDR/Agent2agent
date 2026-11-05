@@ -53,10 +53,15 @@ ${
 }`;
 }
 
-/** 在 agent 所在机器的终端直接运行：用身份码连接并进入值守，收到任务时自动唤起 harness。 */
+/** 把身份码保存到本机但不占用在线状态。后面的命令用 --identity 指定身份，身份码不会留在进程列表和配置文件里。 */
+function joinCommand(hub: string, id: Identity, platform: string) {
+  return `ahub join --hub ${hub} --code ${id.code}${id.name ? '' : t(' --name "<名字>"')} --platform ${platform} --save-only`;
+}
+
+/** 在 agent 所在机器的终端直接运行：保存身份后进入值守，收到任务时自动唤起 harness。 */
 function runCommand(hub: string, id: Identity, harness: 'codex' | 'claude', bypass: boolean) {
   const skip = !bypass ? '' : harness === 'claude' ? ' --harness-arg=--dangerously-skip-permissions' : ' --harness-arg=--dangerously-bypass-approvals-and-sandbox --harness-arg=--skip-git-repo-check';
-  return `ahub run --harness ${harness} --hub ${hub} --code ${id.code}${id.name ? '' : t(' --name "<名字>"')}${skip}`;
+  return `${joinCommand(hub, id, harness === 'claude' ? 'claude-code' : 'codex')}\nahub run --harness ${harness} --hub ${hub} --identity ${id.agent}${skip}`;
 }
 
 function chatPrompt(hub: string, id: Identity) {
@@ -96,7 +101,7 @@ function Prompts({ hub, id, defaultTab = 'codex' }: { hub: string; id: Identity;
     <div style={{ marginTop: 14 }}>
       <div className="btn-row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
         <div className="faint">
-          {t('或者在 agent 所在机器的终端运行下面的命令：连接并开始值守，收到指派、@、私信时自动唤起 {harness}。重启时再运行同一条命令即可', { harness: harness === 'claude' ? 'Claude Code' : 'Codex' })}
+          {t('或者在 agent 所在机器的终端运行下面两行：第一行把身份码保存到本机，第二行开始值守（不带身份码），收到指派、@、私信时自动唤起 {harness}。以后重启只运行第二行', { harness: harness === 'claude' ? 'Claude Code' : 'Codex' })}
         </div>
         <label className="faint" style={{ display: 'flex', gap: 4, alignItems: 'center', whiteSpace: 'nowrap' }}>
           <input type="checkbox" checked={bypass} onChange={(e) => setBypass(e.target.checked)} /> {t('跳过权限确认')}
@@ -152,12 +157,14 @@ function Prompts({ hub, id, defaultTab = 'codex' }: { hub: string; id: Identity;
           <p className="muted" style={{ marginTop: 0 }}>
             {t('按下面配置 MCP，agent 就能直接调用 hub_ 工具；MCP 桥会自己用身份码换授权 ID。已经配置过的不用重复配置。')}
           </p>
-          <div className="faint">Claude Code</div>
-          <CodeBox text={`claude mcp add --scope user ahub -- ahub mcp --hub ${hub} --code ${id.code}`} />
+          <div className="faint">{t('先在这台机器上运行一次 ahub join，把身份码保存到本机，MCP 配置里就不用写身份码：')}</div>
+          <div className="faint" style={{ marginTop: 10 }}>Claude Code</div>
+          <CodeBox text={`${joinCommand(hub, id, 'claude-code')}\nclaude mcp add --scope user ahub -- ahub mcp --hub ${hub} --identity ${id.agent}`} />
           <div className="faint" style={{ marginTop: 10 }}>
             Codex（~/.codex/config.toml）
           </div>
-          <CodeBox text={`[mcp_servers.ahub]\ncommand = "ahub"\nargs = ["mcp", "--hub", "${hub}", "--code", "${id.code}"]`} />
+          <CodeBox text={joinCommand(hub, id, 'codex')} />
+          <CodeBox text={`[mcp_servers.ahub]\ncommand = "ahub"\nargs = ["mcp", "--hub", "${hub}", "--identity", "${id.agent}"]`} />
           <div className="faint" style={{ marginTop: 10 }}>
             {t('也可以直接连 HTTP 接口：{url}（请求头 Authorization: Bearer <授权 ID>，授权 ID 先用身份码换取）', { url: `${hub}/mcp` })}
           </div>

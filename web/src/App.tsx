@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { type Agent, ApiError, get, getToken, type HubEvent, type Project, setToken } from './api';
+import { openEventStream } from '../../src/shared/event-stream';
 import { Ctx, type HubCtx } from './ui';
 import { maybeNotify, notifyEnabled, notifySupported, setNotify } from './notify';
 import { Overview } from './pages/Overview';
@@ -82,7 +83,7 @@ function Login({ onLogin, onLang }: { onLogin: () => void; onLang: (code: string
           <LangSelect onLang={onLang} />
         </div>
         <p className="muted" style={{ marginTop: 0 }}>
-          {t('负责人令牌在 Hub 首次启动时打印在终端里，也保存在数据目录的 owner-token.txt。')}
+          {t('负责人令牌保存在 Hub 数据目录的 owner-token.txt（Docker 部署运行 docker compose exec ahub cat /data/owner-token.txt）。')}
         </p>
         <div className="field">
           <label htmlFor="token">{t('负责人令牌')}</label>
@@ -161,11 +162,8 @@ export function App({ onLang }: { onLang: (code: string | null) => void }) {
   useEffect(() => {
     if (!authed) return;
     let timer = 0;
-    const es = new EventSource(`/api/v1/admin/stream?token=${encodeURIComponent(getToken() ?? '')}`);
-    es.onopen = () => setConnected(true);
-    es.onerror = () => setConnected(false);
-    const onEvent = (msg: MessageEvent) => {
-      const e = JSON.parse(msg.data) as HubEvent;
+    const onEvent = (data: string) => {
+      const e = JSON.parse(data) as HubEvent;
       // 回执只用来刷新评论和私信下的标签，不进动态列表
       if (e.type !== 'receipt.updated') setEvents((list) => [e, ...list].slice(0, 300));
       maybeNotify(e, () => {
@@ -174,17 +172,25 @@ export function App({ onLang }: { onLang: (code: string | null) => void }) {
       window.clearTimeout(timer);
       timer = window.setTimeout(() => setTick((t) => t + 1), 300);
     };
-    const types = [
+    const types = new Set([
       'project.created', 'project.updated', 'agent.joined', 'agent.updated', 'task.created', 'task.updated', 'task.assigned',
       'task.claimed', 'task.status_changed', 'task.progress', 'task.lease_expiring', 'task.due_soon', 'task.overdue', 'task.unlocked', 'task.stalled', 'task.passed', 'task.unclaimed', 'task.deliverable', 'comment.created', 'artifact.updated',
       'message.direct', 'mention', 'owner.broadcast', 'agent.online', 'agent.offline', 'agent.activity', 'agent.control',
       'receipt.updated',
-    ];
-    for (const t of types) es.addEventListener(t, onEvent);
+    ]);
+    const closeStream = openEventStream({
+      url: '/api/v1/admin/stream',
+      headers: () => ({ authorization: `Bearer ${getToken() ?? ''}` }),
+      onOpen: () => setConnected(true),
+      onError: () => setConnected(false),
+      onEvent: (msg) => {
+        if (types.has(msg.event)) onEvent(msg.data);
+      },
+    });
     // 在线状态依赖时间推移，定期刷新
     const interval = window.setInterval(() => setTick((t) => t + 1), 60_000);
     return () => {
-      es.close();
+      closeStream();
       window.clearInterval(interval);
       window.clearTimeout(timer);
     };

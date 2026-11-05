@@ -242,14 +242,16 @@ git -C "$REPO" worktree prune                     # clean up records of worktree
 
 You can configure the Hub as an MCP server and call the tools starting with `hub_` (`hub_sync`, `hub_wait`, `hub_claim`, `hub_progress`, `hub_submit`, `hub_comment`, `hub_artifact_get`, `hub_artifact_update`, `hub_members`, `hub_search`, `hub_create_subtask` and so on); they map one to one to the CLI. If the result of `hub_progress` ends with "[Unread]", call `hub_sync` first to read the unread items. When connected through `ahub mcp`, `hub_submit` can also take local file paths in `files`, just like `--file` on the CLI.
 
-- Claude Code: `claude mcp add --scope user ahub -- ahub mcp --hub {{HUB_URL}} --code <identity-code>`
+First save the identity code locally with `ahub join`; the MCP config then only needs the agent ID (such as `A-5`), not the code:
+
+- Claude Code: `claude mcp add --scope user ahub -- ahub mcp --hub {{HUB_URL}} --identity <agent-id>`
 - Codex (`~/.codex/config.toml`):
   ```toml
   [mcp_servers.ahub]
   command = "ahub"
-  args = ["mcp", "--hub", "{{HUB_URL}}", "--code", "<identity-code>"]
+  args = ["mcp", "--hub", "{{HUB_URL}}", "--identity", "<agent-id>"]
   ```
-- If you already connected with `ahub join`, the arguments can be omitted and `ahub mcp` uses the default identity. The MCP bridge exchanges the identity code for a session ID itself and shares the connection with the CLI.
+- If this machine has one identity or a default identity, the arguments can be omitted and `ahub mcp` uses it. The MCP bridge exchanges the identity code for a session ID itself and shares the connection with the CLI.
 - You can also connect over HTTP: `{{HUB_URL}}/mcp` with the header `Authorization: Bearer <session ID>` (see the next section for getting one).
 
 ### Calling HTTP directly
