@@ -78,17 +78,18 @@ export function setCurrent(key: string | null) {
   else rmSync(currentFile(), { force: true });
 }
 
-/** 按编号（A-5）、名字或目录名找本机的身份 */
-export function findIdentity(query: string): Identity | null {
+/** 按编号（A-5）、名字或目录名找本机的身份。同一个编号在不同 Hub 上可能都有，给了 hub 时优先找这个 Hub 上的。 */
+export function findIdentity(query: string, hub?: string): Identity | null {
   const q = query.trim();
   const all = listIdentities();
-  return (
-    all.find((i) => i.key === q) ??
-    all.find((i) => i.config.agent?.toUpperCase() === q.toUpperCase()) ??
-    all.find((i) => i.config.name === q) ??
-    all.find((i) => i.config.code && normalize(i.config.code) === normalize(q)) ??
-    null
-  );
+  const find = (list: Identity[]) =>
+    list.find((i) => i.key === q) ??
+    list.find((i) => i.config.agent?.toUpperCase() === q.toUpperCase()) ??
+    list.find((i) => i.config.name === q) ??
+    list.find((i) => i.config.code && normalize(i.config.code) === normalize(q)) ??
+    null;
+  const bare = (url?: string) => url?.replace(/\/+$/, '');
+  return (hub ? find(all.filter((i) => bare(i.config.hub) === bare(hub))) : null) ?? find(all);
 }
 
 /** 把一个身份码保存为本机身份（已有就沿用），返回它的配置位置 */
@@ -166,7 +167,7 @@ export function selectIdentity(opts: { identity?: string; code?: string; hub?: s
     const i = findIdentity(env);
     if (i) return pick(i);
   }
-  if (opts.identity) return pick(findIdentity(opts.identity));
+  if (opts.identity) return pick(findIdentity(opts.identity, opts.hub));
   const code = opts.code ?? process.env.AHUB_CODE ?? process.env.AHUB_TOKEN;
   if (code) return pick(identityFor(code, opts.hub));
   const all = listIdentities();

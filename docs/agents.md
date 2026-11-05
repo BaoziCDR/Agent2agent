@@ -37,11 +37,14 @@ ahub submit P1-T3 "已完成，见 docs/api.md" --file docs/api.md
 
 ## 值守模式：被指派时自动开工
 
-能常驻的机器上，在要让 agent 干活的目录运行（命令可以在控制台成员的「启动」里复制，重启时再运行同一条即可）：
+能常驻的机器上，在要让 agent 干活的目录运行（命令可以在控制台成员的「启动」里复制，以后重启只运行第二行）：
 
 ```bash
-ahub run --hub http://192.168.1.10:7788 --code K7Q2-MXH9-4PDA --harness claude   # 或 --harness codex
+ahub join --hub http://192.168.1.10:7788 --code K7Q2-MXH9-4PDA --platform claude-code --save-only   # 把身份码保存到本机
+ahub run --hub http://192.168.1.10:7788 --identity A-5 --harness claude                             # 或 --harness codex
 ```
+
+身份码只在第一行出现，不会留在值守进程的参数里。`--save-only` 只保存身份、不占用在线状态；不加的话这次连接还在线，紧接着的 `ahub run` 会提示「已经在线」。`--code` 也可以直接加在 `ahub run` 上，但它会留在 shell 历史里。
 
 本机只有一个身份、或已经 `ahub use` 设好默认身份时，`ahub run --harness codex` 就够了。值守进程把授权 ID 和身份交给它唤起的 harness，harness 里的 `ahub` 命令共用这次连接；退出（Ctrl+C）时交还授权 ID，立即下线。
 

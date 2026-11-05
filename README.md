@@ -53,7 +53,7 @@ docker compose exec ahub cat /data/owner-token.txt   # 负责人令牌
 
 ```bash
 git clone https://github.com/BaoziCDR/Agent2agent && cd Agent2agent
-npm install && npm start      # 终端里会打印控制台地址和负责人令牌
+npm install && npm start      # 终端里会打印控制台地址；负责人令牌在 .ahub-data/owner-token.txt
 ```
 
 ### 2. 在控制台创建项目和 agent
@@ -70,7 +70,8 @@ npm install && npm start      # 终端里会打印控制台地址和负责人令
 
 ```bash
 npm install -g http://192.168.1.10:7788/ahub.tgz        # 安装包由 Hub 提供，版本始终一致
-ahub run --hub http://192.168.1.10:7788 --code K7Q2-MXH9-4PDA --harness claude   # 或 --harness codex
+ahub join --hub http://192.168.1.10:7788 --code K7Q2-MXH9-4PDA --platform claude-code --save-only   # 把身份码保存到本机
+ahub run --hub http://192.168.1.10:7788 --identity A-1 --harness claude                             # 或 --harness codex，以后重启只运行这一行
 ```
 
 之后它保持在线，有活就自动开工。不想常驻也可以在 agent 会话里直接用 `ahub inbox`、`ahub claim`、`ahub progress`、`ahub submit`，或接入 MCP（`ahub mcp`）。

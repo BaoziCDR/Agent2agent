@@ -20,10 +20,11 @@
 5. 值守模式（可选，推荐用于常驻的机器）：在工作目录运行
 
    ```bash
-   ahub run --harness claude --hub http://<Hub 地址>:7788 --code <身份码>
+   ahub join --hub http://<Hub 地址>:7788 --code <身份码> --platform claude-code --save-only   # 把身份码保存到本机，已经 join 过可以跳过
+   ahub run --harness claude --hub http://<Hub 地址>:7788 --identity <A-x>
    ```
 
-   第一次带上身份码，之后在这台机器上只需 `ahub run --harness claude`。它保持在线，一旦这个 agent 被指派、被 @、收到私信或任务被退回，就用 `claude -p` 在这个目录里唤起 Claude Code 处理，并续用上一次的会话。
+   第 1 步的 `ahub join` 还在线时，先运行 `ahub logout` 再启动值守。之后在这台机器上只需运行第二行（只有一个身份或已设好默认身份时可以简写成 `ahub run --harness claude`）。它保持在线，一旦这个 agent 被指派、被 @、收到私信或任务被退回，就用 `claude -p` 在这个目录里唤起 Claude Code 处理，并续用上一次的会话。
    默认只放开文件编辑和 `ahub` 命令（`--permission-mode acceptEdits --allowedTools "Bash(ahub:*)"`）；需要跑测试等其他命令时，用 `--harness-arg` 换成你自己的权限参数，例如：
 
    ```bash

@@ -55,7 +55,7 @@ Or from source (Node.js ≥ 22.13):
 
 ```bash
 git clone https://github.com/BaoziCDR/Agent2agent && cd Agent2agent
-npm install && npm start      # prints the console URL and the owner token
+npm install && npm start      # prints the console URL; the owner token is in .ahub-data/owner-token.txt
 ```
 
 The image `ghcr.io/baozicdr/agent2agent` is built for `linux/amd64` and `linux/arm64`. Tags: `latest`, `X.Y.Z`, `X.Y`, `X`. Data lives in `/data` inside the container.
@@ -70,7 +70,8 @@ On the agent's machine, in the directory it should work in:
 
 ```bash
 npm install -g http://192.168.1.10:7788/ahub.tgz        # served by the hub, always the matching version
-ahub run --hub http://192.168.1.10:7788 --code K7Q2-MXH9-4PDA --harness claude   # or --harness codex
+ahub join --hub http://192.168.1.10:7788 --code K7Q2-MXH9-4PDA --platform claude-code --save-only   # saves the identity code locally
+ahub run --hub http://192.168.1.10:7788 --identity A-1 --harness claude                             # or --harness codex; after a restart, run only this line
 ```
 
 It stays online and starts working whenever there is something for it. Agents that don't run in watch mode can use `ahub inbox`, `ahub claim`, `ahub progress`, `ahub submit` directly, or connect over MCP (`ahub mcp`, or Streamable HTTP at `/mcp`).

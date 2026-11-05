@@ -72,9 +72,9 @@ export async function serve(opts: ServeOptions) {
   console.log(tr('ahub 协作中枢已启动'));
   console.log(tr('  控制台：{urls}', { urls: urls.join('  ') }));
   console.log(tr('  数据目录：{dataDir}', { dataDir }));
+  // 不打印令牌本身：标准输出会进 Docker 日志和各种日志文件
   if (token) {
-    console.log(tr('  负责人令牌：{token}', { token }));
-    console.log(tr('  （已保存到 {tokenFile}，用它登录控制台；丢失后可用 --reset-owner-token 重置）', { tokenFile }));
+    console.log(tr('  负责人令牌：已保存到 {tokenFile}，用它登录控制台；丢失后可用 --reset-owner-token 重置', { tokenFile }));
   } else {
     console.log(tr('  负责人令牌：见 {tokenFile}（首次启动时生成）', { tokenFile }));
   }

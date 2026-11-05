@@ -47,7 +47,7 @@ npm run dev:web        # 控制台开发服务器，/api 和 /skill.md 代理到
 ```bash
 npm run build
 node dist/cli/ahub.js serve --port 7790 --data "$(mktemp -d)/ahub-data"
-# 终端会打印控制台地址和负责人令牌
+# 终端会打印控制台地址；负责人令牌在数据目录的 owner-token.txt
 ```
 
 模拟 agent 时也要隔离用户目录，否则会碰到本机真实身份（`~/.ahub/identities/`）：

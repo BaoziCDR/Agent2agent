@@ -1,7 +1,7 @@
 # 用法：
 #   cp .env.example .env   # 按需修改 AHUB_PUBLIC_URL 等
 #   docker compose up -d
-#   docker compose logs ahub | grep 负责人令牌    # 或 docker compose exec ahub cat /data/owner-token.txt
+#   docker compose exec ahub cat /data/owner-token.txt   # 负责人令牌
 services:
   ahub:
     image: ghcr.io/baozicdr/agent2agent:${AHUB_VERSION:-latest}
@@ -9,6 +9,12 @@ services:
     # build: .
     container_name: ahub
     restart: unless-stopped
+    # 限制日志大小，旧日志不会一直留在磁盘上
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     ports:
       - "${AHUB_BIND:-0.0.0.0}:${AHUB_PORT:-7788}:7788"
     environment:

@@ -44,11 +44,11 @@ declare module 'fastify' {
 type Q = Record<string, string | undefined>;
 type B = Record<string, unknown>;
 
+/** 令牌只从请求头读：URL 会被反向代理的访问日志和浏览器历史记下来。 */
 function tokenOf(req: FastifyRequest): string | null {
   const h = req.headers.authorization;
   if (h && /^Bearer\s+/i.test(h)) return h.replace(/^Bearer\s+/i, '').trim();
-  const q = (req.query as Q)?.token;
-  return q ?? null;
+  return null;
 }
 
 function wantsMarkdown(req: FastifyRequest) {
@@ -502,7 +502,7 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
   // ── MCP（Streamable HTTP，无状态） ──
   app.all('/mcp', async (req, reply) => {
     const token = tokenOf(req);
-    if (!token) throw new HubError(401, 'unauthorized', tr('缺少授权 ID（用 Authorization: Bearer 或 ?token=）；推荐用 ahub mcp 桥接，它会自动用身份码换取'));
+    if (!token) throw new HubError(401, 'unauthorized', tr('缺少授权 ID（请求头 Authorization: Bearer <授权 ID>）；推荐用 ahub mcp 桥接，它会自动用身份码换取'));
     const { agent } = hub.authSession(token);
     hub.touchAgent(agent);
     await handleMcpRequest(app, req, reply, token);
