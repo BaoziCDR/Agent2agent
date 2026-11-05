@@ -1180,8 +1180,8 @@ export class Hub {
       case 'task.overdue':
         return true;
       case 'task.status_changed':
-        // 你拆的子任务提交了，等你验收（指派给你自己的不算，由负责人验收）
-        if (e.data.to === 'review' && e.data.creator === me && e.data.assignee !== me) return true;
+        // 你拆的子任务提交了或阻塞了，等你验收或回答（指派给你自己的不算，由负责人处理）
+        if ((e.data.to === 'review' || e.data.to === 'input_required') && e.data.creator === me && e.data.assignee !== me) return true;
         // 被退回修改，或者别人（通常是负责人回答了问题）解除了你的阻塞
         return (
           e.data.assignee === me &&
@@ -2520,7 +2520,7 @@ export class Hub {
         to,
         ...(to === 'archived' ? { archive_kind: updated.archive_kind } : {}),
         assignee: assignee === null ? null : agentCode(assignee),
-        // agent 拆的子任务记下创建者：提交待验收时唤起它来验收
+        // agent 拆的子任务记下创建者：提交待验收或阻塞时唤起它来验收、回答
         ...(updated.parent_id !== null && updated.created_by !== 'owner' ? { creator: updated.created_by } : {}),
         ...extra.data,
       },
@@ -2750,18 +2750,19 @@ export class Hub {
     });
   }
 
-  /** 负责人回答阻塞提问：答案作为评论留在任务里，同时解除阻塞并唤起负责的 agent。 */
-  answer(code: string, answer: string): TaskView {
+  /** 回答阻塞提问（负责人，或创建这个子任务的 agent）：答案作为评论留在任务里，同时解除阻塞并唤起负责的 agent。 */
+  answer(code: string, answer: string, actor: Actor = { kind: 'owner' }): TaskView {
     const t = this.requireTask(code);
     if (t.status !== 'input_required') throw conflict(tr('{code} 没有处于阻塞状态', { code }));
+    const { by, who } = this.reviewer(actor, t, code, '回答');
     const text = answer?.trim();
     if (!text) throw invalid(tr('请填写回答'));
     return this.write(() => {
-      this.addComment('owner', t, tr('**回答**「{v}」：{text}', { v: excerpt(t.block_reason, 80), text }));
+      this.addComment(by, t, tr('**回答**「{v}」：{text}', { v: excerpt(t.block_reason, 80), text }));
       return this.taskView(
-        this.setStatus(this.taskById(t.id), 'owner', 'working', {
+        this.setStatus(this.taskById(t.id), by, 'working', {
           lease: this.assigneeLease(t),
-          summary: () => tr('负责人回答了 {code} 的问题：{text}', { code, text }),
+          summary: () => tr('{who}回答了 {code} 的问题：{text}', { who: who(), code, text }),
           data: { answer: text, question: t.block_reason },
         }),
       );
@@ -2835,10 +2836,10 @@ export class Hub {
   }
 
   /**
-   * 验收、退回、归档（原来的取消）通常由负责人做；agent 拆出来的子任务，创建它的 agent 也可以验收、退回，
-   * 在还没人开工（待领取、已指派）时归档。指派给自己的子任务不能自己验收。父任务最终仍由负责人验收。
+   * 验收、退回、回答阻塞提问、归档（原来的取消）通常由负责人做；agent 拆出来的子任务，创建它的 agent 也可以验收、退回、回答，
+   * 在还没人开工（待领取、已指派）时归档。指派给自己的子任务不能自己验收或回答。父任务最终仍由负责人验收。
    */
-  private reviewer(actor: Actor, t: TaskRow, code: string, what: '验收' | '退回' | '归档'): { by: string; who: () => string } {
+  private reviewer(actor: Actor, t: TaskRow, code: string, what: '验收' | '退回' | '回答' | '归档'): { by: string; who: () => string } {
     if (actor.kind === 'owner') return { by: 'owner', who: () => tr('负责人') };
     const me = agentCode(actor.agent.id);
     if (t.parent_id === null || t.created_by !== me) throw forbidden(tr('只有负责人或创建这个子任务的 agent 可以{what} {code}', { what: tr(what), code }));

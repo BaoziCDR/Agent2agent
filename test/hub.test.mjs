@@ -175,6 +175,55 @@ test('子任务：创建它的 agent 可以验收、退回，没人开工时可�
   assert.equal(hub.approve(s4.id).status, 'completed');
 });
 
+test('阻塞提问：创建子任务的 agent 被唤起并可以回答；别人和自问自答都不行', () => {
+  const { hub, p1, join } = setup();
+  const a = join('甲');
+  const b = join('乙');
+  const c = join('丙');
+  const parent = hub.createTask({ kind: 'owner' }, { project: p1.id, title: '父任务', assignee: a.agent.id });
+  hub.accept(a.row, parent.id);
+  const asA = { kind: 'agent', agent: a.row };
+  const sub = hub.createTask(asA, { parent: parent.id, title: '子', assignee: b.agent.id });
+  hub.accept(b.row, sub.id);
+  hub.inbox(a.row, { mark: true });
+  hub.inbox(b.row, { mark: true });
+
+  hub.block(b.row, sub.id, '用哪个数据库？', ['MySQL', 'PostgreSQL']);
+  // 阻塞时唤起创建者
+  assert.ok(hub.inbox(a.row).needs_action.some((e) => e.task === sub.id && e.data.to === 'input_required'));
+  assert.ok(!hub.inbox(c.row).needs_action.some((e) => e.task === sub.id));
+
+  // 既不是负责人也不是创建者，负责的 agent 也不能替创建者回答
+  assert.throws(() => hub.answer(sub.id, '随便', { kind: 'agent', agent: c.row }), /只有负责人或创建这个子任务的 agent 可以回答/);
+  assert.throws(() => hub.answer(sub.id, '随便', { kind: 'agent', agent: b.row }), /只有负责人或创建这个子任务的 agent 可以回答/);
+  assert.throws(() => hub.answer(sub.id, '   ', asA), /请填写回答/);
+
+  const after = hub.answer(sub.id, 'PostgreSQL', asA);
+  assert.equal(after.status, 'working');
+  assert.deepEqual(after.block_options, []);
+  assert.equal(hub.getTask(sub.id).comments.at(-1).author, a.agent.id);
+  assert.match(hub.getTask(sub.id).comments.at(-1).parts[0].text, /\*\*回答\*\*「用哪个数据库？」：PostgreSQL/);
+  // 答案唤起负责的 agent，摘要写清是谁回答的
+  const woken = hub.inbox(b.row).needs_action.find((e) => e.type === 'task.status_changed' && e.task === sub.id && e.data.to === 'working');
+  assert.match(woken.summary, /甲（A-\d+）回答了 .+ 的问题：PostgreSQL/);
+  // 已解除阻塞后不能再答
+  assert.throws(() => hub.answer(sub.id, '再答一次', asA), /没有处于阻塞状态/);
+
+  // 指派给自己的子任务不唤起自己，也不能自问自答，负责人仍可以回答
+  const own = hub.createTask(asA, { parent: parent.id, title: '子2', assignee: a.agent.id });
+  hub.accept(a.row, own.id);
+  hub.block(a.row, own.id, '要不要加缓存？');
+  assert.ok(!hub.inbox(a.row).needs_action.some((e) => e.task === own.id && e.data.to === 'input_required'));
+  assert.throws(() => hub.answer(own.id, '要', asA), /不能自己回答/);
+  assert.equal(hub.answer(own.id, '要').status, 'working');
+
+  // 负责人创建的任务，agent 不能回答
+  const top = hub.createTask({ kind: 'owner' }, { project: p1.id, title: '顶层', assignee: b.agent.id });
+  hub.accept(b.row, top.id);
+  hub.block(b.row, top.id, '问题');
+  assert.throws(() => hub.answer(top.id, '答案', asA), /只有负责人或创建这个子任务的 agent 可以回答/);
+});
+
 test('@提及只发给被提及的成员；@负责人只给负责人', () => {
   const { hub, p1, join } = setup();
   const a = join('甲');

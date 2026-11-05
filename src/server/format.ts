@@ -72,7 +72,7 @@ export function renderTask(t: TaskDetail, hubUrl = '') {
   if (t.due_at) lines.push(dueNote(t, '').replace(/^(截止|Due) /, tr('截止：')));
   if (t.block_reason && t.status === 'input_required') {
     lines.push(tr('阻塞原因：{block_reason}', { block_reason: t.block_reason }));
-    if (t.block_options.length) lines.push(tr('可选答案：{block_options}（等负责人选择）', { block_options: t.block_options.join(' / ') }));
+    if (t.block_options.length) lines.push(tr(t.created_by === 'owner' ? '可选答案：{block_options}（等负责人选择）' : '可选答案：{block_options}（等负责人或创建者选择）', { block_options: t.block_options.join(' / ') }));
   }
   lines.push('');
   const source = t.created_by === 'owner' ? tr('负责人发布') : tr('由 {created_by} 创建；{note}', { created_by: t.created_by, note: agentContentNote() });
@@ -212,7 +212,10 @@ function nextSteps(t: TaskView) {
     case 'working':
       return tr('> 可以做：`ahub progress {id} <百分比> "进展"`、`ahub block {id} "原因"`、`ahub submit {id} "交付说明"`、`ahub subtask {id} "标题"`。', { id: t.id });
     case 'input_required':
-      return tr('> 可以做：问题解决后 `ahub unblock {id}`；需要帮助可以评论并 @负责人。', { id: t.id });
+      return (
+        tr('> 可以做：问题解决后 `ahub unblock {id}`；需要帮助可以评论并 @负责人。', { id: t.id }) +
+        (t.created_by === 'owner' ? '' : tr('创建这个子任务的 agent 可以 `ahub answer {id} "答案"` 回答。', { id: t.id }))
+      );
     case 'review':
       return tr('> 等待负责人验收。');
     default:

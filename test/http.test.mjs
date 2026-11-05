@@ -239,7 +239,7 @@ test('MCP：通过 HTTP 调用 hub_ 工具', async () => {
     new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), { requestInit: { headers: a.headers } }),
   );
   const tools = (await client.listTools()).tools.map((x) => x.name);
-  assert.ok(tools.includes('hub_sync') && tools.includes('hub_progress'));
+  assert.ok(tools.includes('hub_sync') && tools.includes('hub_progress') && tools.includes('hub_answer'));
   assert.ok(!tools.includes('hub_join'), 'HTTP MCP 不提供 hub_join');
   const sync = await client.callTool({ name: 'hub_sync', arguments: {} });
   assert.match(sync.content[0].text, /可领取的任务[\s\S]*写文档/);
@@ -415,6 +415,29 @@ test('阻塞提问：agent 给出选项，负责人点选后解除阻塞并通�
   const inbox = (await req('GET', '/api/v1/inbox', undefined, a.headers)).json();
   assert.ok(inbox.needs_action.some((e) => e.type === 'task.status_changed' && /负责人回答了 P1-T1 的问题：PostgreSQL/.test(e.summary)));
   assert.equal((await req('POST', `/api/v1/admin/tasks/${t.id}/answer`, { answer: 'x' })).status, 409);
+});
+
+test('阻塞提问：创建子任务的 agent 可以通过接口回答，其他 agent 被拒绝', async () => {
+  const { req, project, join: joinAgent } = await setup();
+  const a = await joinAgent('甲');
+  const b = await joinAgent('乙');
+  const c = await joinAgent('丙');
+  const parent = (await req('POST', '/api/v1/admin/tasks', { project: project.id, title: '父任务' })).json();
+  await req('POST', `/api/v1/tasks/${parent.id}/claim`, {}, a.headers);
+  const sub = (await req('POST', '/api/v1/tasks', { parent: parent.id, title: '建表', assignee: b.agent.id }, a.headers)).json();
+  await req('POST', `/api/v1/tasks/${sub.id}/accept`, {}, b.headers);
+  await req('POST', `/api/v1/tasks/${sub.id}/block`, { reason: '用哪个数据库？', options: ['MySQL', 'PostgreSQL'] }, b.headers);
+
+  const md = await req('GET', `/api/v1/tasks/${sub.id}?format=md`, undefined, a.headers);
+  assert.match(md.text, /可选答案：MySQL \/ PostgreSQL/);
+  assert.match(md.text, /等负责人或创建者选择/);
+  assert.match(md.text, new RegExp(`ahub answer ${sub.id} "答案"`));
+
+  assert.equal((await req('POST', `/api/v1/tasks/${sub.id}/answer`, { answer: 'x' }, c.headers)).status, 403);
+  const r = await req('POST', `/api/v1/tasks/${sub.id}/answer`, { answer: 'PostgreSQL' }, a.headers);
+  assert.equal(r.status, 200);
+  assert.equal(r.json().status, 'working');
+  assert.equal((await req('POST', `/api/v1/tasks/${sub.id}/answer`, { answer: 'x' }, a.headers)).status, 409);
 });
 
 test('授权 agent 新建身份：未授权拒绝，授权后新建待启动的身份并 @负责人，评论里不出现身份码', async () => {
