@@ -90,7 +90,7 @@ function DiffView({ before, after }: { before: string; after: string }) {
 /** 修改历史：左边是版本列表，右边是选中版本相对上一版的改动或完整内容。 */
 function HistoryDialog({ task, artifact, onClose }: { task: string; artifact: Artifact; onClose: () => void }) {
   const { agents } = useHub();
-  const { data: revs } = useData(() => get<ArtifactRevision[]>(`/tasks/${task}/artifacts/${artifact.id}/revisions`), [task, artifact.id, artifact.rev]);
+  const { data: revs } = useData(() => get<ArtifactRevision[]>(`/tasks/${task}/artifacts/${artifact.id}/revisions`), [task, artifact.id, artifact.rev], { refreshOn: () => false });
   const [sel, setSel] = useState<number | null>(null);
   const [mode, setMode] = useState<'diff' | 'full'>('diff');
   const cur = revs?.find((r) => r.rev === (sel ?? artifact.rev));

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { type Agent, ApiError, get, getToken, type HubEvent, type Project, setToken } from './api';
 import { eventHref } from '../../src/shared/event-view';
 import { openEventStream } from '../../src/shared/event-stream';
-import { Ctx, type HubCtx } from './ui';
+import { Ctx, type EventBatch, type HubCtx } from './ui';
 import { maybeNotify, notifyEnabled, notifySupported, setNotify } from './notify';
 import { Overview } from './pages/Overview';
 import { Board } from './pages/Board';
@@ -114,6 +114,7 @@ export function App({ onLang }: { onLang: (code: string | null) => void }) {
     }
   });
   const [tick, setTick] = useState(0);
+  const [batch, setBatch] = useState<EventBatch>({ id: 0, events: [] });
   const [events, setEvents] = useState<HubEvent[]>([]);
   const [connected, setConnected] = useState(false);
   const [notifyOn, setNotifyOn] = useState(notifyEnabled);
@@ -153,6 +154,11 @@ export function App({ onLang }: { onLang: (code: string | null) => void }) {
     void loadBase();
   }, [authed, tick, loadBase]);
 
+  // 项目计数和成员状态变化频繁，体积也小；回执不影响它们
+  useEffect(() => {
+    if (authed && batch.events.some((e) => e.type !== 'receipt.updated')) void loadBase();
+  }, [authed, batch, loadBase]);
+
   // 打开控制台时先载入最近的动态
   useEffect(() => {
     if (!authed) return;
@@ -161,10 +167,12 @@ export function App({ onLang }: { onLang: (code: string | null) => void }) {
       .catch(() => undefined);
   }, [authed]);
 
-  // 实时事件：收到事件后合并刷新（每 300ms 至多一次）
+  // 实时事件：300ms 内到达的合并成一批，每个页面自己决定要不要为这批事件刷新
   useEffect(() => {
     if (!authed) return;
     let timer = 0;
+    let pending: HubEvent[] = [];
+    let opened = false;
     const onEvent = (data: string) => {
       const e = JSON.parse(data) as HubEvent;
       // 回执只用来刷新评论和私信下的标签，不进动态列表
@@ -172,8 +180,13 @@ export function App({ onLang }: { onLang: (code: string | null) => void }) {
       maybeNotify(e, () => {
         location.hash = eventHref(e, readHash().page) ?? '#/overview';
       });
+      pending.push(e);
       window.clearTimeout(timer);
-      timer = window.setTimeout(() => setTick((t) => t + 1), 300);
+      timer = window.setTimeout(() => {
+        const events = pending;
+        pending = [];
+        setBatch((b) => ({ id: b.id + 1, events }));
+      }, 300);
     };
     const types = new Set([
       'project.created', 'project.updated', 'agent.joined', 'agent.updated', 'task.created', 'task.updated', 'task.assigned',
@@ -184,20 +197,25 @@ export function App({ onLang }: { onLang: (code: string | null) => void }) {
     const closeStream = openEventStream({
       url: '/api/v1/admin/stream',
       headers: () => ({ authorization: `Bearer ${getToken() ?? ''}` }),
-      onOpen: () => setConnected(true),
+      onOpen: () => {
+        setConnected(true);
+        // 断线期间可能错过事件（还没收到过事件时没有 Last-Event-ID，补不回来），重连后全部重新拉取一次
+        if (opened) setTick((t) => t + 1);
+        opened = true;
+      },
       onError: () => setConnected(false),
       onEvent: (msg) => {
         if (types.has(msg.event)) onEvent(msg.data);
       },
     });
-    // 在线状态依赖时间推移，定期刷新
-    const interval = window.setInterval(() => setTick((t) => t + 1), 60_000);
+    // 在线状态依赖时间推移，定期刷新。其他数据有变化都会有事件，不用定时重拉
+    const interval = window.setInterval(() => void loadBase(), 60_000);
     return () => {
       closeStream();
       window.clearInterval(interval);
       window.clearTimeout(timer);
     };
-  }, [authed]);
+  }, [authed, loadBase]);
 
   const setProject = useCallback((p: string | null) => {
     setProjectState(p);
@@ -230,8 +248,8 @@ export function App({ onLang }: { onLang: (code: string | null) => void }) {
   }, []);
 
   const ctx: HubCtx = useMemo(
-    () => ({ projects, project, setProject, agents, tick, events, refresh, toast, openTask, openEvent, anchor: route.anchor, go, onLang }),
-    [projects, project, setProject, agents, tick, events, refresh, toast, openTask, openEvent, route.anchor, go, onLang],
+    () => ({ projects, project, setProject, agents, tick, batch, events, refresh, toast, openTask, openEvent, anchor: route.anchor, go, onLang }),
+    [projects, project, setProject, agents, tick, batch, events, refresh, toast, openTask, openEvent, route.anchor, go, onLang],
   );
 
   if (!authed) return <Login onLogin={() => setAuthed(true)} onLang={onLang} />;

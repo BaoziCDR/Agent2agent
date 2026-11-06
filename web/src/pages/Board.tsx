@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { joinList, msg, t as tr, withCode } from '../i18n';
-import { get, post, type Task, type TaskStatus } from '../api';
+import { get, post, type TaskCard, type TaskStatus } from '../api';
+import { changesTaskList } from '../../../src/shared/event-view';
 import { Modal, dueInfo, timeAgo, useData, useHub } from '../ui';
 import { Graph } from './Graph';
 import { Suggest, useRecommend } from '../suggest';
@@ -10,7 +11,7 @@ type Drop = { verb: string; body?: Record<string, unknown>; done: string } | { d
 const LIVE: TaskStatus[] = ['open', 'assigned', 'working', 'input_required'];
 
 /** 把卡片拖到某一列意味着什么；null 表示不能放在这里。 */
-function dropAction(t: Task, to: TaskStatus): Drop | null {
+function dropAction(t: TaskCard, to: TaskStatus): Drop | null {
   if (t.status === to) return null;
   switch (to) {
     case 'open':
@@ -47,7 +48,7 @@ const COLUMNS: { status: TaskStatus; label: string }[] = [
   { status: 'archived', label: msg('已归档') },
 ];
 
-const PRIORITIES: Task['priority'][] = ['P0', 'P1', 'P2', 'P3'];
+const PRIORITIES: TaskCard['priority'][] = ['P0', 'P1', 'P2', 'P3'];
 
 type DateRange = '' | 'today' | '7d' | '30d' | 'custom';
 
@@ -55,7 +56,7 @@ interface Filters {
   query: string;
   assignee: string;
   /** 选中的优先级；空表示全部 */
-  priorities: Task['priority'][];
+  priorities: TaskCard['priority'][];
   /** 只看主任务（不含子任务） */
   topOnly: boolean;
   /** 日期范围按创建时间还是最后更新时间 */
@@ -117,7 +118,7 @@ function dayRange(f: Filters): { from: string; to: string } | null {
 }
 
 /** 归档以外的筛选条件：关系图和看板共用 */
-function matches(t: Task, f: Filters, range: { from: string; to: string } | null) {
+function matches(t: TaskCard, f: Filters, range: { from: string; to: string } | null) {
   if (f.assignee && (f.assignee === '-' ? t.assignee : t.assignee !== f.assignee)) return false;
   const q = f.query.trim();
   if (q && !t.title.includes(q) && !t.id.toLowerCase().includes(q.toLowerCase())) return false;
@@ -161,14 +162,18 @@ export function Board() {
       // 无痕模式下忽略
     }
   };
-  const [dragging, setDragging] = useState<Task | null>(null);
+  const [dragging, setDragging] = useState<TaskCard | null>(null);
   const [over, setOver] = useState<TaskStatus | null>(null);
   const [pending, setPending] = useState<{
-    task: Task;
+    task: TaskCard;
     dialog: 'assign' | 'reject' | 'cancel';
   } | null>(null);
   const [text, setText] = useState('');
-  const { data: tasks, reload } = useData(() => get<Task[]>(`/tasks${project ? `?project=${project}` : ''}`), [project]);
+  const { data: tasks, reload } = useData(
+    () => get<TaskCard[]>(`/tasks?view=summary${project ? `&project=${project}` : ''}`),
+    [project],
+    { refreshOn: changesTaskList },
+  );
 
   const range = dayRange(f);
   const filtered = useMemo(() => (tasks ?? []).filter((t) => matches(t, f, range)), [tasks, f, range?.from, range?.to]);
@@ -190,7 +195,7 @@ export function Board() {
   const active = activeCount > 0;
   const [filtersOpen, setFiltersOpen] = useState(false);
   const total = (tasks ?? []).filter((t) => f.showArchived || t.status !== 'archived').length;
-  const act = async (t: Task, verb: string, body: Record<string, unknown> = {}, done?: string) => {
+  const act = async (t: TaskCard, verb: string, body: Record<string, unknown> = {}, done?: string) => {
     try {
       await post(`/tasks/${t.id}/${verb}`, body);
       if (done) toast(`${t.id} ${done}`);

@@ -4,6 +4,7 @@ import { get, markOwnerRead, patch, post, type Part, type TaskDetail } from '../
 import { Modal, Receipts, StatusBadge, TagPicker, clock, dateTime, dueInfo, splitList, timeAgo, toLocalInput, useData, useHub, useJumpTo } from '../ui';
 import { MentionTextarea, agentCandidates } from '../mention';
 import { Markdown } from '../markdown';
+import { changesTaskDetail } from '../../../src/shared/event-view';
 import { Suggest, useRecommend } from '../suggest';
 import { AnswerBox } from '../answer';
 import { Artifacts, FilePart } from './Artifacts';
@@ -18,7 +19,9 @@ const partText = (parts: Part[]) =>
 
 export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void }) {
   const { agents, toast, refresh, openTask, anchor } = useHub();
-  const { data: t, error, reload } = useData(() => get<TaskDetail>(`/tasks/${id}`), [id]);
+  const { data: t, error, reload } = useData(() => get<TaskDetail>(`/tasks/${id}?view=summary`), [id], {
+    refreshOn: (e, data) => changesTaskDetail(e, id, data?.id === id ? data : null),
+  });
   // 切换任务时 t 还是上一个任务，等新任务载入后再定位
   useJumpTo(anchor, t?.id === id ? t : null);
   // 打开任务、看到评论，就当读过这个任务里 @负责人 的话；没有新标记的就不刷新，避免来回请求

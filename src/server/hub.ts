@@ -256,6 +256,14 @@ export interface TaskView {
   version: number;
 }
 
+/** 看板卡片、关系图、子任务列表用不到正文，去掉后任务再多也不会拖慢这些页面。 */
+export type TaskSummary = Omit<TaskView, 'description' | 'notes' | 'acceptance'>;
+
+export function taskSummary(t: TaskView): TaskSummary {
+  const { description: _description, notes: _notes, acceptance: _acceptance, ...summary } = t;
+  return summary;
+}
+
 export interface TaskDetail extends TaskView {
   subtasks: TaskView[];
   /** 引用的任务和引用了本任务的任务，带标题和状态方便直接展示 */

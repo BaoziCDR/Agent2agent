@@ -112,8 +112,11 @@ export interface Receipt {
   updated_at: string;
 }
 
+/** 列表里的任务不带正文（?view=summary），正文在任务详情里 */
+export type TaskCard = Omit<Task, 'description' | 'notes' | 'acceptance'>;
+
 export interface TaskDetail extends Task {
-  subtasks: Task[];
+  subtasks: TaskCard[];
   ref_tasks: TaskBrief[];
   referenced_by: TaskBrief[];
   comments: { id: number; author: string; author_name: string; parts: Part[]; created_at: string; receipts: Receipt[] }[];
