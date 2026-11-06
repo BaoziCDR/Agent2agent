@@ -565,6 +565,7 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
         before: q.before ? Number(q.before) : undefined,
         after: q.after ? Number(q.after) : undefined,
         limit: q.limit ? Number(q.limit) : 100,
+        inbox: q.inbox === '1',
       });
     });
 

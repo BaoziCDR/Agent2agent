@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { joinList, t as tr, withCode } from '../i18n';
 import { get, markOwnerRead, patch, post, type Part, type TaskDetail } from '../api';
-import { Modal, Receipts, StatusBadge, TagPicker, clock, dateTime, dueInfo, splitList, timeAgo, toLocalInput, useData, useHub } from '../ui';
+import { Modal, Receipts, StatusBadge, TagPicker, clock, dateTime, dueInfo, splitList, timeAgo, toLocalInput, useData, useHub, useJumpTo } from '../ui';
 import { MentionTextarea, agentCandidates } from '../mention';
 import { Markdown } from '../markdown';
 import { Suggest, useRecommend } from '../suggest';
@@ -17,8 +17,10 @@ const partText = (parts: Part[]) =>
     .join('\n');
 
 export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void }) {
-  const { agents, toast, refresh, openTask } = useHub();
+  const { agents, toast, refresh, openTask, anchor } = useHub();
   const { data: t, error, reload } = useData(() => get<TaskDetail>(`/tasks/${id}`), [id]);
+  // 切换任务时 t 还是上一个任务，等新任务载入后再定位
+  useJumpTo(anchor, t?.id === id ? t : null);
   // 打开任务、看到评论，就当读过这个任务里 @负责人 的话；没有新标记的就不刷新，避免来回请求
   useEffect(() => {
     if (t) markOwnerRead({ task: id }).then((n) => n && refresh());
@@ -283,7 +285,7 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
               )}
 
               {t.artifacts.length > 0 && (
-                <div className="section">
+                <div className="section" data-anchor="artifacts">
                   <h4>
                     {tr('交付物')}<span className="h4-hint">{tr('划选文字可以引用到评论')}</span>
                   </h4>
@@ -291,11 +293,11 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
                 </div>
               )}
 
-              <div className="section">
+              <div className="section" data-anchor="discussion">
                 <h4>{tr('讨论')}</h4>
                 {t.comments.length === 0 && <div className="faint">{tr('还没有评论')}</div>}
                 {t.comments.map((c) => (
-                  <div key={c.id} className={`comment ${c.author === 'owner' ? 'owner' : ''}`}>
+                  <div key={c.id} data-anchor={`comment-${c.id}`} className={`comment ${c.author === 'owner' ? 'owner' : ''}`}>
                     <div className="faint">
                       {c.author === 'owner' ? tr('负责人') : withCode(c.author_name, c.author)} · {clock(c.created_at)}
                     </div>
@@ -478,7 +480,7 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
                 </div>
               )}
               {t.progress_log.length > 0 && (
-                <div className="section">
+                <div className="section" data-anchor="progress">
                   <h4>{tr('进度记录')}</h4>
                   <div className="list">
                     {[...t.progress_log].reverse().map((p, i) => (

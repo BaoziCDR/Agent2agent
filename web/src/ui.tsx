@@ -1,5 +1,6 @@
-import { createContext, type ReactNode, useCallback, useContext, useEffect, useState } from 'react';
-import { type Agent, get, type HubEvent, type Presence, type Project, type Receipt, type Task } from './api';
+import { createContext, type ReactNode, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { type Agent, eventSummary, get, type HubEvent, type Presence, type Project, type Receipt, type Task } from './api';
+import { ownerSummary } from '../../src/shared/event-view';
 import { STATUS_LABELS } from '../../src/shared/model';
 import { langTag, msg, t } from './i18n';
 
@@ -13,6 +14,10 @@ export interface HubCtx {
   refresh: () => void;
   toast: (msg: string, error?: boolean) => void;
   openTask: (id: string) => void;
+  /** 打开一条事件对应的位置（评论、私信、agent 等） */
+  openEvent: (e: HubEvent) => void;
+  /** 地址里带的定位，如 comment-12；页面据此滚动并高亮 */
+  anchor: string | null;
   go: (page: string) => void;
   /** 切换界面语言；null 表示跟随浏览器 */
   onLang: (code: string | null) => void;
@@ -44,6 +49,26 @@ export function useData<T>(load: () => Promise<T>, deps: unknown[]): { data: T |
   }, [...deps, tick, n]);
   const reload = useCallback(() => setN((x) => x + 1), []);
   return { data, error, reload };
+}
+
+/** 滚到地址里定位的元素（data-anchor）并高亮。data 为空或目标还没出现时不动，等下一次数据刷新再试。 */
+export function useJumpTo(anchor: string | null, data: unknown) {
+  const marked = useRef<Element | null>(null);
+  useEffect(() => {
+    if (!anchor || !data || marked.current) return;
+    const el = document.querySelector(`[data-anchor="${CSS.escape(anchor)}"]`);
+    if (!el) return;
+    marked.current = el;
+    el.classList.add('jump-target');
+    el.scrollIntoView({ block: 'center' });
+  }, [anchor, data]);
+  useEffect(
+    () => () => {
+      marked.current?.classList.remove('jump-target');
+      marked.current = null;
+    },
+    [anchor],
+  );
 }
 
 export function timeAgo(iso: string | null | undefined): string {
@@ -235,6 +260,9 @@ export function agentLabel(agents: Agent[], code: string | null): string {
   const a = agents.find((x) => x.id === code);
   return a ? `${a.name}` : code;
 }
+
+/** 控制台显示的事件摘要：读者是负责人，发给某个 agent 的「你」要换成它的名字 */
+export const ownerEventSummary = (e: HubEvent, agents: Agent[]) => ownerSummary(eventSummary(e), e, (code) => agentLabel(agents, code));
 
 export const splitList = (s: string) =>
   s

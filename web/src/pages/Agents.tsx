@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { joinList, msg, t } from '../i18n';
 import { type Agent, type Connection, del, get, patch, post, type Run } from '../api';
 import { LaunchDialog, NewAgentDialog } from './Invite';
-import { Modal, dateTime, platformLabel, presenceLabel, presence, splitList, timeAgo, useData, useHub } from '../ui';
+import { Modal, dateTime, platformLabel, presenceLabel, presence, splitList, timeAgo, useData, useHub, useJumpTo } from '../ui';
 
 const END_REASON: Record<string, string> = { released: msg('正常退出'), expired: msg('超时自动下线'), replaced: msg('被别处的新连接顶掉'), revoked: msg('被强制下线') };
 const where = (c: Connection) => [c.host, c.client_label].filter(Boolean).join(' · ');
@@ -25,7 +25,7 @@ function daemonState(a: Agent): { text: string; cls: string } {
 const TIER: Record<string, string> = { L1: msg('命令行/实时'), L2: 'MCP', L3: msg('HTTP 轮询'), L4: msg('人工中继') };
 
 export function Agents({ startInvite = false }: { startInvite?: boolean }) {
-  const { agents, project, toast, refresh, openTask, go } = useHub();
+  const { agents, project, toast, refresh, openTask, go, anchor } = useHub();
   const [runsOf, setRunsOf] = useState<Agent | null>(null);
   const [launchOf, setLaunchOf] = useState<Agent | null>(null);
   const [sessionsOf, setSessionsOf] = useState<Agent | null>(null);
@@ -48,6 +48,7 @@ export function Agents({ startInvite = false }: { startInvite?: boolean }) {
   // 删除了的 agent 只为历史任务和评论保留名字，不再列为成员
   const members = agents.filter((a) => a.status !== 'deleted');
   const list = project ? members.filter((a) => a.projects.some((p) => p.id === project)) : members;
+  useJumpTo(anchor, list.length ? list : null);
 
   const toggle = async (a: Agent) => {
     try {
@@ -130,7 +131,7 @@ export function Agents({ startInvite = false }: { startInvite?: boolean }) {
                 {list.map((a) => {
                   const p = presence(a);
                   return (
-                    <tr key={a.id} style={{ opacity: a.status === 'active' ? 1 : 0.55 }}>
+                    <tr key={a.id} data-anchor={`agent-${a.id}`} style={{ opacity: a.status === 'active' ? 1 : 0.55 }}>
                       <td data-label={t('状态')}>
                         <span className="btn-row" style={{ gap: 6 }}>
                           <span className={`dot ${p}`} />

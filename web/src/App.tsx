@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { type Agent, ApiError, get, getToken, type HubEvent, type Project, setToken } from './api';
+import { eventHref } from '../../src/shared/event-view';
 import { openEventStream } from '../../src/shared/event-stream';
 import { Ctx, type HubCtx } from './ui';
 import { maybeNotify, notifyEnabled, notifySupported, setNotify } from './notify';
@@ -41,10 +42,12 @@ const TABBAR: { id: PageId; label: string }[] = [
   { id: 'feed', label: msg('动态') },
 ];
 
-function readHash(): { page: PageId; task: string | null } {
-  const [page, task] = location.hash.replace(/^#\/?/, '').split('/');
+/** 地址：#/页面/任务/定位 打开任务并定位（如 #/feed/P1-T3/comment-5）；页面自身的定位没有任务（如 #/messages/message-5） */
+function readHash(): { page: PageId; task: string | null; anchor: string | null } {
+  const [page, second, third] = location.hash.replace(/^#\/?/, '').split('/');
   const valid = PAGES.some((p) => p.id === page);
-  return { page: (valid ? page : 'overview') as PageId, task: task || null };
+  const own = !!second && /^(message|agent)-/.test(second);
+  return { page: (valid ? page : 'overview') as PageId, task: own ? null : second || null, anchor: (own ? second : third) || null };
 }
 
 function LangSelect({ onLang }: { onLang: (code: string) => void }) {
@@ -167,7 +170,7 @@ export function App({ onLang }: { onLang: (code: string | null) => void }) {
       // 回执只用来刷新评论和私信下的标签，不进动态列表
       if (e.type !== 'receipt.updated') setEvents((list) => [e, ...list].slice(0, 300));
       maybeNotify(e, () => {
-        location.hash = e.task ? `#/${readHash().page}/${e.task}` : e.type === 'agent.offline' ? '#/agents' : '#/overview';
+        location.hash = eventHref(e, readHash().page) ?? '#/overview';
       });
       window.clearTimeout(timer);
       timer = window.setTimeout(() => setTick((t) => t + 1), 300);
@@ -221,10 +224,14 @@ export function App({ onLang }: { onLang: (code: string | null) => void }) {
   const closeTask = useCallback(() => {
     location.hash = `#/${readHash().page}`;
   }, []);
+  const openEvent = useCallback((e: HubEvent) => {
+    const href = eventHref(e, readHash().page);
+    if (href) location.hash = href;
+  }, []);
 
   const ctx: HubCtx = useMemo(
-    () => ({ projects, project, setProject, agents, tick, events, refresh, toast, openTask, go, onLang }),
-    [projects, project, setProject, agents, tick, events, refresh, toast, openTask, go, onLang],
+    () => ({ projects, project, setProject, agents, tick, events, refresh, toast, openTask, openEvent, anchor: route.anchor, go, onLang }),
+    [projects, project, setProject, agents, tick, events, refresh, toast, openTask, openEvent, route.anchor, go, onLang],
   );
 
   if (!authed) return <Login onLogin={() => setAuthed(true)} onLang={onLang} />;

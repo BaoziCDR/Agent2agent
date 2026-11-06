@@ -252,7 +252,7 @@
   "进度": "Progress",
   "状态变化": "Status changes",
   "讨论与私信": "Discussion and messages",
-  "Hub 上发生的每一件事，按时间倒序，自动刷新。": "Everything that happens on the Hub, newest first, refreshed live.",
+  "Hub 上发生的每一件事，按时间倒序，自动刷新。蓝色高亮的是发给你、还没看的 @ 和私信，点开直接定位到原文。": "Everything that happens on the Hub, newest first, refreshed live. Blue rows are unread @mentions and messages sent to you; click one to jump to the original.",
   "按 agent 筛选": "Filter by agent",
   "所有人": "Everyone",
   "没有符合条件的动态": "No matching activity",
@@ -576,5 +576,7 @@
   "复制": "Copy",
   "点选上面的标签，或输入自定义标签，用逗号分隔": "Pick tags above, or type your own, separated by commas",
   "协作中枢 · 控制台": "Agent Hub · Console",
-  "交付说明": "Delivery summary"
+  "交付说明": "Delivery summary",
+  "@我与私信": "@me & messages",
+  " · 已读": " · read"
 }

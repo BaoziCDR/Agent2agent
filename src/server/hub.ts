@@ -19,6 +19,7 @@ import {
   STATUS_LABELS,
   TIERS,
 } from '../shared/model.js';
+import { isForOwner } from '../shared/event-view.js';
 import { bi, msg, tr } from '../i18n/index.js';
 
 /** 预设标签的默认值，负责人可以在设置里改 */
@@ -150,6 +151,7 @@ interface EventRow {
   data: string;
   summary: string;
   summary_en: string | null;
+  owner_read: number;
 }
 
 export interface AgentView {
@@ -1065,7 +1067,7 @@ export class Hub {
     }
   }
 
-  eventsForOwner(opts: { after?: number; before?: number; limit?: number; project?: string }): HubEvent[] {
+  eventsForOwner(opts: { after?: number; before?: number; limit?: number; project?: string; inbox?: boolean }): HubEvent[] {
     const limit = Math.min(opts.limit ?? 100, 500);
     const projectId = opts.project ? this.requireProject(opts.project).id : null;
     const where: string[] = [];
@@ -1082,13 +1084,17 @@ export class Hub {
       where.push('(project_id = ? OR project_id IS NULL)');
       params.push(projectId);
     }
+    if (opts.inbox) where.push(OWNER_INBOX_SQL);
     const order = opts.after !== undefined ? 'ASC' : 'DESC';
     const rows = this.db
       .prepare(
         `SELECT * FROM events ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY seq ${order} LIMIT ${limit}`,
       )
       .all(...params) as unknown as EventRow[];
-    return rows.map((r) => this.toEvent(r));
+    return rows.map((r) => {
+      const e = this.toEvent(r);
+      return isForOwner(e) ? { ...e, owner_read: !!r.owner_read } : e;
+    });
   }
 
   ack(agent: AgentRow, seq: number) {
