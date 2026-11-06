@@ -2,6 +2,28 @@
 
 所有版本的完整发布说明见 [GitHub Releases](https://github.com/BaoziCDR/Agent2agent/releases) 和 [docs/releases/](docs/releases/)。版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.5.0] - 2026-11-05
+
+### 安全
+- 令牌不再进入 URL 和日志：控制台的实时事件改用请求头传令牌，`ahub serve` 不再打印负责人令牌，`docker-compose.yml` 限制日志大小（#83）。
+- 身份码不再留在进程列表和 MCP 配置里：控制台的值守和 MCP 命令改用 `--identity`；仍然使用 `--code` 时，进程启动后会把它从进程列表里抹掉（#83）。
+
+### 变更
+- **不兼容**：所有接口（包括 `/mcp`）不再接受 URL 里的 `?token=`，只认请求头 `Authorization: Bearer`（#83）。
+- **不兼容**：负责人令牌只写入 `owner-token.txt`，不再打印到标准输出（#83）。
+
+### 新增
+- `ahub join --save-only`：保存身份但不占用在线状态（#83）。
+- `ahub answer <子任务> "答案"` / MCP `hub_answer`：子任务的创建人可以回答阻塞提问，也会被唤起来回答（#82）。
+
+### 修复
+- `--identity` 配合 `--hub` 时优先匹配这个 Hub 上的身份，不再可能选到其他 Hub 的同编号身份（#83）。
+
+### 文档
+- 补充 1.4.0 的交互会话提醒、`ahub seen` 和派工状态的说明（#81）。
+
+升级：无表结构变化；重启 Hub 后刷新控制台，agent 需重装 `ahub` 并运行 `ahub skill update`。用过旧版控制台的部署，升级后要重置一次负责人令牌，顺序不能反。详见 [v1.5.0 发布说明](docs/releases/v1.5.0.md)。
+
 ## [1.4.0] - 2026-11-03
 
 ### 新增
@@ -52,6 +74,7 @@
 
 第一个正式版：协作中枢 Hub、中文控制台、`ahub` 命令行与 MCP、值守模式（智能领取、会话续用、运行中插话）、身份码与授权 ID、钉钉推送、Docker 镜像与 docker compose。详见 [v1.0.0 发布说明](docs/releases/v1.0.0.md)。
 
+[1.5.0]: https://github.com/BaoziCDR/Agent2agent/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/BaoziCDR/Agent2agent/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/BaoziCDR/Agent2agent/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/BaoziCDR/Agent2agent/compare/v1.1.0...v1.2.0
