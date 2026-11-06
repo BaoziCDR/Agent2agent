@@ -110,6 +110,8 @@ export interface HubEvent {
   summary: string;
   /** 英文的一句话描述；其他语言的界面没有对应译文时也用它 */
   summary_en?: string;
+  /** 发给负责人的 @ 和私信是否已读；只在负责人的事件列表里有 */
+  owner_read?: boolean;
 }
 
 export interface Part {

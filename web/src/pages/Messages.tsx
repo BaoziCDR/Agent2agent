@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { t, withCode } from '../i18n';
 import { get, markOwnerRead, type Message, post } from '../api';
-import { Receipts, clock, useData, useHub } from '../ui';
+import { Receipts, clock, useData, useHub, useJumpTo } from '../ui';
 import { Markdown } from '../markdown';
 
 export function Messages() {
-  const { agents, projects, project, toast, refresh } = useHub();
+  const { agents, projects, project, toast, refresh, anchor } = useHub();
   const [to, setTo] = useState('');
   const [text, setText] = useState('');
   const textRef = useRef<HTMLTextAreaElement>(null);
@@ -13,6 +13,7 @@ export function Messages() {
   const bProject = bProjectChoice || (project ?? projects[0]?.id ?? '');
   const [bText, setBText] = useState('');
   const { data: messages, reload } = useData(() => get<Message[]>('/messages'), []);
+  useJumpTo(anchor, messages);
   // 打开私信页看到了，发给负责人的私信就算已读
   useEffect(() => {
     if (messages) markOwnerRead({ type: 'message.direct' }).then((n) => n && refresh());
@@ -97,7 +98,7 @@ export function Messages() {
         {messages && messages.length === 0 && <div className="empty">{t('还没有私信')}</div>}
         <div className="list">
           {messages?.map((m) => (
-            <div key={m.id} className="list-item">
+            <div key={m.id} data-anchor={`message-${m.id}`} className="list-item">
               <span className="feed-time">{clock(m.created_at)}</span>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div className="faint">

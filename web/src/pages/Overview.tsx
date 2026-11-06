@@ -1,10 +1,11 @@
 import { eventSummary, get, markOwnerRead, type Overview as OverviewData } from '../api';
+import { eventHref } from '../../../src/shared/event-view';
 import { joinList, t } from '../i18n';
 import { AnswerBox } from '../answer';
-import { StatusBadge, clock, dueInfo, presence, presenceLabel, timeAgo, useData, useHub, agentLabel } from '../ui';
+import { StatusBadge, clock, dueInfo, presence, presenceLabel, timeAgo, useData, useHub, agentLabel, ownerEventSummary } from '../ui';
 
 export function Overview() {
-  const { project, projects, agents, events, openTask, go, refresh } = useHub();
+  const { project, projects, agents, events, openTask, openEvent, go, refresh } = useHub();
   const { data, reload } = useData(() => get<OverviewData>(`/overview${project ? `?project=${project}` : ''}`), [project]);
   const scopeName = project ? projects.find((p) => p.id === project)?.name : t('全部项目');
   const scopedAgents = project ? agents.filter((a) => a.projects.some((p) => p.id === project)) : agents.filter((a) => a.status !== 'deleted');
@@ -108,12 +109,11 @@ export function Overview() {
                 <div key={e.seq} className="list-item clickable" onClick={() => {
                     // 点开就算读过；打开任务详情时也会把该任务下的 @ 一并标为已读
                     markOwnerRead({ seqs: [e.seq] }).then((n) => n && refresh());
-                    if (e.task) openTask(e.task);
-                    else go('messages');
+                    openEvent(e);
                   }}>
                   <span className="badge accent">{e.type === 'mention' ? t('@你') : t('私信')}</span>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div>{eventSummary(e)}</div>
+                    <div>{ownerEventSummary(e, agents)}</div>
                     <div className="faint">{timeAgo(e.at)}</div>
                   </div>
                 </div>
@@ -156,12 +156,12 @@ export function Overview() {
             {feed.map((e) => (
               <div
                 key={e.seq}
-                className={`list-item ${e.task ? 'clickable' : ''}`}
-                onClick={() => e.task && openTask(e.task)}
+                className={`list-item ${eventHref(e, 'overview') ? 'clickable' : ''}`}
+                onClick={() => openEvent(e)}
               >
                 <span className="feed-time">{clock(e.at)}</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  {eventSummary(e)}
+                  {ownerEventSummary(e, agents)}
                   {e.actor !== 'owner' && !eventSummary(e).startsWith(agentLabel(agents, e.actor)) && <span className="faint"> · {agentLabel(agents, e.actor)}</span>}
                 </div>
               </div>
