@@ -15,9 +15,9 @@ const CLI = join(import.meta.dirname, '..', 'dist', 'cli', 'ahub.js');
 process.removeAllListeners('warning');
 
 async function setup(t, opts = {}) {
-  const hub = new Hub(openDb(':memory:'));
+  const hub = new Hub(openDb(':memory:'), opts.hub);
   hub.ensureOwnerToken('owner_test');
-  const app = buildApp(hub, { webDir: '/nonexistent', maxWaitSeconds: 1, filesDir: mkdtempSync(join(tmpdir(), 'ahub-files-')), ...opts });
+  const app = buildApp(hub, { webDir: '/nonexistent', maxWaitSeconds: 1, filesDir: mkdtempSync(join(tmpdir(), 'ahub-files-')), ...opts, hub: undefined });
   t.after(() => app.close());
   const owner = { authorization: 'Bearer owner_test' };
   const req = async (method, url, body, headers = owner, extra = {}) => {
@@ -106,6 +106,132 @@ test('不用登录的接口：请求体上限很小，大请求不读就拒绝',
     assert.equal(await statusWithoutBody(url, 'POST', path, JSON_5M), 413, `${path} JSON`);
     assert.equal(await statusWithoutBody(url, 'POST', path, HUGE), 413, `${path} 二进制`);
   }
+});
+
+/** 登录框的请求；from 是直接连接的地址，xff 是代理转发的来源 */
+const ownerLogin = (req, token, from = '1.1.1.1', xff) =>
+  req('POST', '/api/v1/admin/login', undefined, {}, {
+    remoteAddress: from,
+    payload: '{}',
+    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...(xff ? { 'x-forwarded-for': xff } : {}) },
+  });
+
+test('登录框：输错三次封禁这个 IP，正确的令牌也进不来，到时间后恢复，别的 IP 不受影响', async (t) => {
+  let now = new Date('2026-11-07T00:00:00Z');
+  const { req } = await setup(t, { hub: { now: () => now } });
+  assert.equal((await ownerLogin(req, 'wrong')).status, 401);
+  assert.equal((await ownerLogin(req, 'wrong')).status, 401);
+  const third = await ownerLogin(req, 'wrong');
+  assert.equal(third.status, 429);
+  assert.equal(third.json().error.code, 'too_many_attempts');
+  assert.match(third.json().error.message, /请 5 分钟后再试/);
+  assert.equal(third.headers['retry-after'], '300');
+  assert.equal((await ownerLogin(req, 'owner_test')).status, 429);
+  assert.equal((await ownerLogin(req, 'owner_test', '2.2.2.2')).status, 200);
+  now = new Date(now.getTime() + 299_000);
+  assert.equal((await ownerLogin(req, 'owner_test')).status, 429);
+  now = new Date(now.getTime() + 2_000);
+  assert.equal((await ownerLogin(req, 'owner_test')).status, 200);
+  // 成功后重新计数，封禁结束后再错一次不会马上又被封
+  assert.equal((await ownerLogin(req, 'wrong')).status, 401);
+  assert.equal((await ownerLogin(req, 'wrong')).status, 401);
+  assert.equal((await ownerLogin(req, 'owner_test')).status, 200);
+  assert.equal((await ownerLogin(req, 'wrong')).status, 401);
+});
+
+test('负责人令牌：逐级加长封禁，最多 12 小时；登录成功或 24 小时没有新错误才从头算', async (t) => {
+  let now = new Date('2026-11-07T00:00:00Z');
+  const { req } = await setup(t, { hub: { now: () => now } });
+  const later = (ms) => (now = new Date(now.getTime() + ms));
+  const round = async () => {
+    assert.equal((await ownerLogin(req, 'wrong')).status, 401);
+    assert.equal((await ownerLogin(req, 'wrong')).status, 401);
+    const r = await ownerLogin(req, 'wrong');
+    assert.equal(r.status, 429);
+    return Number(r.headers['retry-after']);
+  };
+  const steps = [];
+  for (let i = 0; i < 6; i++) {
+    const s = await round();
+    steps.push(s);
+    later(s * 1000 + 1000);
+  }
+  assert.deepEqual(steps, [300, 1800, 7200, 43200, 43200, 43200]);
+  // 封禁中继续输错不会延长，也不会跳级
+  await ownerLogin(req, 'wrong');
+  await ownerLogin(req, 'wrong');
+  assert.equal((await ownerLogin(req, 'wrong')).headers['retry-after'], '43200');
+  later(10_000);
+  assert.equal((await ownerLogin(req, 'wrong')).headers['retry-after'], '43190');
+  // 封禁结束后 24 小时内再错，还是 12 小时；超过 24 小时没有错误，从 5 分钟开始
+  later(43_190_000 + 23 * 3_600_000);
+  assert.equal(await round(), 43200);
+  later((43_200 + 24 * 3600) * 1000);
+  assert.equal(await round(), 300);
+  // 登录成功后也从头算
+  later(301_000);
+  assert.equal(await round(), 1800);
+  later(1_801_000);
+  assert.equal((await ownerLogin(req, 'owner_test')).status, 200);
+  assert.equal(await round(), 300);
+  // 错误信息显示剩余时间
+  later(301_000);
+  await round();
+  assert.match((await ownerLogin(req, 'wrong')).json().error.message, /请 30 分钟后再试/);
+  later(1_801_000);
+  await round();
+  assert.match((await ownerLogin(req, 'wrong')).json().error.message, /请 2 小时后再试/);
+});
+
+test('负责人令牌：旧页面反复用同一个旧令牌不会封 IP，不同的错误令牌会；没带令牌不算', async (t) => {
+  const { req } = await setup(t);
+  const from = { remoteAddress: '1.1.1.1' };
+  const call = (token, ip = from) => req('GET', '/api/v1/admin/projects', undefined, token ? { authorization: `Bearer ${token}` } : {}, ip);
+  for (let i = 0; i < 10; i++) assert.equal((await call('old-token')).status, 401);
+  for (let i = 0; i < 10; i++) assert.equal((await call(null)).status, 401);
+  assert.equal((await call('owner_test')).status, 200);
+  assert.equal((await call('guess-1')).status, 401);
+  assert.equal((await call('guess-2')).status, 429);
+  assert.equal((await call('owner_test')).status, 429);
+  assert.equal((await call(null)).status, 429);
+});
+
+test('负责人令牌：封禁不影响同一 IP 上的 agent；上传接口也不能绕过', async (t) => {
+  const { req, app, join: joinAgent } = await setup(t);
+  const a = await joinAgent('甲');
+  const ip = { remoteAddress: '127.0.0.1' };
+  const upload = (token) => app.inject({ method: 'POST', url: '/api/v1/files?name=a', remoteAddress: '127.0.0.1', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/octet-stream' }, payload: Buffer.from('x') });
+  assert.equal((await upload('guess-1')).statusCode, 401);
+  assert.equal((await upload('guess-2')).statusCode, 401);
+  assert.equal((await upload('guess-3')).statusCode, 401);
+  assert.equal((await upload('owner_test')).statusCode, 429);
+  assert.equal((await req('GET', '/api/v1/admin/projects', undefined, undefined, ip)).status, 429);
+  assert.equal((await req('GET', '/api/v1/me', undefined, a.headers, ip)).status, 200);
+  assert.equal((await upload(a.session)).statusCode, 201);
+});
+
+test('负责人令牌：代理后面没配置 AHUB_TRUST_PROXY 时，别人输错不能把负责人关在外面', async (t) => {
+  const { req } = await setup(t);
+  const proxy = '172.18.0.2';
+  for (const token of ['g1', 'g2', 'g3']) await ownerLogin(req, token, proxy, '6.6.6.6');
+  assert.equal((await ownerLogin(req, 'wrong', proxy, '6.6.6.6')).status, 429);
+  assert.equal((await ownerLogin(req, 'owner_test', proxy, '7.7.7.7')).status, 200);
+});
+
+test('负责人令牌：配置了信任的代理时按真实 IP 封禁，伪造转发头绕不过去', async (t) => {
+  const { req } = await setup(t, { trustProxy: '172.18.0.0/16' });
+  const proxy = '172.18.0.2';
+  for (const token of ['g1', 'g2', 'g3']) await ownerLogin(req, token, proxy, '6.6.6.6');
+  assert.equal((await ownerLogin(req, 'owner_test', proxy, '6.6.6.6')).status, 429);
+  assert.equal((await ownerLogin(req, 'owner_test', proxy, '9.9.9.9, 6.6.6.6')).status, 429);
+  assert.equal((await ownerLogin(req, 'owner_test', proxy, '7.7.7.7')).status, 200);
+});
+
+test('登录框：是密码框，里面没有任何提示', () => {
+  const src = readFileSync(join(import.meta.dirname, '..', 'web', 'src', 'App.tsx'), 'utf8');
+  const input = src.match(/<input id="token"[^>]*>/)[0];
+  assert.match(input, /type="password"/);
+  assert.doesNotMatch(input, /placeholder/);
 });
 
 test('上传：有效令牌仍然能传大文件；令牌失效的客户端能正常拿到 401，不会连接报错', async (t) => {

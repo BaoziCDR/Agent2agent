@@ -358,6 +358,12 @@ const editableText = (parts: Part[]) => {
 /** 预设名称会写进启动命令的引号里，去掉会破坏命令的字符。 */
 const inviteName = (name?: string) => (name ?? '').trim().replace(/["`$\\]/g, '').slice(0, 40);
 
+/** 负责人令牌：5 分钟内输错 3 次封禁这个 IP，每封一轮时间加长，封禁结束后 24 小时没有新的错误才从头算 */
+const OWNER_FAIL_LIMIT = 3;
+const OWNER_FAIL_WINDOW = 5 * 60_000;
+const OWNER_BLOCK_STEPS = [5 * 60_000, 30 * 60_000, 2 * 3_600_000, 12 * 3_600_000];
+const OWNER_FAIL_FORGET = 24 * 3_600_000;
+
 /** agent 不能叫这些名字，否则动态和评论里看着像负责人本人。比较时忽略大小写、全半角、空白和标点。 */
 function assertAgentName(name: string | undefined) {
   const bare = (name ?? '').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
@@ -539,6 +545,46 @@ export class Hub {
     return token;
   }
 
+  /** 这个 IP 因为负责人令牌输错太多，还要被封禁多少毫秒；没有封禁时是 0 */
+  ownerBlockedMs(ip: string): number {
+    return Math.max(0, (this.ownerFails.get(ip)?.until ?? 0) - this.now().getTime());
+  }
+
+  /**
+   * 记一次负责人令牌输错；返回这次之后是否被封禁。
+   * 登录框（everyAttempt）每次都算。其他接口只算没见过的令牌：
+   * 令牌换过之后，没刷新的旧页面会用同一个旧令牌同时发好几个请求，不能因此把负责人自己封掉。
+   */
+  noteOwnerFailure(ip: string, token: string, everyAttempt = false): boolean {
+    const now = this.now().getTime();
+    const forgotten = (r: { last: number; until: number }) => now - Math.max(r.last, r.until) >= OWNER_FAIL_FORGET;
+    if (this.ownerFails.size > 10_000) {
+      for (const [k, r] of this.ownerFails) if (forgotten(r)) this.ownerFails.delete(k);
+    }
+    let f = this.ownerFails.get(ip);
+    if (!f || forgotten(f)) {
+      f = { n: 0, tokens: new Set(), at: now, last: now, until: 0, level: 0 };
+      this.ownerFails.set(ip, f);
+    } else if (f.until <= now && (f.until > 0 || now - f.at >= OWNER_FAIL_WINDOW)) {
+      // 上一轮封禁结束或超出时间窗：重新数次数，已经封过几轮保留
+      Object.assign(f, { n: 0, tokens: new Set(), at: now, until: 0 });
+    }
+    f.last = now;
+    const hash = hashToken(token);
+    if (everyAttempt || !f.tokens.has(hash)) f.n++;
+    f.tokens.add(hash);
+    if (f.until <= now && f.n >= OWNER_FAIL_LIMIT) {
+      f.until = now + OWNER_BLOCK_STEPS[Math.min(f.level, OWNER_BLOCK_STEPS.length - 1)];
+      f.level++;
+    }
+    return f.until > now;
+  }
+
+  /** 从登录框登录成功，这个 IP 重新计数 */
+  clearOwnerFailures(ip: string) {
+    this.ownerFails.delete(ip);
+  }
+
   isOwnerToken(token: string): boolean {
     const row = this.db.prepare("SELECT value FROM settings WHERE key = 'owner_token_hash'").get() as
       | { value: string }
@@ -569,6 +615,8 @@ export class Hub {
   // ───────────── 授权 ID（连接） ─────────────
 
   private failedLogins = new Map<string, { n: number; at: number }>();
+  /** 负责人令牌输错的记录，按 IP：这一轮的次数、输错过的令牌（哈希）、这一轮开始的时间、最后一次输错的时间、封禁到什么时候、已经封过几轮 */
+  private ownerFails = new Map<string, { n: number; tokens: Set<string>; at: number; last: number; until: number; level: number }>();
 
   activeSession(agentId: number): SessionRow | null {
     return (this.db.prepare('SELECT * FROM sessions WHERE agent_id = ? AND ended_at IS NULL').get(agentId) as SessionRow | undefined) ?? null;
