@@ -1,3 +1,4 @@
+import { isIP } from 'node:net';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import { createReadStream, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -31,7 +32,37 @@ export interface AppOptions {
   notifier?: Notifier;
   /** 发布任务时用外部模型自动打标签；不设置时不提供模型设置接口 */
   tagger?: Tagger;
+  /** 信任的反向代理（IP 或网段，逗号分隔）：从这些地址来的请求才看 X-Forwarded-For */
+  trustProxy?: string;
 }
+
+/** 校验 --trust-proxy / AHUB_TRUST_PROXY。不接受 true 和跳数：那样谁都能伪造来源 IP。 */
+export function parseTrustProxy(v?: string): string | undefined {
+  const s = v?.trim();
+  if (!s) return undefined;
+  const items = s.split(',').map((x) => x.trim());
+  for (const item of items) {
+    const [ip, bits, ...rest] = item.split('/');
+    const family = isIP(ip);
+    const ok = family !== 0 && !rest.length && (bits === undefined || (/^\d+$/.test(bits) && Number(bits) <= (family === 4 ? 32 : 128)));
+    if (!ok) throw new Error(tr('AHUB_TRUST_PROXY（--trust-proxy）只能写反向代理的 IP 或网段，多个用逗号分隔，例如 172.18.0.0/16；不能用「{item}」', { item }));
+  }
+  return items.join(',');
+}
+
+/** 控制台的内容安全策略：脚本只能来自本站。React 的 style 属性和构建产物都不需要内联脚本。 */
+const CONSOLE_CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self'",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join('; ');
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -39,6 +70,8 @@ declare module 'fastify' {
     /** 这次请求用的授权 ID */
     session?: SessionRow;
     isOwner?: boolean;
+    /** 上传者：owner 或 agent 编号 */
+    uploader?: string;
   }
 }
 
@@ -76,13 +109,28 @@ function requestLang(req: FastifyRequest): Lang {
 }
 
 export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
-  const app = Fastify({ logger: opts.logger ?? false, bodyLimit: 5 * 1024 * 1024, forceCloseConnections: true });
+  const app = Fastify({ logger: opts.logger ?? false, bodyLimit: 5 * 1024 * 1024, forceCloseConnections: true, trustProxy: opts.trustProxy ?? false });
   const maxWait = opts.maxWaitSeconds ?? 50;
   const publicUrl = (req: FastifyRequest) => opts.publicUrl ?? `${req.protocol}://${req.headers.host}`;
 
   // 每个请求按请求方的语言处理：x-ahub-lang 请求头（控制台和命令行会带）> ?lang= > Accept-Language > 中文。
   // 旧版命令行不带语言，仍然是中文。
   app.addHook('onRequest', (req, _reply, done) => withLang(requestLang(req), done));
+  app.addHook('onRequest', (_req, reply, done) => {
+    reply.headers({
+      'content-security-policy': CONSOLE_CSP,
+      'x-frame-options': 'DENY',
+      'x-content-type-options': 'nosniff',
+      'referrer-policy': 'no-referrer',
+    });
+    done();
+  });
+  // 不存在的接口不读请求体：解析请求体发生在处理之前，不拦的话谁都能让 Hub 把大请求读进内存
+  app.addHook('onRequest', async (req, reply) => {
+    if (req.is404 && req.method !== 'GET' && req.method !== 'HEAD') {
+      return reply.status(404).send({ error: { code: 'not_found', message: tr('接口不存在') } });
+    }
+  });
   addCompression(app);
 
   app.setErrorHandler((err: Error & { statusCode?: number; validation?: unknown }, req, reply) => {
@@ -97,13 +145,19 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
   });
 
   // ── 鉴权 ──
+  // 鉴权都放在 onRequest：Fastify 在 preHandler 之前就把请求体读进内存了，
+  // 放在后面的话，不带令牌的大请求也会占满内存。
   const requireAgent = async (req: FastifyRequest) => {
     const token = tokenOf(req);
     if (!token) throw new HubError(401, 'unauthorized', tr('缺少授权 ID：先用身份码换取（POST /api/v1/sessions）'));
     const { agent, session } = hub.authSession(token);
-    hub.touchAgent(agent);
     req.agent = agent;
     req.session = session;
+  };
+  /** 请求体也没问题了才算一次活动和确认：格式错误的请求不能把收件箱标成已读。 */
+  const touchAgent = async (req: FastifyRequest) => {
+    const agent = req.agent!;
+    hub.touchAgent(agent);
     const ack = (req.query as Q)?.ack ?? (req.headers['x-ahub-ack'] as string | undefined);
     if (ack !== undefined && /^\d+$/.test(ack)) hub.ack(agent, Number(ack));
   };
@@ -132,7 +186,9 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
   });
 
   // ── Agent 接口 ──
-  app.post('/api/v1/join', async (req, reply) => {
+  // 这两个接口不需要登录，请求体只有几个短字段，上限定小一点
+  const PUBLIC_BODY_LIMIT = 64 * 1024;
+  app.post('/api/v1/join', { bodyLimit: PUBLIC_BODY_LIMIT }, async (req, reply) => {
     const body = (req.body ?? {}) as B;
     const token = tokenOf(req);
     const existing = token ? hub.authSession(token).agent : null;
@@ -153,7 +209,7 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
   });
 
   // 用身份码换授权 ID：每次连接（ahub run 启动、MCP 桥启动、命令行第一次调用）换一个
-  app.post('/api/v1/sessions', async (req, reply) => {
+  app.post('/api/v1/sessions', { bodyLimit: PUBLIC_BODY_LIMIT }, async (req, reply) => {
     const b = (req.body ?? {}) as B;
     const r = hub.openSession({
       code: str(b.code) ?? '',
@@ -174,7 +230,8 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
   });
 
   app.register(async (agentApi) => {
-    agentApi.addHook('preHandler', requireAgent);
+    agentApi.addHook('onRequest', requireAgent);
+    agentApi.addHook('preHandler', touchAgent);
 
     // 进程退出时交还授权 ID，立即下线
     agentApi.delete('/api/v1/sessions/current', async (req) => hub.releaseSession(req.session!));
@@ -462,27 +519,28 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
 
   // ── 文件上传与下载 ──
   const MAX_UPLOAD = 25 * 1024 * 1024;
-  app.addContentTypeParser('application/octet-stream', { parseAs: 'buffer', bodyLimit: MAX_UPLOAD }, (_req, body, done) =>
-    done(null, body),
-  );
-  app.post('/api/v1/files', { bodyLimit: MAX_UPLOAD }, async (req, reply) => {
+  app.addContentTypeParser('application/octet-stream', { parseAs: 'buffer' }, (_req, body, done) => done(null, body));
+  const requireUploader = async (req: FastifyRequest) => {
     if (!opts.filesDir) throw new HubError(501, 'unsupported', tr('这个 Hub 没有开启文件上传'));
     const token = tokenOf(req);
-    let uploader: string | null = null;
-    if (token && hub.isOwnerToken(token)) uploader = 'owner';
+    if (token && hub.isOwnerToken(token)) req.uploader = 'owner';
     else if (token) {
       const { agent } = hub.authSession(token);
       hub.touchAgent(agent);
-      uploader = agentCode(agent.id);
+      req.uploader = agentCode(agent.id);
     }
-    if (!uploader) throw new HubError(401, 'unauthorized', tr('缺少或无效的令牌'));
+    if (!req.uploader) throw new HubError(401, 'unauthorized', tr('缺少或无效的令牌'));
+  };
+  app.post('/api/v1/files', { bodyLimit: MAX_UPLOAD, onRequest: requireUploader }, async (req, reply) => {
+    const filesDir = opts.filesDir!;
+    const uploader = req.uploader!;
     if (!Buffer.isBuffer(req.body)) throw new HubError(400, 'invalid', tr('请用 Content-Type: application/octet-stream 上传文件内容'));
     const q = req.query as Q;
     const name = q.name ?? (req.headers['x-file-name'] ? decodeURIComponent(String(req.headers['x-file-name'])) : 'file');
     const mime = q.mime ?? guessMime(name);
     const part = hub.recordFile(uploader, { name, mime, size: req.body.length });
-    mkdirSync(opts.filesDir, { recursive: true });
-    writeFileSync(join(opts.filesDir, part.url!.slice('/files/'.length)), req.body);
+    mkdirSync(filesDir, { recursive: true });
+    writeFileSync(join(filesDir, part.url!.slice('/files/'.length)), req.body);
     reply.status(201);
     return { ...part, id: part.url!.slice('/files/'.length), absolute_url: publicUrl(req) + part.url };
   });
@@ -502,17 +560,19 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
   });
 
   // ── MCP（Streamable HTTP，无状态） ──
-  app.all('/mcp', async (req, reply) => {
+  const requireMcpAgent = async (req: FastifyRequest) => {
     const token = tokenOf(req);
     if (!token) throw new HubError(401, 'unauthorized', tr('缺少授权 ID（请求头 Authorization: Bearer <授权 ID>）；推荐用 ahub mcp 桥接，它会自动用身份码换取'));
     const { agent } = hub.authSession(token);
     hub.touchAgent(agent);
-    await handleMcpRequest(app, req, reply, token);
+  };
+  app.all('/mcp', { onRequest: requireMcpAgent }, async (req, reply) => {
+    await handleMcpRequest(app, req, reply, tokenOf(req)!);
   });
 
   // ── 负责人接口 ──
   app.register(async (admin) => {
-    admin.addHook('preHandler', requireOwner);
+    admin.addHook('onRequest', requireOwner);
     const A = '/api/v1/admin';
 
     admin.get(`${A}/overview`, async (req) => hub.overview((req.query as Q).project));
@@ -834,16 +894,52 @@ function artifactUpdate(hub: Hub, method: 'put' | 'patch', b: B) {
   return { ...base, content: b.content };
 }
 
+const badArtifact = (why: string) => new HubError(400, 'invalid', tr('交付物格式不对：{why}', { why }));
+
+/** 链接只放行 http、https、mailto；没写协议的（github.com/foo、localhost:3000）当普通文字，也放行。 */
+function linkUrl(v: unknown): string {
+  if (typeof v !== 'string') throw badArtifact(tr('链接的 url 必须是字符串'));
+  // 浏览器解析地址前会去掉控制字符和空白，java<tab>script: 一样能执行
+  const compact = v.replace(/[\u0000-\u0020\u007f]/g, '');
+  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(compact)?.[1].toLowerCase();
+  const hostPort = /^(localhost|[a-z0-9-]+(\.[a-z0-9-]+)+):\d+(\/|$)/i.test(compact);
+  if (scheme && !hostPort && !['http', 'https', 'mailto'].includes(scheme)) throw badArtifact(tr('链接只支持 http、https 和 mailto'));
+  return v;
+}
+
+function parsePart(p: unknown): Part | null {
+  if (!p || typeof p !== 'object' || Array.isArray(p)) throw badArtifact(tr('parts 里每一项都要是对象'));
+  const part = p as Record<string, unknown>;
+  switch (part.kind) {
+    // 文件只能通过 file_id 引用，不接受客户端自己拼的 file 部分
+    case 'file':
+      return null;
+    case 'text':
+      if (typeof part.text !== 'string') throw badArtifact(tr('文本部分的 text 必须是字符串'));
+      return { kind: 'text', text: part.text };
+    case 'link':
+      return { kind: 'link', url: linkUrl(part.url), ...(typeof part.name === 'string' ? { name: part.name } : {}) };
+    case 'data':
+      return { kind: 'data', data: part.data };
+    default:
+      throw badArtifact(tr('kind 只能是 text、link、data'));
+  }
+}
+
 function parseArtifacts(hub: Hub, v: unknown): { name?: string; parts: Part[] }[] | undefined {
   if (!Array.isArray(v)) return undefined;
-  return v.map((a: { name?: string; content?: string; url?: string; file_id?: string; parts?: Part[] }) => {
-    // 文件只能通过 file_id 引用，不接受客户端自己拼的 file 部分
-    if (Array.isArray(a.parts)) return { name: a.name, parts: a.parts.filter((p) => p.kind !== 'file') };
+  return v.map((item: unknown) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) throw badArtifact(tr('每个交付物都要是对象'));
+    const a = item as { name?: unknown; content?: unknown; url?: unknown; file_id?: unknown; parts?: unknown };
+    if (a.name != null && typeof a.name !== 'string') throw badArtifact(tr('name 必须是字符串'));
+    const name = a.name ?? undefined;
+    if (Array.isArray(a.parts)) return { name, parts: a.parts.map(parsePart).filter((p): p is Part => p !== null) };
+    if (a.content != null && typeof a.content !== 'string') throw badArtifact(tr('content 必须是字符串'));
     const parts: Part[] = [];
     if (a.file_id) parts.push(hub.filePart(String(a.file_id)));
-    if (a.content) parts.push({ kind: 'text', text: String(a.content) });
-    if (a.url) parts.push({ kind: 'link', url: String(a.url) });
-    return { name: a.name, parts };
+    if (a.content) parts.push({ kind: 'text', text: a.content });
+    if (a.url) parts.push({ kind: 'link', url: linkUrl(a.url) });
+    return { name, parts };
   });
 }
 

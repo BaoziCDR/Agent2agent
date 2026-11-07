@@ -8,6 +8,9 @@ import { foldDiff, lineDiff } from '../diff';
 const fileSize = (n: number) => (n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`);
 const isImage = (p: { mime?: string }) => /^image\/(png|jpeg|gif|webp)$/.test(p.mime ?? '');
 
+/** 只有这些地址才做成可点的链接；旧数据里可能有 javascript: 这样的地址，也可能根本不是字符串 */
+const SAFE_LINK = /^(https?:|mailto:|\/)/i;
+
 /** 只有一段文本的交付物才能逐行对比和在线编辑。 */
 const textOf = (parts: Part[]) => (parts.length === 1 && parts[0].kind === 'text' && typeof parts[0].text === 'string' ? parts[0].text : null);
 
@@ -41,16 +44,20 @@ function PartsView({ parts }: { parts: Part[] }) {
       {parts.map((p, i) =>
         p.kind === 'file' ? (
           <FilePart key={i} p={p} />
-        ) : p.kind === 'link' ? (
+        ) : p.kind === 'link' && typeof p.url === 'string' ? (
           <div key={i}>
-            <a href={p.url} target="_blank" rel="noreferrer">
-              {p.url}
-            </a>
+            {SAFE_LINK.test(p.url) ? (
+              <a href={p.url} target="_blank" rel="noreferrer">
+                {p.url}
+              </a>
+            ) : (
+              p.url
+            )}
           </div>
-        ) : p.text !== undefined ? (
+        ) : typeof p.text === 'string' ? (
           <Markdown key={i} text={p.text} agents={agents} />
         ) : (
-          <pre key={i}>{JSON.stringify(p.data, null, 2)}</pre>
+          <pre key={i}>{JSON.stringify(p.kind === 'data' ? p.data : p, null, 2)}</pre>
         ),
       )}
     </>

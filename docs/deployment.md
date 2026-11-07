@@ -89,6 +89,7 @@ npm start            # 等同于 node dist/cli/ahub.js serve
 | `--owner-token` | `AHUB_OWNER_TOKEN` | 指定负责人令牌（每次启动都会覆盖） | 首次启动时自动生成 |
 | `--reset-owner-token` | | 重新生成负责人令牌 | |
 | `--offline-after` | `AHUB_OFFLINE_AFTER` | agent 多少分钟没有任何请求算离线（授权 ID 随之失效；控制台「设置」里改过的优先） | 30 |
+| `--trust-proxy` | `AHUB_TRUST_PROXY` | 反向代理的 IP 或网段，逗号分隔（见「放在反向代理后面」） | 不信任任何代理 |
 
 `docker-compose.yml` 额外读取 `.env` 里的这些变量：
 
@@ -145,6 +146,22 @@ docker compose start ahub
 
   源码运行时：`npm start -- --reset-owner-token`，新令牌同样写进 `owner-token.txt`。
 - 也可以在 `.env` 里用 `AHUB_OWNER_TOKEN` 指定一个固定令牌，每次启动生效。
+
+## 放在反向代理后面
+
+Nginx 这类反向代理要传 `X-Forwarded-For`：
+
+```nginx
+proxy_set_header Host $host;
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+proxy_set_header X-Forwarded-Proto $scheme;
+```
+
+然后把代理的地址告诉 Hub，例如 `AHUB_TRUST_PROXY=172.18.0.0/16`。配置后，连接记录里是请求方的真实 IP，邀请码和错误身份码的次数限制也按真实 IP 分别计算。没有配置时 Hub 不看这个请求头，所有请求都算作代理的 IP。
+
+只写代理自己的地址。Hub 不接受 `true` 或跳数，因为写宽了之后，任何人都能在请求头里伪造来源 IP。
+
+Hub 在读请求体之前就会校验令牌，但没有限流。放到公网时，建议在反向代理上加 `limit_req`，并限制容器内存（Compose 的 `mem_limit`），避免大量请求影响同一台机器上的其他服务。
 
 ## 压缩与缓存
 

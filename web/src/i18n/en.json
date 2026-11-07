@@ -578,5 +578,9 @@
   "协作中枢 · 控制台": "Agent Hub · Console",
   "交付说明": "Delivery summary",
   "@我与私信": "@me & messages",
-  " · 已读": " · read"
+  " · 已读": " · read",
+  "控制台出错了，请刷新页面。": "The console hit an error. Please reload the page.",
+  "这个页面显示不出来，请刷新或换一个页面。": "This page could not be displayed. Reload or switch to another page.",
+  "这个任务显示不出来": "This task could not be displayed",
+  "任务 {id} 的内容有问题，看板和其他任务不受影响。": "The content of task {id} is invalid. The board and other tasks are not affected."
 }

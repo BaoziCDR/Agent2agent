@@ -358,6 +358,12 @@ const editableText = (parts: Part[]) => {
 /** 预设名称会写进启动命令的引号里，去掉会破坏命令的字符。 */
 const inviteName = (name?: string) => (name ?? '').trim().replace(/["`$\\]/g, '').slice(0, 40);
 
+/** agent 不能叫这些名字，否则动态和评论里看着像负责人本人。比较时忽略大小写、全半角、空白和标点。 */
+function assertAgentName(name: string | undefined) {
+  const bare = (name ?? '').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+  if (bare === '负责人' || bare === 'owner') throw invalid(tr('「{name}」会和负责人混淆，请换一个名字', { name: name!.trim() }));
+}
+
 const countOf = (text: string, part: string) => {
   let n = 0;
   for (let i = text.indexOf(part); i >= 0; i = text.indexOf(part, i + 1)) n++;
@@ -611,9 +617,11 @@ export class Hub {
     const ip = input.ip ?? '';
     const now = this.now().getTime();
     const fails = this.failedLogins.get(ip);
-    if (fails && now - fails.at < 60_000 && fails.n >= 10) throw new HubError(429, 'too_many_attempts', tr('身份码错误次数太多，请一分钟后再试'));
     let agent = this.agentByCode(input.code ?? '');
     let issued: string | null = null;
+    // 身份码 12 位随机字符，猜不到，正确的码不受锁定影响：否则反向代理后面所有人共用一个 IP，
+    // 谁都能发几个错误请求，把所有 agent 挡在外面。只有 6 位的旧邀请码还要受这个限制。
+    if (!agent && fails && now - fails.at < 60_000 && fails.n >= 10) throw new HubError(429, 'too_many_attempts', tr('身份码错误次数太多，请一分钟后再试'));
     if (!agent && /^[A-Z0-9]{3}-?[A-Z0-9]{3}$/i.test((input.code ?? '').trim())) {
       // 老的邀请码：创建身份（并加入项目），之后用新身份码
       const invite = (input.code ?? '').trim().toUpperCase().replace(/^(...)-?(...)$/, '$1-$2');
@@ -625,6 +633,8 @@ export class Hub {
       }
     }
     if (!agent) {
+      // 按真实 IP 计数后条目可能很多，定期清掉过期的
+      if (this.failedLogins.size > 10_000) for (const [k, f] of this.failedLogins) if (now - f.at >= 60_000) this.failedLogins.delete(k);
       this.failedLogins.set(ip, { n: (fails && now - fails.at < 60_000 ? fails.n : 0) + 1, at: fails && now - fails.at < 60_000 ? fails.at : now });
       throw new HubError(401, 'invalid_code', tr('身份码无效：请检查是否抄错，或向负责人确认这个身份码没有被重置'));
     }
@@ -632,6 +642,7 @@ export class Hub {
     if (inactive) throw inactive;
     const name = input.name?.trim();
     if (!agent.name && !name) throw invalid(tr('这个身份还没有名字：第一次连接时请用 --name 给自己起一个简短、能区分的名字'));
+    if (!agent.name) assertAgentName(name);
     const client = ['run', 'cli', 'mcp'].includes(input.client ?? '') ? input.client! : 'cli';
     const host = String(input.host ?? '').slice(0, 80);
     const cwd = String(input.cwd ?? '').slice(0, 300);
@@ -1690,6 +1701,7 @@ export class Hub {
     createdBy = 'owner',
   ) {
     const p = this.requireProject(input.project);
+    if (createdBy !== 'owner') assertAgentName(input.name);
     const code = newInviteCode();
     const expires = this.iso((input.hours ?? 24) * 60);
     this.db
@@ -1804,6 +1816,7 @@ export class Hub {
     if (inv.revoked) throw invalid(tr('邀请码已被撤销'));
     if (inv.expires_at < this.iso()) throw invalid(tr('邀请码已过期'));
     if (inv.uses >= inv.max_uses) throw invalid(tr('邀请码已用完'));
+    assertAgentName(input.name);
     const tier = (input.tier ?? 'L1').toUpperCase() as Tier;
     if (!TIERS.includes(tier)) throw invalid(tr('tier 只能是 L1、L2、L3、L4'));
 
@@ -1923,6 +1936,7 @@ export class Hub {
       if (!['active', 'disabled'].includes(input.status)) throw invalid(tr('status 只能是 active 或 disabled'));
     }
     if (input.can_invite !== undefined && actor.kind !== 'owner') throw forbidden(tr('只有负责人可以授权创建邀请'));
+    if (actor.kind === 'agent') assertAgentName(input.name);
     const tier = input.tier ? (input.tier.toUpperCase() as Tier) : a.tier;
     if (!TIERS.includes(tier)) throw invalid(tr('tier 只能是 L1、L2、L3、L4'));
     return this.write(() => {
@@ -2017,6 +2031,7 @@ export class Hub {
   createAgent(input: { project: string; name?: string; tags?: string[]; platform?: string; note?: string }, createdBy = 'owner') {
     const p = this.requireProject(input.project);
     if (p.status !== 'active') throw conflict(tr('项目 {project} 已归档', { project: input.project }));
+    if (createdBy !== 'owner') assertAgentName(input.name);
     const code = newIdentityCode();
     return this.write(() => {
       const r = this.db

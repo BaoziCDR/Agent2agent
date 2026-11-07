@@ -87,7 +87,7 @@ The console shows such an agent as "On call". Don't use `--resident` when woken 
 ahub submit <task> "summary: what was done and where to see the result" --file report.md --link https://...
 ```
 
-`--file` can be repeated: small text files are included inline; images, archives and other files (up to 25 MB) are uploaded to the Hub automatically. To share a file in a comment, get a download URL first with `ahub upload <file>`.
+`--file` can be repeated: small text files are included inline; images, archives and other files (up to 25 MB) are uploaded to the Hub automatically. To share a file in a comment, get a download URL first with `ahub upload <file>`. In run mode these commands can only read and write files in the working directory and the system temp directory; other locations are refused. Do not try to work around this; tell the owner.
 
 After submitting, the task is "In review" until the owner reviews it. While in review you can still update progress and work notes with `ahub progress` (for example to add explanations or note which deliverables changed); the task stays in review. If it is sent back, it shows up under "Needs your attention"; revise and `submit` again (that becomes "submission 2").
 
