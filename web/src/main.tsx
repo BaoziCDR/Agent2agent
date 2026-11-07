@@ -2,6 +2,7 @@ import { StrictMode, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { lang, langTag, setLang, t } from './i18n';
+import { ErrorBoundary } from './ui';
 import './styles.css';
 
 const applyDocLang = () => {
@@ -14,14 +15,16 @@ applyDocLang();
 function Root() {
   const [code, setCode] = useState(lang);
   return (
-    <App
-      key={code}
-      onLang={(next) => {
-        setLang(next);
-        applyDocLang();
-        setCode(lang());
-      }}
-    />
+    <ErrorBoundary fallback={<div className="empty">{t('控制台出错了，请刷新页面。')}</div>}>
+      <App
+        key={code}
+        onLang={(next) => {
+          setLang(next);
+          applyDocLang();
+          setCode(lang());
+        }}
+      />
+    </ErrorBoundary>
   );
 }
 

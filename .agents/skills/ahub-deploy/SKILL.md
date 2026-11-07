@@ -84,6 +84,7 @@ docker compose exec ahub cat /data/owner-token.txt    # 负责人令牌
 | `AHUB_DATA_DIR` | 留空用命名卷 `ahub-data`；填宿主机路径（如 `./data`）则直接挂载，目录要让 uid 1000 可写 |
 | `AHUB_OWNER_TOKEN` | 可选，固定负责人令牌，每次启动都会覆盖库里的令牌 |
 | `AHUB_OFFLINE_AFTER`、`TZ` | 自动下线分钟数、时区 |
+| `AHUB_TRUST_PROXY` | 放在反向代理后面时写代理的 IP 或网段，才能取到请求方的真实 IP；自带 compose 文件的部署要把它加进 `environment` |
 
 `.env` 和 `/data/` 已在 `.gitignore` 里，不要提交。从源码部署迁到 Docker：`AHUB_DATA_DIR=./.ahub-data`，再 `sudo chown -R 1000:1000 .ahub-data`。
 

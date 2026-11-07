@@ -22,6 +22,8 @@ services:
       # 留空时按浏览器访问控制台用的地址生成
       AHUB_PUBLIC_URL: ${AHUB_PUBLIC_URL:-}
       AHUB_OFFLINE_AFTER: ${AHUB_OFFLINE_AFTER:-30}
+      # 放在反向代理后面时写代理的 IP 或网段，才能取到请求方的真实 IP（见 docs/deployment.md）
+      AHUB_TRUST_PROXY: ${AHUB_TRUST_PROXY:-}
       # 固定负责人令牌（可选）；不填时首次启动自动生成，保存在 /data/owner-token.txt
       AHUB_OWNER_TOKEN: ${AHUB_OWNER_TOKEN:-}
       TZ: ${TZ:-Asia/Shanghai}

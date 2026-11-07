@@ -17,6 +17,8 @@ export interface ServeOptions {
   ownerToken?: string;
   /** 多久没有任何请求算离线（分钟） */
   offlineAfterMinutes?: number;
+  /** 信任的反向代理（IP 或网段，逗号分隔） */
+  trustProxy?: string;
 }
 
 function lanAddresses(): string[] {
@@ -49,7 +51,7 @@ export async function serve(opts: ServeOptions) {
   notifier.start();
   const tagger = new Tagger(hub, db);
   tagger.start();
-  const app = buildApp(hub, { publicUrl: opts.publicUrl, logger: false, filesDir: join(dataDir, 'files'), notifier, tagger });
+  const app = buildApp(hub, { publicUrl: opts.publicUrl, logger: false, filesDir: join(dataDir, 'files'), notifier, tagger, trustProxy: opts.trustProxy });
   await app.listen({ port: opts.port, host: opts.host });
 
   const sweep = setInterval(() => {

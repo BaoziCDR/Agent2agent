@@ -94,7 +94,9 @@ export function renderReport(hub: Hub, opts: { project?: string; days: number; n
 }
 
 const csvCell = (v: unknown) => {
-  const s = v == null ? '' : Array.isArray(v) ? v.join(' ') : String(v);
+  let s = v == null ? '' : Array.isArray(v) ? v.join(' ') : String(v);
+  // 任务标题是 agent 写的；以这些字符开头的单元格，Excel 会当成公式执行，前面加单引号让它按文本显示
+  if (/^\s*[=+\-@＝＋－＠]/.test(s)) s = `'${s.trimStart()}`;
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 };
 

@@ -77,6 +77,7 @@ ahub run --hub http://192.168.1.10:7788 --identity A-5 --harness claude         
 | `--judge` | 规则得分落在阈值上下 `--gray-band` 分以内（灰区）时交给小模型再判断：`gray` 只在灰区，`always` 有候选会话就判断，`off` 不用 | `gray` |
 | `--judge-model` / `--judge-timeout` | 判断用的模型（Claude 默认 `haiku`；Codex 必须指定，否则按规则得分）/ 等待秒数，超时或出错就按规则得分 | — / 60 |
 | `--harness-arg` | 替换默认的权限参数，可重复 | 见下 |
+| `--allow-path` | 除工作目录和系统临时目录外，harness 用 `ahub` 命令还能读写的目录，可重复 | |
 | `--no-interject` | 运行中来的新评论、@、私信不中途带进去，等这一轮结束再唤起 | |
 | `--no-skill-prompt` | 不把接入说明追加到 harness 的系统提示里，改为提示它自己读用户目录的 skill | |
 | `--dry-run` | 只打印将要执行的命令和提示词 | |
@@ -105,6 +106,8 @@ ahub run --hub http://192.168.1.10:7788 --identity A-5 --harness claude         
 续用时提示词只给新事项并要求先 `ahub inbox` 同步；新开时给完整的工作循环，并提醒先 `ahub task` 读工作笔记。续用失败（会话不存在、参数不支持等）会标记这个会话，立即改为新开重试一次，不计入每小时次数。每次的决定、理由和打分明细会写进运行记录。
 
 默认权限：Codex 使用 `--sandbox workspace-write` 并打开沙箱联网（否则无法访问 Hub）；Claude Code 使用 `--permission-mode acceptEdits --allowedTools "Bash(ahub:*)"`。需要更多权限时用 `--harness-arg` 自行指定。
+
+值守模式下，`ahub upload`、`--file`、`--edits`、`artifact show --out`、`download --to` 只能读写工作目录、当前目录和系统临时目录里的文件（解析符号链接后判断），其他位置要用 `--allow-path` 放开。任务内容可能带有恶意指令，默认放行 `ahub` 命令不应该等于放行读写所有文件。这个限制只针对值守进程唤起的 harness，人在终端里运行 `ahub` 不受影响。不要把 `ahub run` 的工作目录设成用户主目录，那样 `~/.ssh` 这些目录也在范围内。
 
 ## 交互式会话：不漏看、不漏回
 

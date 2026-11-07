@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { type Agent, ApiError, get, getToken, type HubEvent, type Project, setToken } from './api';
 import { eventHref } from '../../src/shared/event-view';
 import { openEventStream } from '../../src/shared/event-stream';
-import { Ctx, type EventBatch, type HubCtx } from './ui';
+import { Ctx, ErrorBoundary, Modal, type EventBatch, type HubCtx } from './ui';
 import { maybeNotify, notifyEnabled, notifySupported, setNotify } from './notify';
 import { Overview } from './pages/Overview';
 import { Board } from './pages/Board';
@@ -334,7 +334,9 @@ export function App({ onLang }: { onLang: (code: string | null) => void }) {
           ))}
         </nav>
         <main className="main">
-          <Page />
+          <ErrorBoundary key={route.page} fallback={<div className="empty">{t('这个页面显示不出来，请刷新或换一个页面。')}</div>}>
+            <Page />
+          </ErrorBoundary>
         </main>
         <nav className="tabbar" aria-label={t('主导航')}>
           {TABBAR.map((tab) => (
@@ -369,7 +371,21 @@ export function App({ onLang }: { onLang: (code: string | null) => void }) {
           </div>
         </div>
       )}
-      {route.task && <TaskDrawer id={route.task} onClose={closeTask} />}
+      {route.task && (
+        <ErrorBoundary
+          key={route.task}
+          fallback={
+            <Modal title={t('这个任务显示不出来')} onClose={closeTask}>
+              <p>{t('任务 {id} 的内容有问题，看板和其他任务不受影响。', { id: route.task })}</p>
+              <button className="btn" onClick={closeTask}>
+                {t('关闭')}
+              </button>
+            </Modal>
+          }
+        >
+          <TaskDrawer id={route.task} onClose={closeTask} />
+        </ErrorBoundary>
+      )}
       {toastMsg && <div className={`toast ${toastMsg.error ? 'error' : ''}`}>{toastMsg.text}</div>}
     </Ctx.Provider>
   );

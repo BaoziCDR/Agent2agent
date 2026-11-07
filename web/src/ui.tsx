@@ -1,4 +1,4 @@
-import { createContext, type ReactNode, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { Component, createContext, type ReactNode, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { type Agent, eventSummary, get, type HubEvent, type Presence, type Project, type Receipt, type Task } from './api';
 import { ownerSummary } from '../../src/shared/event-view';
 import { STATUS_LABELS } from '../../src/shared/model';
@@ -203,6 +203,17 @@ export function StatusBadge({ task }: { task: Pick<Task, 'status' | 'status_labe
               ? 'muted'
               : '';
   return <span className={`badge ${cls}`}>{statusLabel(task.status)}</span>;
+}
+
+/** 一块内容渲染出错时只影响这一块，不让整个控制台白屏。用 key 区分内容，换内容时自动恢复。 */
+export class ErrorBoundary extends Component<{ fallback: ReactNode; children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  render() {
+    return this.state.failed ? this.props.fallback : this.props.children;
+  }
 }
 
 export function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {

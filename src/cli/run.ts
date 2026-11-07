@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { delimiter, dirname, join, resolve } from 'node:path';
 import { type ClaimFit, type ClaimSettings, claimKey, planClaims } from './claim.js';
 import type { CliConfig } from './config.js';
 import { skillSystemPrompt } from './skill.js';
@@ -33,6 +33,8 @@ export interface RunOptions {
   cmd?: string;
   /** 追加给 harness 的参数（会替换内置的默认权限参数） */
   harnessArgs?: string[];
+  /** 除工作目录外，harness 用 ahub 命令还能读写的目录 */
+  allowPaths?: string[];
   cwd: string;
   /** 每小时最多唤起几次，0 表示不限 */
   maxRunsPerHour: number;
@@ -178,9 +180,10 @@ export function showArgs(args: string[]): string {
 }
 
 /** 从 Claude Code 终端里启动值守进程时，去掉会让子进程误以为是嵌套会话的变量。 */
-function harnessEnv(prompt: string): NodeJS.ProcessEnv {
+export function harnessEnv(prompt: string, cwd: string, allowPaths: string[] = []): NodeJS.ProcessEnv {
   // AHUB_RUN 告诉 ahub wait：本轮由值守进程唤起，不需要等待
-  const env: NodeJS.ProcessEnv = { ...process.env, AHUB_PROMPT: prompt, AHUB_RUN: '1' };
+  // AHUB_PATH_ROOTS 限制 harness 用 ahub 命令读写的文件范围（见 files.ts）
+  const env: NodeJS.ProcessEnv = { ...process.env, AHUB_PROMPT: prompt, AHUB_RUN: '1', AHUB_PATH_ROOTS: [cwd, ...allowPaths].join(delimiter) };
   for (const k of ['CLAUDECODE', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_ENTRYPOINT']) delete env[k];
   return env;
 }
@@ -511,7 +514,7 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
             active,
           },
           judgeOpts,
-          harnessEnv(''),
+          harnessEnv('', cwd, opts.allowPaths),
         );
         if (verdict?.decision === 'pass') {
           await api('POST', `/api/v1/tasks/${encodeURIComponent(w.id)}/pass`, { reason: tr('小模型判断不适合：{v}', { v: verdict.reason || tr('未说明') }) });
@@ -583,7 +586,7 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
         if (opts.dryRun) log(tr('（试运行）规则得分 {score} 在灰区，正式运行时会交给小模型判断', { score: decision.score }));
         else {
           log(tr('规则得分 {score}{v}，交给小模型判断', { score: decision.score, v: decision.gray ? tr(' 在灰区') : '' }));
-          const verdict = await runJudge(judgePrompt(decision, items, opts.session.threshold), { ...opts.judge, harness: opts.harness }, harnessEnv(''));
+          const verdict = await runJudge(judgePrompt(decision, items, opts.session.threshold), { ...opts.judge, harness: opts.harness }, harnessEnv('', cwd, opts.allowPaths));
           decision = applyVerdict(decision, verdict);
         }
       }
@@ -636,7 +639,7 @@ export async function runDaemon(cfg: CliConfig, configPath: string, opts: RunOpt
     const code = await new Promise<number | null>((done) => {
       const child = spawn(cmd, args, {
         cwd,
-        env: harnessEnv(prompt),
+        env: harnessEnv(prompt, cwd, opts.allowPaths),
         // Windows 上 codex/claude 是 .cmd 脚本，需要经过 shell；参数里没有用户文本，提示词走标准输入
         shell: opts.harness === 'custom' || process.platform === 'win32',
         stdio: ['pipe', 'pipe', 'pipe'],
