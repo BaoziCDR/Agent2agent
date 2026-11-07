@@ -2,9 +2,10 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import fastifyStatic from '@fastify/static';
 import { createReadStream, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { type Actor, type AgentRow, Hub, HubError, type SessionRow, agentCode } from './hub.js';
+import { addCompression } from './compress.js';
+import { type Actor, type AgentRow, Hub, HubError, type SessionRow, agentCode, taskSummary } from './hub.js';
 import { renderArtifact, renderArtifactLog, renderInbox, renderJoin, renderMe, renderSearch, renderTask, renderTaskList } from './format.js';
 import { handleMcpRequest } from './mcp-http.js';
 import { renderReport, tasksCsv } from './report.js';
@@ -82,6 +83,7 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
   // 每个请求按请求方的语言处理：x-ahub-lang 请求头（控制台和命令行会带）> ?lang= > Accept-Language > 中文。
   // 旧版命令行不带语言，仍然是中文。
   app.addHook('onRequest', (req, _reply, done) => withLang(requestLang(req), done));
+  addCompression(app);
 
   app.setErrorHandler((err: Error & { statusCode?: number; validation?: unknown }, req, reply) => {
     const status = err instanceof HubError ? err.status : (err.statusCode ?? 500);
@@ -705,9 +707,13 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
 
     admin.get(`${A}/tasks`, async (req) => {
       const q = req.query as Q;
-      return hub.listTasks({ kind: 'owner' }, { project: q.project, status: q.status, assignee: q.assignee, parent: q.parent });
+      const tasks = hub.listTasks({ kind: 'owner' }, { project: q.project, status: q.status, assignee: q.assignee, parent: q.parent });
+      return q.view === 'summary' ? tasks.map(taskSummary) : tasks;
     });
-    admin.get(`${A}/tasks/:id`, async (req) => hub.getTask((req.params as { id: string }).id));
+    admin.get(`${A}/tasks/:id`, async (req) => {
+      const t = hub.getTask((req.params as { id: string }).id);
+      return (req.query as Q).view === 'summary' ? { ...t, subtasks: t.subtasks.map(taskSummary) } : t;
+    });
     admin.post(`${A}/tasks`, async (req, reply) => {
       const b = (req.body ?? {}) as B;
       reply.status(201);
@@ -780,7 +786,14 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
   // ── 控制台 ──
   const webDir = opts.webDir ?? join(ROOT, 'web', 'dist');
   if (existsSync(join(webDir, 'index.html'))) {
-    app.register(fastifyStatic, { root: webDir, prefix: '/' });
+    app.register(fastifyStatic, {
+      root: webDir,
+      prefix: '/',
+      // assets 下的文件名带内容哈希，内容变了地址也变，可以一直缓存；index.html 每次都要确认是否有新版
+      setHeaders: (res, path) => {
+        if (relative(webDir, path).startsWith(`assets${sep}`)) res.header('cache-control', 'public, max-age=31536000, immutable');
+      },
+    });
     app.setNotFoundHandler((req, reply) => {
       if (req.method === 'GET' && !req.url.startsWith('/api/') && !req.url.startsWith('/mcp')) {
         return reply.sendFile('index.html');

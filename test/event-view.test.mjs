@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { openDb } from '../dist/server/db.js';
 import { Hub } from '../dist/server/hub.js';
-import { eventHref, isForOwner, ownerSummary } from '../dist/shared/event-view.js';
+import { changesTaskDetail, changesTaskList, eventHref, isForOwner, ownerSummary } from '../dist/shared/event-view.js';
 
 const nameOf = (code) => ({ 'A-1': 'Claude-Linux', 'A-2': 'Co$1dex' })[code] ?? code;
 const event = (over) => ({ type: 'mention', task: 'P1-T3', actor: 'A-2', audience: ['A-1'], data: {}, ...over });
@@ -83,4 +83,59 @@ test('负责人事件列表：带已读状态，可以只取发给负责人的�
 
   hub.markOwnerRead({ task: t.id });
   assert.equal(hub.eventsForOwner({ inbox: true })[0].owner_read, true);
+});
+
+test('看板只为改变卡片的事件刷新', () => {
+  for (const type of ['task.created', 'task.progress', 'task.status_changed', 'task.assigned', 'task.updated', 'agent.updated']) {
+    assert.equal(changesTaskList({ type }), true, type);
+  }
+  for (const type of ['receipt.updated', 'agent.activity', 'agent.online', 'agent.offline', 'comment.created', 'mention', 'message.direct', 'artifact.updated']) {
+    assert.equal(changesTaskList({ type }), false, type);
+  }
+});
+
+test('任务详情只为相关事件刷新', () => {
+  const open = {
+    status: 'working',
+    parent: 'P1-T1',
+    depends_on: ['P1-T2'],
+    subtasks: [{ id: 'P1-T4' }],
+    ref_tasks: [{ id: 'P1-T5' }],
+    referenced_by: [{ id: 'P1-T6' }],
+  };
+  const changes = (over, task = open) => changesTaskDetail({ type: 'task.progress', task: 'P1-T3', data: {}, ...over }, 'P1-T3', task);
+
+  // 本任务的事件都要刷新，包括回执（评论下的标签）；任务详情还没载入完也一样
+  for (const type of ['task.progress', 'comment.created', 'mention', 'artifact.updated', 'receipt.updated', 'task.deliverable']) {
+    assert.equal(changes({ type }), true, type);
+    assert.equal(changes({ type }, null), true, `${type}（未载入）`);
+  }
+  // agent 活动不显示在详情里，哪怕挂在本任务上
+  assert.equal(changes({ type: 'agent.activity' }), false);
+
+  // 其他任务的事件：无关的不刷新
+  assert.equal(changes({ task: 'P1-T9' }), false);
+  assert.equal(changes({ type: 'task.status_changed', task: 'P1-T9' }), false);
+  assert.equal(changes({ type: 'comment.created', task: 'P1-T9' }), false);
+
+  // 详情里显示的任务：状态、负责人变了才刷新，子任务报进度不用
+  for (const task of ['P1-T1', 'P1-T2', 'P1-T4', 'P1-T5', 'P1-T6']) {
+    assert.equal(changes({ type: 'task.status_changed', task }), true, task);
+    assert.equal(changes({ type: 'task.progress', task }), false, task);
+    assert.equal(changes({ type: 'comment.created', task }), false, task);
+  }
+  assert.equal(changes({ type: 'task.status_changed', task: 'P1-T4' }, null), false);
+
+  // 新任务可能是它的子任务；agent 改名显示在评论和负责人上
+  assert.equal(changes({ type: 'task.created', task: 'P1-T9' }), true);
+  assert.equal(changes({ type: 'agent.updated', task: null }), true);
+
+  // 领取候选只在待领取时显示
+  assert.equal(changes({ type: 'agent.online', task: null }), false);
+  assert.equal(changes({ type: 'agent.offline', task: null }, { ...open, status: 'open' }), true);
+
+  // 回执跨多个任务时事件不挂任务；全是私信才和详情无关
+  assert.equal(changes({ type: 'receipt.updated', task: null, data: { targets: [{ kind: 'comment', id: 1 }, { kind: 'task', id: 2 }] } }), true);
+  assert.equal(changes({ type: 'receipt.updated', task: null, data: { targets: [{ kind: 'message', id: 1 }] } }), false);
+  assert.equal(changes({ type: 'message.direct', task: null }), false);
 });

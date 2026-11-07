@@ -4,12 +4,19 @@ import { ownerSummary } from '../../src/shared/event-view';
 import { STATUS_LABELS } from '../../src/shared/model';
 import { langTag, msg, t } from './i18n';
 
+/** 短时间内到达的一批事件，合并成一次刷新 */
+export interface EventBatch {
+  id: number;
+  events: HubEvent[];
+}
+
 export interface HubCtx {
   projects: Project[];
   project: string | null; // null = 全部项目
   setProject: (p: string | null) => void;
   agents: Agent[];
-  tick: number; // 每收到一个事件 +1，页面据此刷新
+  tick: number; // 操作之后、断线重连之后 +1，所有页面都重新拉取
+  batch: EventBatch; // 最新一批实时事件，页面按需决定要不要刷新
   events: HubEvent[]; // 最近的实时事件
   refresh: () => void;
   toast: (msg: string, error?: boolean) => void;
@@ -26,9 +33,16 @@ export interface HubCtx {
 export const Ctx = createContext<HubCtx>(null as unknown as HubCtx);
 export const useHub = () => useContext(Ctx);
 
-/** 拉取数据，并在实时事件到来时自动刷新。 */
-export function useData<T>(load: () => Promise<T>, deps: unknown[]): { data: T | null; error: string | null; reload: () => void } {
-  const { tick } = useHub();
+/**
+ * 拉取数据，并在实时事件到来时自动刷新。
+ * 数据大、事件多的页面传 refreshOn，只为真正影响显示内容的事件重新拉取；不传时任何事件都刷新。
+ */
+export function useData<T>(
+  load: () => Promise<T>,
+  deps: unknown[],
+  opts?: { refreshOn?: (e: HubEvent, data: T | null) => boolean },
+): { data: T | null; error: string | null; reload: () => void } {
+  const { tick, batch } = useHub();
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [n, setN] = useState(0);
@@ -47,6 +61,13 @@ export function useData<T>(load: () => Promise<T>, deps: unknown[]): { data: T |
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [...deps, tick, n]);
+  const seenBatch = useRef(batch.id);
+  useEffect(() => {
+    if (batch.id === seenBatch.current) return;
+    seenBatch.current = batch.id;
+    if (!opts?.refreshOn || batch.events.some((e) => opts.refreshOn!(e, data))) setN((x) => x + 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [batch]);
   const reload = useCallback(() => setN((x) => x + 1), []);
   return { data, error, reload };
 }

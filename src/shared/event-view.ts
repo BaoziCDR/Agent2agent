@@ -4,6 +4,48 @@ import type { HubEvent } from './model.js';
 
 type EventLike = Pick<HubEvent, 'type' | 'task' | 'actor' | 'audience' | 'data'>;
 
+/**
+ * 这条事件会不会改变任务列表里显示的内容（看板卡片、关系图）。
+ * 评论、回执、agent 活动这些都不显示在卡片上，不用为它们重拉整个列表。
+ */
+export const changesTaskList = (e: Pick<HubEvent, 'type'>) => e.type.startsWith('task.') || e.type === 'agent.updated';
+
+/** 任务详情里显示着哪些别的任务：只是状态和负责人变了才需要刷新 */
+const RELATED_CHANGES = new Set<HubEvent['type']>(['task.status_changed', 'task.assigned', 'task.claimed', 'task.unclaimed', 'task.updated']);
+
+interface OpenTask {
+  status: string;
+  parent: string | null;
+  depends_on: string[];
+  subtasks: { id: string }[];
+  ref_tasks: { id: string }[];
+  referenced_by: { id: string }[];
+}
+
+/**
+ * 打开着任务详情时，这条事件要不要重新拉取详情。
+ * task 是已经载入的详情；刚切换到这个任务、还没载入完时传 null。
+ */
+export function changesTaskDetail(e: Pick<HubEvent, 'type' | 'task' | 'data'>, id: string, task: OpenTask | null): boolean {
+  if (e.type === 'agent.activity' || e.type === 'agent.control') return false;
+  if (e.type === 'agent.updated') return true; // 名字显示在负责人、评论、回执上
+  // 待领取的任务要显示领取候选，排名和 agent 是否在线有关
+  if (e.type === 'agent.online' || e.type === 'agent.offline' || e.type === 'agent.joined') return task?.status === 'open';
+  if (e.type === 'task.created') return true; // 新任务可能是它的子任务，或者引用了它
+  if (e.task === id) return true;
+  if (e.task) {
+    if (!task || !RELATED_CHANGES.has(e.type)) return false;
+    const related = [task.parent, ...task.depends_on, ...[...task.subtasks, ...task.ref_tasks, ...task.referenced_by].map((t) => t.id)];
+    return related.includes(e.task);
+  }
+  // 一次回执涉及多个任务时事件不挂在具体任务上，只有全是私信才和详情无关
+  if (e.type === 'receipt.updated') {
+    const targets = Array.isArray(e.data.targets) ? (e.data.targets as { kind?: string }[]) : [];
+    return targets.some((t) => t.kind !== 'message');
+  }
+  return false;
+}
+
 /** 发给负责人的 @ 和私信，也就是总览「需要你处理」里的那些。和 Hub 的 OWNER_INBOX_SQL 同一口径。 */
 export const isForOwner = (e: Pick<HubEvent, 'type' | 'audience'>) =>
   (e.type === 'mention' || e.type === 'message.direct') && e.audience?.length === 0;

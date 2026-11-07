@@ -32,6 +32,14 @@ docs/         文档
 .agents/skills/  本仓库的开发调试、部署更新、问题排查规范（给在这个仓库里干活的 agent 读；.claude/skills 是指向它的软链接）
 ```
 
+## 控制台的数据量
+
+任务越积越多时，控制台能不能保持流畅，取决于这几条约定：
+
+- 列表类页面用摘要接口 `GET /api/v1/admin/tasks?view=summary`，任务详情用 `GET /api/v1/admin/tasks/:id?view=summary`（子任务只带摘要）。摘要不含描述、工作笔记和验收标准。不带 `view` 时仍返回完整内容，agent 接口不受影响。
+- `useData` 默认每批实时事件都重新拉取。响应大或事件多的页面要传 `refreshOn`，只为影响显示内容的事件刷新（判断函数放在 `src/shared/event-view.ts`，带单元测试）。
+- 不要加定时全量刷新。数据变化都有事件；60 秒定时器只刷新成员和项目，因为在线状态随时间变化。事件流断线重连后会全部重新拉取一次。
+
 ## 发布新版本
 
 发布由 [`.github/workflows/release.yml`](../.github/workflows/release.yml) 完成，**只在推送 `v*` 格式的 tag 时触发**，普通提交和 PR 不会发布。

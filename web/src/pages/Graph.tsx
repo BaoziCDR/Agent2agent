@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { t } from '../i18n';
-import type { Task } from '../api';
+import type { TaskCard } from '../api';
 import { statusLabel, useHub } from '../ui';
 
 const NODE_W = 196;
@@ -14,7 +14,7 @@ const GROUP_GAP_Y = 32;
 const GRID_GAP = 14;
 const LABEL_H = 26;
 
-const STATUS_CLASS: Partial<Record<Task['status'], string>> = {
+const STATUS_CLASS: Partial<Record<TaskCard['status'], string>> = {
   completed: 'done',
   working: 'accent',
   review: 'warn',
@@ -22,18 +22,18 @@ const STATUS_CLASS: Partial<Record<Task['status'], string>> = {
   archived: 'muted',
 };
 
-const byNum = (a: Task, b: Task) => a.id.localeCompare(b.id, undefined, { numeric: true });
+const byNum = (a: TaskCard, b: TaskCard) => a.id.localeCompare(b.id, undefined, { numeric: true });
 
 /**
  * 一组互相关联（前置或父子）的任务内部分层，从左到右排：
  * 每个任务排在它所有前置任务和父任务的右边，同一层按上一层的平均行号排序，减少连线交叉。
  */
-function layoutGroup(tasks: Task[]) {
+function layoutGroup(tasks: TaskCard[]) {
   const byId = new Map(tasks.map((t) => [t.id, t]));
   const level = new Map<string, number>();
   const visiting = new Set<string>();
-  const ups = (t: Task) => [...t.depends_on, ...(t.parent ? [t.parent] : [])].map((d) => byId.get(d)).filter((d): d is Task => !!d);
-  const depth = (t: Task): number => {
+  const ups = (t: TaskCard) => [...t.depends_on, ...(t.parent ? [t.parent] : [])].map((d) => byId.get(d)).filter((d): d is TaskCard => !!d);
+  const depth = (t: TaskCard): number => {
     const known = level.get(t.id);
     if (known !== undefined) return known;
     if (visiting.has(t.id)) return 0; // 防御：数据里有环时不至于死循环
@@ -45,12 +45,12 @@ function layoutGroup(tasks: Task[]) {
     return v;
   };
   tasks.forEach(depth);
-  const cols: Task[][] = [];
+  const cols: TaskCard[][] = [];
   for (const t of tasks) (cols[level.get(t.id)!] ??= []).push(t);
   const row = new Map<string, number>();
   cols.forEach((col, ci) => {
     if (ci > 0) {
-      const key = (t: Task) => {
+      const key = (t: TaskCard) => {
         const rs = ups(t)
           .map((d) => row.get(d.id))
           .filter((r): r is number => r !== undefined);
@@ -72,7 +72,7 @@ function layoutGroup(tasks: Task[]) {
 }
 
 /** 按前置和父子关系把任务分成若干组（连通分量） */
-function groups(tasks: Task[]) {
+function groups(tasks: TaskCard[]) {
   const ids = new Set(tasks.map((t) => t.id));
   const parent = new Map(tasks.map((t) => [t.id, t.id]));
   const find = (x: string): string => {
@@ -84,7 +84,7 @@ function groups(tasks: Task[]) {
   };
   const union = (a: string, b: string) => parent.set(find(a), find(b));
   for (const t of tasks) for (const d of [...t.depends_on, ...(t.parent ? [t.parent] : [])]) if (ids.has(d)) union(t.id, d);
-  const map = new Map<string, Task[]>();
+  const map = new Map<string, TaskCard[]>();
   for (const t of tasks) {
     const r = find(t.id);
     (map.get(r) ?? map.set(r, []).get(r)!).push(t);
@@ -96,7 +96,7 @@ function groups(tasks: Task[]) {
  * 整体排版：有关联的任务组按大小从左到右、放不下就换行（货架式排布）；
  * 没有任何关联的任务放在后面排成网格，按容器宽度自动换行，不再全部挤在最左边一列。
  */
-function layout(tasks: Task[], avail: number) {
+function layout(tasks: TaskCard[], avail: number) {
   const all = groups(tasks);
   const linked = all.filter((g) => g.length > 1).sort((a, b) => b.length - a.length || byNum(a[0], b[0]));
   const single = all
@@ -145,7 +145,7 @@ function layout(tasks: Task[], avail: number) {
 const PAD_X = 24;
 const PAD_Y = 12;
 
-export function Graph({ tasks }: { tasks: Task[] }) {
+export function Graph({ tasks }: { tasks: TaskCard[] }) {
   const { openTask } = useHub();
   const ref = useRef<HTMLDivElement>(null);
   const [avail, setAvail] = useState(960);
@@ -189,7 +189,7 @@ export function Graph({ tasks }: { tasks: Task[] }) {
   );
 }
 
-function ProjectGraph({ tasks, title, avail, onOpen }: { tasks: Task[]; title: string | null; avail: number; onOpen: (id: string) => void }) {
+function ProjectGraph({ tasks, title, avail, onOpen }: { tasks: TaskCard[]; title: string | null; avail: number; onOpen: (id: string) => void }) {
   const { pos, labels, width, height } = useMemo(() => layout(tasks, avail), [tasks, avail]);
   const byId = new Map(tasks.map((t) => [t.id, t]));
   const edges: { from: string; to: string; kind: 'dep' | 'sub'; live: boolean }[] = [];

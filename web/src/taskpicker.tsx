@@ -1,6 +1,7 @@
 // 选择同项目的任务（发布任务时引用历史任务）：输入编号或标题搜索，选中的显示为可移除的标签。
 import { useMemo, useState } from 'react';
-import { get, type Task } from './api';
+import { get, type TaskCard } from './api';
+import { changesTaskList } from '../../src/shared/event-view';
 import { StatusBadge, useData } from './ui';
 import { t } from './i18n';
 
@@ -17,7 +18,11 @@ export function TaskPicker({
   exclude?: string;
   id?: string;
 }) {
-  const { data: tasks } = useData(() => (project ? get<Task[]>(`/tasks?project=${project}`) : Promise.resolve([] as Task[])), [project]);
+  const { data: tasks } = useData(
+    () => (project ? get<TaskCard[]>(`/tasks?view=summary&project=${project}`) : Promise.resolve([] as TaskCard[])),
+    [project],
+    { refreshOn: changesTaskList },
+  );
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(false);
   const byId = useMemo(() => new Map((tasks ?? []).map((t) => [t.id, t])), [tasks]);
