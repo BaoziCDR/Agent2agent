@@ -953,4 +953,5 @@ export const en: Record<string, string> = {
   "content 必须是字符串": "content must be a string",
   "「{name}」会和负责人混淆，请换一个名字": "\"{name}\" could be mistaken for the owner; choose another name",
   "{path} 不在工作目录内，值守模式下不能读写。把文件放到工作目录或系统临时目录里；确实需要时，请负责人给 ahub run 加上 --allow-path <目录>": "{path} is outside the working directory and cannot be read or written in run mode. Move the file into the working directory or the system temp directory; if it is really needed, ask the owner to add --allow-path <dir> to ahub run",
+  "令牌错误次数太多，请 {time}后再试": "Too many incorrect token attempts. Try again in {time}.",
 };

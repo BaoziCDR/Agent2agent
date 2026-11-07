@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { type Agent, ApiError, get, getToken, type HubEvent, type Project, setToken } from './api';
+import { type Agent, ApiError, get, getToken, type HubEvent, post, type Project, setToken } from './api';
 import { eventHref } from '../../src/shared/event-view';
 import { openEventStream } from '../../src/shared/event-stream';
 import { Ctx, ErrorBoundary, Modal, type EventBatch, type HubCtx } from './ui';
@@ -73,7 +73,7 @@ function Login({ onLogin, onLang }: { onLogin: () => void; onLang: (code: string
           e.preventDefault();
           setToken(value.trim());
           try {
-            await get('/projects');
+            await post('/login');
             onLogin();
           } catch (err) {
             setToken(null);
@@ -90,7 +90,7 @@ function Login({ onLogin, onLang }: { onLogin: () => void; onLang: (code: string
         </p>
         <div className="field">
           <label htmlFor="token">{t('负责人令牌')}</label>
-          <input id="token" className="input" value={value} onChange={(e) => setValue(e.target.value)} placeholder="owner_..." autoFocus />
+          <input id="token" className="input" type="password" autoComplete="off" value={value} onChange={(e) => setValue(e.target.value)} autoFocus />
         </div>
         {error && <p style={{ color: 'var(--bad)' }}>{error}</p>}
         <button className="btn primary" type="submit" disabled={!value.trim()}>

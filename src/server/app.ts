@@ -161,9 +161,26 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
     const ack = (req.query as Q)?.ack ?? (req.headers['x-ahub-ack'] as string | undefined);
     if (ack !== undefined && /^\d+$/.test(ack)) hub.ack(agent, Number(ack));
   };
-  const requireOwner = async (req: FastifyRequest) => {
+  const ownerBlocked = (req: FastifyRequest, reply: FastifyReply) => {
+    const ms = hub.ownerBlockedMs(req.ip);
+    reply.header('retry-after', Math.ceil(ms / 1000));
+    const minutes = Math.ceil(ms / 60_000);
+    const time = minutes < 60 ? tr('{n} 分钟', { n: minutes }) : tr('{n} 小时', { n: Math.ceil(minutes / 60) });
+    return new HubError(429, 'too_many_attempts', tr('令牌错误次数太多，请 {time}后再试', { time }));
+  };
+  /** 封禁中要不要挡住这个正确的令牌。没配置信任的代理却带着转发头时，req.ip 是大家共用的代理地址，挡了等于谁都能把负责人关在外面。 */
+  const blocksValidOwner = (req: FastifyRequest) => hub.ownerBlockedMs(req.ip) > 0 && (!!opts.trustProxy || req.headers['x-forwarded-for'] === undefined);
+  const requireOwner = async (req: FastifyRequest, reply: FastifyReply) => {
     const token = tokenOf(req);
-    if (!token || !hub.isOwnerToken(token)) throw new HubError(401, 'unauthorized', tr('需要负责人令牌'));
+    const valid = !!token && hub.isOwnerToken(token);
+    if (valid ? blocksValidOwner(req) : hub.ownerBlockedMs(req.ip) > 0) throw ownerBlocked(req, reply);
+    const login = req.routeOptions.url === '/api/v1/admin/login';
+    if (!valid) {
+      // 没带令牌（已退出的页面、扫描器）不算输错
+      if (token && hub.noteOwnerFailure(req.ip, token, login)) throw ownerBlocked(req, reply);
+      throw new HubError(401, 'unauthorized', tr('需要负责人令牌'));
+    }
+    if (login) hub.clearOwnerFailures(req.ip);
     req.isOwner = true;
   };
   const actorOf = (req: FastifyRequest): Actor => (req.isOwner ? { kind: 'owner' } : { kind: 'agent', agent: req.agent! });
@@ -520,14 +537,23 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
   // ── 文件上传与下载 ──
   const MAX_UPLOAD = 25 * 1024 * 1024;
   app.addContentTypeParser('application/octet-stream', { parseAs: 'buffer' }, (_req, body, done) => done(null, body));
-  const requireUploader = async (req: FastifyRequest) => {
+  const requireUploader = async (req: FastifyRequest, reply: FastifyReply) => {
     if (!opts.filesDir) throw new HubError(501, 'unsupported', tr('这个 Hub 没有开启文件上传'));
     const token = tokenOf(req);
-    if (token && hub.isOwnerToken(token)) req.uploader = 'owner';
-    else if (token) {
-      const { agent } = hub.authSession(token);
-      hub.touchAgent(agent);
-      req.uploader = agentCode(agent.id);
+    if (token && hub.isOwnerToken(token)) {
+      if (blocksValidOwner(req)) throw ownerBlocked(req, reply);
+      req.uploader = 'owner';
+    } else if (token) {
+      let session: ReturnType<Hub['authSession']>;
+      try {
+        session = hub.authSession(token);
+      } catch (err) {
+        // 既不是负责人令牌，也不是见过的授权 ID：这里也能试令牌，一样要计数
+        if (err instanceof HubError && err.code === 'unauthorized') hub.noteOwnerFailure(req.ip, token);
+        throw err;
+      }
+      hub.touchAgent(session.agent);
+      req.uploader = agentCode(session.agent.id);
     }
     if (!req.uploader) throw new HubError(401, 'unauthorized', tr('缺少或无效的令牌'));
   };
@@ -575,6 +601,8 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
     admin.addHook('onRequest', requireOwner);
     const A = '/api/v1/admin';
 
+    // 控制台登录框用：令牌校验在 requireOwner 里，每次输错都计数
+    admin.post(`${A}/login`, async () => ({ ok: true }));
     admin.get(`${A}/overview`, async (req) => hub.overview((req.query as Q).project));
     admin.post(`${A}/owner-inbox/read`, async (req) => {
       const b = (req.body ?? {}) as B;
