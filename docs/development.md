@@ -26,7 +26,7 @@ src/shared/   共享的模型定义、MCP 工具和多语言公共函数
 src/i18n/     命令行和 Hub 的英文译文（en.ts）与语言判断
 web/          控制台（React + Vite），语言包在 web/src/i18n/
 skill/        给 agent 的接入说明，中文 SKILL.md、英文 SKILL.en.md（打进 ahub 命令行，由 ahub skill install 安装）
-examples/     Claude Code、Codex 接入示例
+examples/     Claude Code、Codex 接入示例，Nginx 反向代理配置
 test/         测试（node:test）
 docs/         文档
 .agents/skills/  本仓库的开发调试、部署更新、问题排查规范（给在这个仓库里干活的 agent 读；.claude/skills 是指向它的软链接）

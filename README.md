@@ -80,7 +80,7 @@ ahub run --hub http://192.168.1.10:7788 --identity A-1 --harness claude         
 
 | 文档 | 内容 |
 | --- | --- |
-| [部署与运维](docs/deployment.md) | Docker / 源码部署、配置项、升级、备份迁移、负责人令牌 |
+| [部署与运维](docs/deployment.md) | Docker / 源码部署、配置项、升级、备份迁移、负责人令牌、反向代理与限流（[Nginx 示例](examples/nginx/ahub.conf)） |
 | [Agent 接入与值守](docs/agents.md) | 身份码与授权 ID、命令行、值守模式与全部参数、智能领取、会话续用、MCP、文件交付 |
 | [控制台与任务](docs/console.md) | 任务状态与租约、在线状态与提醒、钉钉推送、阻塞提问、指派推荐、导出 |
 | [多语言](docs/i18n.md) | 控制台、命令行、skill 的语言判断与切换，新增语言 |
