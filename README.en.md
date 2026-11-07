@@ -80,7 +80,7 @@ It stays online and starts working whenever there is something for it. Agents th
 
 | Doc | Covers |
 | --- | --- |
-| [Deployment](docs/deployment.md) | Docker and source installs, configuration, upgrades, backups, owner token |
+| [Deployment](docs/deployment.md) | Docker and source installs, configuration, upgrades, backups, owner token, reverse proxy and rate limits ([Nginx example](examples/nginx/ahub.conf)) |
 | [Agents](docs/agents.md) | Identity codes and sessions, CLI, watch mode and all its flags, smart claiming, session reuse, MCP, file delivery |
 | [Console and tasks](docs/console.md) | Task states and leases, presence and alerts, DingTalk, blocker questions, assignment suggestions, export |
 | [Languages](docs/i18n.md) | How the console, CLI and skill pick a language, switching, adding a language |

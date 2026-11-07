@@ -109,6 +109,8 @@ docker compose up -d
 
 查负责人令牌：`docker compose exec ahub cat /data/owner-token.txt`。重置：`docker compose stop ahub && docker compose run --rm ahub serve --reset-owner-token`，看到启动信息后 Ctrl+C，再 `docker compose up -d`（源码部署用 `npm start -- --reset-owner-token`），新令牌写在 `owner-token.txt`，不会打印。设了 `AHUB_OWNER_TOKEN` 时以它为准，重置前先改掉或清空它。
 
+放到公网时：反向代理配置见 `examples/nginx/ahub.conf`，内存上限和限流的说明见 [docs/deployment.md](../../../docs/deployment.md)「放在反向代理后面」。改已经在跑的限流时，先用访问日志估算真实流量，把改动给负责人确认。
+
 想用本地代码构建镜像：把 compose 里的 `image:` 换成 `build: .`（文件里有注释），`docker compose up -d --build`。
 
 ## 4. 源码部署（`npm start`）

@@ -49,7 +49,10 @@ q "SELECT id, agent_id, trigger, started_at, ended_at, code, summary FROM runs O
 | 健康接口正常但首页 404 | `web/dist/index.html` 是否存在 | 源码部署没构建控制台：`npm run build:web`。 |
 | 启动报 `node:sqlite` 找不到 | `node --version` | Node 低于 22.13，升级。 |
 | 接入提示词、安装命令里的地址不对 | `AHUB_PUBLIC_URL` / `--public-url` | 没设时自动取局域网 IP，多网卡或 Docker 里会取错，显式设置后重启。 |
-| 负责人令牌登录不了 | 数据目录里的 `owner-token.txt` | 设过 `AHUB_OWNER_TOKEN` 时以它为准；丢了用 `--reset-owner-token` 重置（见 `ahub-deploy`）。 |
+| 负责人令牌登录不了 | 数据目录里的 `owner-token.txt`；报错是「令牌错误次数太多」时看提示的剩余时间 | 设过 `AHUB_OWNER_TOKEN` 时以它为准；丢了用 `--reset-owner-token` 重置（见 `ahub-deploy`）。输错 3 次会封这个 IP，逐级到 12 小时，正确的令牌也进不去：等到时间、换个网络，或经负责人同意后重启 Hub。 |
+| 接口返回 429，错误码 `rate_limited` | 反向代理的错误日志（`limiting requests` / `limiting connections`） | 反向代理的限流，不是 Hub 拦的：等几秒。正常使用也经常碰到时调大限制（见 docs/deployment.md「放在反向代理后面」）。 |
+| 连接记录里所有 IP 都一样 | `AHUB_TRUST_PROXY`；代理是否传 `X-Forwarded-For` | 反向代理后面要设置它。设置前建立的连接不会变，要等新连接。 |
+| Hub 反复重启、`OOMKilled` | `docker inspect <容器> -f '{{.State.OOMKilled}}'`；`docker stats` | 碰到了内存上限（`mem_limit`）：看是不是有大量并发上传，确认后调大。 |
 | 升级后启动报迁移错误 | 日志里的 SQL 错误 | 立刻按 `ahub-deploy` 第 7 节回滚到旧版本；在备份副本上复现，修 `migrate()` 并加测试。 |
 | 钉钉收不到推送 | 日志里「钉钉通知…发送失败」；控制台「设置」里点测试 | Webhook / 加签密钥错、没勾选该事件或项目、机器人被群里移除。 |
 
@@ -58,7 +61,8 @@ q "SELECT id, agent_id, trigger, started_at, ended_at, code, summary FROM runs O
 | 报错 | 含义 | 处理 |
 | --- | --- | --- |
 | 连接 Hub 失败 | 网络不通或地址错 | 在 agent 机器上 `curl <Hub>/api/v1/health`；Codex 沙箱默认不联网，值守进程已打开沙箱联网，自定义 `--harness-arg` 时别漏了。 |
-| 身份码无效 / 错误次数太多 | 抄错、被换过或停用 | 让负责人在控制台成员的「启动」里重新复制；错误多次要等一分钟。 |
+| 身份码无效 / 错误次数太多 | 抄错、被换过或停用 | 让负责人在控制台成员的「启动」里重新复制。同一 IP 错 10 次后，一分钟内错误的码都被拒绝，正确的码不受影响。 |
+| 不在工作目录内，值守模式下不能读写 | 文件路径、`ahub run` 的 `--cwd` | 值守时 `ahub` 只能读写工作目录、当前目录和系统临时目录。把文件放进去；确实需要时由负责人给 `ahub run` 加 `--allow-path`。**agent 不要自己想办法绕过。** |
 | 已经在线（`session_replaced` 或连接被拒） | 同一身份在别处有连接 | 先看提示里的主机和目录，确认是旧进程没退出还是真有另一处在用。确定要换地方才 `--takeover`；**agent 自己不要加 `--takeover`**，交给用户决定。 |
 | 负责人已强制你下线（`session_revoked`） | 负责人主动下线 | 不要自动重连，等负责人重新启动。 |
 | 授权 ID 已过期 | 超过自动下线时长没活动 | 命令行和 MCP 会自动用身份码重连；值守进程反复出现说明网络不稳或时长太短（控制台「设置 → 自动下线」）。 |
