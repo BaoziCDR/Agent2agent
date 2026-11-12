@@ -76,8 +76,11 @@ export function NewTask() {
 
   if (active.length === 0) return <p className="muted">{tr('请先在「项目」页创建一个项目。')}</p>;
 
+  const [submitting, setSubmitting] = useState<'publish' | 'draft' | null>(null);
   const submit = async (draft: boolean) => {
+    if (busy) return;
     setBusy(true);
+    setSubmitting(draft ? 'draft' : 'publish');
     try {
       if (mode === 'single') {
         const t = await post<Task>('/tasks', {
@@ -131,6 +134,7 @@ export function NewTask() {
       toast((err as Error).message, true);
     } finally {
       setBusy(false);
+      setSubmitting(null);
     }
   };
 
@@ -272,10 +276,10 @@ export function NewTask() {
           </div>
         )}
         <div className="btn-row">
-          <button className="btn primary" disabled={!canSubmit || busy} onClick={() => submit(false)}>
+          <button className="btn primary" disabled={!canSubmit || busy} aria-busy={submitting === 'publish'} onClick={() => submit(false)}>
             {tr('发布')}
           </button>
-          <button className="btn" disabled={!canSubmit || busy} onClick={() => submit(true)}>
+          <button className="btn" disabled={!canSubmit || busy} aria-busy={submitting === 'draft'} onClick={() => submit(true)}>
             {tr('存为草稿')}
           </button>
         </div>

@@ -170,6 +170,7 @@ function EditDialog({ task, artifact, onClose, onSaved }: { task: string; artifa
   const [busy, setBusy] = useState(false);
   const [stale, setStale] = useState(false);
   const save = async () => {
+    if (busy) return;
     setBusy(true);
     try {
       await put(`/tasks/${task}/artifacts/${artifact.id}`, { base_rev: artifact.rev, content: text, note });
@@ -198,7 +199,7 @@ function EditDialog({ task, artifact, onClose, onSaved }: { task: string; artifa
         <button className="btn" onClick={onClose}>
           {t('取消')}
         </button>
-        <button className="btn primary" disabled={busy || stale} onClick={save}>
+        <button className="btn primary" disabled={busy || stale} aria-busy={busy} onClick={save}>
           {t('保存为第 {n} 版', { n: artifact.rev + 1 })}
         </button>
       </div>

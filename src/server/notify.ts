@@ -6,6 +6,7 @@ import { json } from './db.js';
 import { HubError, type Hub } from './hub.js';
 import type { HubEvent } from '../shared/model.js';
 import { msg, summaryOf, tr } from '../i18n/index.js';
+import { eventHref } from '../shared/event-view.js';
 
 export const NOTIFY_KINDS = ['dingtalk'] as const;
 
@@ -266,12 +267,10 @@ const TOPIC_ICONS: Record<string, string> = {
 
 /** 合并成一条钉钉 Markdown 消息 */
 export function renderMessage(events: HubEvent[], consoleUrl: string) {
+  // 和控制台里点动态一样直达：评论定位到那一条、私信定位到那一条、agent 定位到那一行
   const link = (e: HubEvent) => {
-    if (!consoleUrl) return '';
-    if (e.task) return tr(' [查看]({consoleUrl}/#/board/{task})', { consoleUrl, task: e.task });
-    if (e.type === 'message.direct') return tr(' [查看]({consoleUrl}/#/messages)', { consoleUrl });
-    if (e.type === 'agent.offline') return tr(' [查看]({consoleUrl}/#/agents)', { consoleUrl });
-    return '';
+    const href = consoleUrl && eventHref(e, 'board');
+    return href ? tr(' [查看]({url})', { url: `${consoleUrl}/${href}` }) : '';
   };
   const shown = events.slice(-10);
   const first = shown[0];

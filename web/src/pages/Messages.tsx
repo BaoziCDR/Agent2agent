@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { t, withCode } from '../i18n';
 import { get, markOwnerRead, type Message, post } from '../api';
-import { Receipts, clock, useData, useHub, useJumpTo } from '../ui';
+import { Receipts, clock, useBusy, useData, useHub, useJumpTo } from '../ui';
 import { Markdown } from '../markdown';
 
 export function Messages() {
@@ -12,6 +12,8 @@ export function Messages() {
   const [bProjectChoice, setBProject] = useState('');
   const bProject = bProjectChoice || (project ?? projects[0]?.id ?? '');
   const [bText, setBText] = useState('');
+  const [sending, runSend] = useBusy();
+  const [broadcasting, runBroadcast] = useBusy();
   const { data: messages, reload } = useData(() => get<Message[]>('/messages'), []);
   useJumpTo(anchor, messages);
   // 打开私信页看到了，发给负责人的私信就算已读
@@ -45,17 +47,20 @@ export function Messages() {
           </div>
           <button
             className="btn primary"
-            disabled={!to || !text.trim()}
-            onClick={async () => {
-              try {
-                await post('/messages', { to, text });
-                setText('');
-                toast(t('已发送'));
-                reload();
-              } catch (err) {
-                toast((err as Error).message, true);
-              }
-            }}
+            disabled={!to || !text.trim() || sending}
+            aria-busy={sending}
+            onClick={() =>
+              runSend(async () => {
+                try {
+                  await post('/messages', { to, text });
+                  setText('');
+                  toast(t('已发送'));
+                  reload();
+                } catch (err) {
+                  toast((err as Error).message, true);
+                }
+              })
+            }
           >
             {t('发送')}
           </button>
@@ -78,16 +83,19 @@ export function Messages() {
           </div>
           <button
             className="btn primary"
-            disabled={!bProject || !bText.trim()}
-            onClick={async () => {
-              try {
-                await post('/broadcast', { project: bProject, text: bText });
-                setBText('');
-                toast(t('已广播'));
-              } catch (err) {
-                toast((err as Error).message, true);
-              }
-            }}
+            disabled={!bProject || !bText.trim() || broadcasting}
+            aria-busy={broadcasting}
+            onClick={() =>
+              runBroadcast(async () => {
+                try {
+                  await post('/broadcast', { project: bProject, text: bText });
+                  setBText('');
+                  toast(t('已广播'));
+                } catch (err) {
+                  toast((err as Error).message, true);
+                }
+              })
+            }
           >
             {t('广播')}
           </button>

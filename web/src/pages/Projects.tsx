@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { t } from '../i18n';
 import { patch, post, type Project } from '../api';
-import { Modal, useHub } from '../ui';
+import { Modal, useBusy, useBusyKey, useHub } from '../ui';
 
 export function Projects() {
   const { projects, setProject, toast, refresh, go } = useHub();
   const [creating, setCreating] = useState(projects.length === 0);
   const [editing, setEditing] = useState<Project | null>(null);
+  const [doing, run] = useBusyKey();
 
   return (
     <div style={{ maxWidth: 900 }}>
@@ -52,14 +53,18 @@ export function Projects() {
                 </button>
                 <button
                   className="btn small"
-                  onClick={async () => {
-                    try {
-                      await patch(`/projects/${p.id}`, { status: p.status === 'active' ? 'archived' : 'active' });
-                      refresh();
-                    } catch (err) {
-                      toast((err as Error).message, true);
-                    }
-                  }}
+                  disabled={doing === p.id}
+                  aria-busy={doing === p.id}
+                  onClick={() =>
+                    run(p.id, async () => {
+                      try {
+                        await patch(`/projects/${p.id}`, { status: p.status === 'active' ? 'archived' : 'active' });
+                        refresh();
+                      } catch (err) {
+                        toast((err as Error).message, true);
+                      }
+                    })
+                  }
                 >
                   {p.status === 'active' ? t('归档') : t('恢复')}
                 </button>
@@ -112,6 +117,7 @@ function ProjectForm({
   const { toast } = useHub();
   const [name, setName] = useState(initial?.name ?? '');
   const [description, setDescription] = useState(initial?.description ?? '');
+  const [saving, run] = useBusy();
   return (
     <Modal title={title} onClose={onClose}>
       <div className="field">
@@ -132,8 +138,9 @@ function ProjectForm({
       <div className="btn-row">
         <button
           className="btn primary"
-          disabled={!name.trim()}
-          onClick={() => onSave(name, description).catch((err: Error) => toast(err.message, true))}
+          disabled={!name.trim() || saving}
+          aria-busy={saving}
+          onClick={() => run(() => onSave(name, description).catch((err: Error) => toast(err.message, true)))}
         >
           {t('保存')}
         </button>

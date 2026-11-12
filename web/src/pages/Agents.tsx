@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { joinList, msg, t } from '../i18n';
 import { type Agent, type Connection, del, get, patch, post, type Run } from '../api';
 import { LaunchDialog, NewAgentDialog } from './Invite';
-import { Modal, dateTime, platformLabel, presenceLabel, presence, splitList, timeAgo, useData, useHub, useJumpTo } from '../ui';
+import { Modal, dateTime, platformLabel, presenceLabel, presence, splitList, timeAgo, useBusy, useBusyKey, useData, useHub, useJumpTo } from '../ui';
 
 const END_REASON: Record<string, string> = { released: msg('正常退出'), expired: msg('超时自动下线'), replaced: msg('被别处的新连接顶掉'), revoked: msg('被强制下线') };
 const where = (c: Connection) => [c.host, c.client_label].filter(Boolean).join(' · ');
@@ -36,7 +36,10 @@ export function Agents({ startInvite = false }: { startInvite?: boolean }) {
     if (startInvite) go('agents'); // 从旧地址 #/invite 进来的，关掉后回到 Agent 页
   };
 
-  const daemon = async (a: Agent, action: 'pause' | 'resume' | 'wake') => {
+  // 同一时间只处理一个操作：被点的按钮转圈，同一行的其他按钮先禁用
+  const [doing, run] = useBusyKey();
+  const busy = (a: Agent, what: string) => ({ disabled: doing?.startsWith(`${a.id}:`), 'aria-busy': doing === `${a.id}:${what}` });
+  const daemon = (a: Agent, action: 'pause' | 'resume' | 'wake') => run(`${a.id}:${action}`, async () => {
     try {
       await post(`/agents/${a.id}/daemon`, { action });
       toast(t({ pause: msg('已暂停 {name} 的值守'), resume: msg('已恢复 {name} 的值守'), wake: msg('已让 {name} 立即检查') }[action], { name: a.name }));
@@ -44,13 +47,13 @@ export function Agents({ startInvite = false }: { startInvite?: boolean }) {
     } catch (err) {
       toast((err as Error).message, true);
     }
-  };
+  });
   // 删除了的 agent 只为历史任务和评论保留名字，不再列为成员
   const members = agents.filter((a) => a.status !== 'deleted');
   const list = project ? members.filter((a) => a.projects.some((p) => p.id === project)) : members;
   useJumpTo(anchor, list.length ? list : null);
 
-  const toggle = async (a: Agent) => {
+  const toggle = (a: Agent) => run(`${a.id}:toggle`, async () => {
     try {
       await patch(`/agents/${a.id}`, { status: a.status === 'active' ? 'disabled' : 'active' });
       toast(t(a.status === 'active' ? msg('已停用 {name}') : msg('已启用 {name}'), { name: a.name }));
@@ -58,33 +61,37 @@ export function Agents({ startInvite = false }: { startInvite?: boolean }) {
     } catch (err) {
       toast((err as Error).message, true);
     }
-  };
+  });
 
   const remove = async (a: Agent) => {
     const tasks = a.active_tasks.length ? `\n${t('它手上的 {tasks} 中未提交的会放回任务池。', { tasks: joinList(a.active_tasks) })}` : '';
     if (!confirm(`${t('删除 {name}（{id}）？\n它的身份码永久失效，不再出现在成员列表里；做过的任务、评论和交付物都保留，仍显示它的名字。', { name: a.name, id: a.id })}${tasks}`)) return;
-    try {
-      const r = await del<{ released: string[] }>(`/agents/${a.id}`);
-      toast(r.released.length ? t('已删除 {name}，{tasks} 已放回任务池', { name: a.name, tasks: joinList(r.released) }) : t('已删除 {name}', { name: a.name }));
-      refresh();
-    } catch (err) {
-      toast((err as Error).message, true);
-    }
+    await run(`${a.id}:remove`, async () => {
+      try {
+        const r = await del<{ released: string[] }>(`/agents/${a.id}`);
+        toast(r.released.length ? t('已删除 {name}，{tasks} 已放回任务池', { name: a.name, tasks: joinList(r.released) }) : t('已删除 {name}', { name: a.name }));
+        refresh();
+      } catch (err) {
+        toast((err as Error).message, true);
+      }
+    });
   };
 
   const kick = async (a: Agent) => {
     const note = prompt(t('强制 {name}（{id}）下线？\n它当前的授权 ID 立即失效，值守进程会停下正在跑的 harness 并退出，不会自动重连；身份码仍可用于重新启动。\n\n可以写一句原因（会显示在它的终端里）：', { name: a.name, id: a.id }), '');
     if (note === null) return;
-    try {
-      await post(`/agents/${a.id}/kick`, { note });
-      toast(t('已强制 {name} 下线', { name: a.name }));
-      refresh();
-    } catch (err) {
-      toast((err as Error).message, true);
-    }
+    await run(`${a.id}:kick`, async () => {
+      try {
+        await post(`/agents/${a.id}/kick`, { note });
+        toast(t('已强制 {name} 下线', { name: a.name }));
+        refresh();
+      } catch (err) {
+        toast((err as Error).message, true);
+      }
+    });
   };
 
-  const toggleInvite = async (a: Agent) => {
+  const toggleInvite = (a: Agent) => run(`${a.id}:invite`, async () => {
     try {
       await patch(`/agents/${a.id}`, { can_invite: !a.can_invite });
       toast(t(a.can_invite ? msg('已取消 {name} 的邀请权限') : msg('{name} 现在可以为所在项目创建邀请'), { name: a.name }));
@@ -92,7 +99,7 @@ export function Agents({ startInvite = false }: { startInvite?: boolean }) {
     } catch (err) {
       toast((err as Error).message, true);
     }
-  };
+  });
 
   return (
     <div>
@@ -180,16 +187,16 @@ export function Agents({ startInvite = false }: { startInvite?: boolean }) {
                         })()}
                         <div className="btn-row" style={{ gap: 4, marginTop: 6 }}>
                           {a.daemon_paused ? (
-                            <button className="btn small" onClick={() => daemon(a, 'resume')}>
+                            <button className="btn small" {...busy(a, 'resume')} onClick={() => daemon(a, 'resume')}>
                               {t('恢复')}
                             </button>
                           ) : (
                             a.daemon && (
                               <>
-                                <button className="btn small" onClick={() => daemon(a, 'pause')}>
+                                <button className="btn small" {...busy(a, 'pause')} onClick={() => daemon(a, 'pause')}>
                                   {t('暂停')}
                                 </button>
-                                <button className="btn small" disabled={!!a.activity} onClick={() => daemon(a, 'wake')} title={t('让它立即检查一遍收件箱和手上的任务')}>
+                                <button className="btn small" {...busy(a, 'wake')} disabled={!!a.activity || busy(a, 'wake').disabled} onClick={() => daemon(a, 'wake')} title={t('让它立即检查一遍收件箱和手上的任务')}>
                                   {t('唤醒')}
                                 </button>
                               </>
@@ -209,7 +216,7 @@ export function Agents({ startInvite = false }: { startInvite?: boolean }) {
                             </button>
                           )}
                           {a.connection && (
-                            <button className="btn small danger" title={t('吊销当前授权 ID，值守进程立即退出')} onClick={() => kick(a)}>
+                            <button className="btn small danger" {...busy(a, 'kick')} title={t('吊销当前授权 ID，值守进程立即退出')} onClick={() => kick(a)}>
                               {t('强制下线')}
                             </button>
                           )}
@@ -221,17 +228,18 @@ export function Agents({ startInvite = false }: { startInvite?: boolean }) {
                               {t('加入项目')}
                             </button>
                           )}
-                          <button className="btn small" onClick={() => toggle(a)}>
+                          <button className="btn small" {...busy(a, 'toggle')} onClick={() => toggle(a)}>
                             {a.status === 'active' ? t('停用') : t('启用')}
                           </button>
                           {a.status === 'disabled' && (
-                            <button className="btn small danger" onClick={() => remove(a)}>
+                            <button className="btn small danger" {...busy(a, 'remove')} onClick={() => remove(a)}>
                               {t('删除')}
                             </button>
                           )}
                           <button
                             className={`btn small ${a.can_invite ? 'primary' : ''}`}
                             aria-pressed={a.can_invite}
+                            {...busy(a, 'invite')}
                             title={t('允许它在找不到合适的 agent 时新建一个待启动的身份，并 @你 去控制台拉起')}
                             onClick={() => toggleInvite(a)}
                           >
@@ -332,7 +340,8 @@ function JoinProjectDialog({ agent, onClose }: { agent: Agent; onClose: () => vo
   const options = projects.filter((p) => p.status === 'active' && !agent.projects.some((x) => x.id === p.id));
   const [target, setTarget] = useState(options[0]?.id ?? '');
   const [tags, setTags] = useState('');
-  const save = async () => {
+  const [saving, run] = useBusy();
+  const save = () => run(async () => {
     try {
       await post(`/agents/${agent.id}/projects`, { project: target, tags: splitList(tags) });
       toast(t('已把 {name} 加入 {project}', { name: agent.name || agent.id, project: target }));
@@ -341,7 +350,7 @@ function JoinProjectDialog({ agent, onClose }: { agent: Agent; onClose: () => vo
     } catch (err) {
       toast((err as Error).message, true);
     }
-  };
+   });
   return (
     <Modal title={t('把 {name} 加入项目', { name: agent.name || agent.id })} onClose={onClose}>
       {options.length === 0 ? (
@@ -369,7 +378,7 @@ function JoinProjectDialog({ agent, onClose }: { agent: Agent; onClose: () => vo
           {t('取消')}
         </button>
         {options.length > 0 && (
-          <button className="btn primary" onClick={save}>
+          <button className="btn primary" disabled={saving} aria-busy={saving} onClick={save}>
             {t('加入')}
           </button>
         )}

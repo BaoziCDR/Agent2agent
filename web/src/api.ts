@@ -245,7 +245,20 @@ const langHeader = () => ({ 'x-ahub-lang': lang() });
 /** 事件的一句话描述：中文界面用中文，其他语言用英文 */
 export const eventSummary = (e: Pick<HubEvent, 'summary' | 'summary_en'>) => (lang() === 'zh' ? e.summary : (e.summary_en ?? e.summary));
 
-export async function api<T>(method: string, path: string, body?: unknown): Promise<T> {
+/** 正在进行的写请求。同样的请求（方法、路径、内容都一样）还没返回时再发，直接复用前一个，不会重复提交 */
+const inflight = new Map<string, Promise<unknown>>();
+
+export function api<T>(method: string, path: string, body?: unknown): Promise<T> {
+  if (method === 'GET') return send<T>(method, path, body);
+  const key = `${method} ${path} ${body === undefined ? '' : JSON.stringify(body)}`;
+  const running = inflight.get(key);
+  if (running) return running as Promise<T>;
+  const p = send<T>(method, path, body).finally(() => inflight.delete(key));
+  inflight.set(key, p);
+  return p;
+}
+
+async function send<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(`/api/v1/admin${path}`, {
     method,
     headers: {

@@ -72,6 +72,33 @@ export function useData<T>(
   return { data, error, reload };
 }
 
+/**
+ * 防重入：run(fn) 在上一次没结束前再调用直接忽略；busy 用来禁用按钮、显示转圈。
+ * 用法：const [busy, run] = useBusy(); <button disabled={busy} aria-busy={busy} onClick={() => run(save)}>
+ */
+export function useBusy() {
+  const [doing, run] = useBusyKey();
+  return [doing !== null, useCallback(<T,>(fn: () => Promise<T>) => run('', fn), [run])] as const;
+}
+
+/** 同上，但一组按钮共用：doing 是正在进行的那一个的标识，用来只在被点的按钮上转圈，其他按钮一起禁用 */
+export function useBusyKey() {
+  const [doing, setDoing] = useState<string | null>(null);
+  const running = useRef(false);
+  const run = useCallback(async <T,>(key: string, fn: () => Promise<T>): Promise<T | undefined> => {
+    if (running.current) return undefined;
+    running.current = true;
+    setDoing(key);
+    try {
+      return await fn();
+    } finally {
+      running.current = false;
+      setDoing(null);
+    }
+  }, []);
+  return [doing, run] as const;
+}
+
 /** 滚到地址里定位的元素（data-anchor）并高亮。data 为空或目标还没出现时不动，等下一次数据刷新再试。 */
 export function useJumpTo(anchor: string | null, data: unknown) {
   const marked = useRef<Element | null>(null);

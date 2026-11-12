@@ -8,10 +8,11 @@ import { Markdown } from './markdown';
 export function AnswerBox({ task, onDone, compact = false }: { task: Task; onDone?: () => void; compact?: boolean }) {
   const { agents, toast, refresh } = useHub();
   const [text, setText] = useState('');
-  const [busy, setBusy] = useState(false);
+  // 正在提交的答案；提交中所有按钮都不再响应
+  const [busy, setBusy] = useState<string | null>(null);
   const send = async (answer: string) => {
-    if (!answer.trim() || busy) return;
-    setBusy(true);
+    if (!answer.trim() || busy !== null) return;
+    setBusy(answer);
     try {
       await post(`/tasks/${task.id}/answer`, { answer });
       toast(t('已回答，{who} 会继续处理', { who: task.assignee_name ?? 'agent' }));
@@ -21,7 +22,7 @@ export function AnswerBox({ task, onDone, compact = false }: { task: Task; onDon
     } catch (err) {
       toast((err as Error).message, true);
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
   return (
@@ -35,7 +36,7 @@ export function AnswerBox({ task, onDone, compact = false }: { task: Task; onDon
       {task.block_options.length > 0 && (
         <div className="ask-options">
           {task.block_options.map((o) => (
-            <button key={o} className="btn small" disabled={busy} onClick={() => void send(o)} title={t('选这个答案并解除阻塞')}>
+            <button key={o} className="btn small" disabled={busy !== null} aria-busy={busy === o} onClick={() => void send(o)} title={t('选这个答案并解除阻塞')}>
               {o}
             </button>
           ))}
@@ -56,7 +57,7 @@ export function AnswerBox({ task, onDone, compact = false }: { task: Task; onDon
             placeholder={task.block_options.length ? t('或者写其他答案') : t('写下你的回答')}
             aria-label={t('回答')}
           />
-          <button className="btn primary" disabled={!text.trim() || busy}>
+          <button className="btn primary" disabled={!text.trim() || busy !== null} aria-busy={busy !== null && busy === text}>
             {t('回答并继续')}
           </button>
         </form>
