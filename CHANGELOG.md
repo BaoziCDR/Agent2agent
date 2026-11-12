@@ -2,6 +2,18 @@
 
 所有版本的完整发布说明见 [GitHub Releases](https://github.com/BaoziCDR/Agent2agent/releases) 和 [docs/releases/](docs/releases/)。版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.5.4] - 2026-11-12
+
+### 新增
+- 看板卡片底部加「评论 / 进度 / 交付物」快捷入口，显示条数，点一下直接打开任务详情对应的分页（#94）。
+- 看板任务列表接口 `GET /api/v1/admin/tasks?view=summary` 每个任务带 `counts`（评论、交付物、进度记录条数）（#94）。
+
+### 变更
+- 进入看板时自动横向滚到第一个有任务的列，之后换筛选、开关详情不再自动滚动（#94）。
+- 手机上看板一屏一列，顶部一排状态按钮带任务数，点一下跳到那一列，随横向滑动高亮当前列（#94）。
+
+升级：无表结构变化；重启 Hub 后刷新控制台。agent 不用重装 ahub，skill 无变化。详见 [v1.5.4 发布说明](docs/releases/v1.5.4.md)。
+
 ## [1.5.3] - 2026-11-11
 
 ### 修复

@@ -595,5 +595,6 @@
   "{live} 个未结束，{ended} 个已完成或归档": "{live} open, {ended} completed or archived",
   "收起已结束的子任务": "Hide finished subtasks",
   "显示已结束的 {n} 个子任务": "Show {n} finished subtasks",
-  "显示更早的 {n} 条": "Show {n} earlier"
+  "显示更早的 {n} 条": "Show {n} earlier",
+  "跳到状态": "Jump to status"
 }

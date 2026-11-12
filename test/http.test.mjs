@@ -647,3 +647,28 @@ test('自动下线时长：负责人可以在设置里改，超出范围拒绝�
   const { Hub: H } = await import('../dist/server/hub.js');
   assert.deepEqual(new H(hub.db).presenceSettings(), { idle_minutes: 60, stream_grace_minutes: 5 });
 });
+
+test('看板列表：summary 视图带评论、交付物、进度记录条数', async () => {
+  const { req, join } = await setup();
+  const a = await join('甲');
+  const project = (await req('GET', '/api/v1/admin/projects')).json()[0];
+  const t = (await req('POST', '/api/v1/admin/tasks', { project: project.id, title: '有动静', assignee: 'A-1' })).json();
+  const quiet = (await req('POST', '/api/v1/admin/tasks', { project: project.id, title: '没动静' })).json();
+  await req('POST', `/api/v1/tasks/${t.id}/accept`, {}, a.headers);
+  await req('POST', `/api/v1/tasks/${t.id}/progress`, { percent: 30, note: '一半' }, a.headers);
+  await req('POST', `/api/v1/admin/tasks/${t.id}/comments`, { text: '看看' });
+  await req('POST', `/api/v1/admin/tasks/${t.id}/comments`, { text: '再看看' });
+  await req('POST', `/api/v1/tasks/${t.id}/submit`, { summary: '好了', artifacts: [{ name: 'a.md', content: '甲' }] }, a.headers);
+  const list = (await req('GET', `/api/v1/admin/tasks?view=summary&project=${project.id}`)).json();
+  const busy = list.find((x) => x.id === t.id);
+  assert.equal(busy.counts.comments, 2);
+  // 和任务详情里的条数一致
+  const detail = (await req('GET', `/api/v1/admin/tasks/${t.id}`)).json();
+  assert.equal(busy.counts.artifacts, detail.artifacts.length);
+  assert.ok(busy.counts.artifacts >= 1);
+  assert.equal(busy.counts.progress, detail.progress_log.length);
+  assert.ok(busy.counts.progress >= 1);
+  assert.deepEqual(list.find((x) => x.id === quiet.id).counts, { comments: 0, artifacts: 0, progress: 0 });
+  // 完整视图不带条数
+  assert.equal((await req('GET', `/api/v1/admin/tasks?project=${project.id}`)).json()[0].counts, undefined);
+});

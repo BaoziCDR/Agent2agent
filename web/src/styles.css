@@ -2514,8 +2514,14 @@ table.table {
 }
 
 @media (max-width: 600px) {
+  /* 一屏一列，右边露出一点下一列，提示还能横着划 */
   .column {
-    min-width: 78vw;
+    flex: 0 0 calc(100vw - 60px);
+    min-width: 0;
+  }
+  .board {
+    scroll-snap-type: x mandatory;
+    gap: 8px;
   }
 }
 
@@ -2623,5 +2629,96 @@ table.table {
   }
   .board-page .column-body {
     overflow: visible;
+  }
+}
+
+/* 卡片底部的快捷入口：评论、进度、交付物 */
+.card-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin: 8px -4px -4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.card-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  background: none;
+  padding: 2px 6px;
+  border-radius: 5px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.card-link:hover {
+  background: var(--panel-2);
+  color: var(--accent);
+}
+
+.card-link-n {
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.card-link:hover .card-link-n {
+  color: inherit;
+}
+
+/* 看板顶部的状态条：手机上一屏只放得下一列，点一下跳到那一列 */
+.board-jump {
+  display: none;
+}
+
+@media (max-width: 600px) {
+  .board-page .page-sub {
+    display: none;
+  }
+  .board-jump {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    margin: -4px 0 10px;
+    flex-shrink: 0;
+  }
+  .board-jump::-webkit-scrollbar {
+    display: none;
+  }
+  .board-jump button {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    flex-shrink: 0;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text-2);
+    border-radius: 999px;
+    padding: 4px 10px;
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .board-jump button.is-empty {
+    color: var(--text-3);
+  }
+  .board-jump button.active {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .board-jump button.active .tab-count {
+    background: var(--panel);
+    color: var(--accent);
+  }
+  .card-link {
+    padding: 5px 8px;
+    font-size: 12.5px;
   }
 }

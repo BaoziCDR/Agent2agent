@@ -113,7 +113,10 @@ export interface Receipt {
 }
 
 /** 列表里的任务不带正文（?view=summary），正文在任务详情里 */
-export type TaskCard = Omit<Task, 'description' | 'notes' | 'acceptance'>;
+export type TaskCard = Omit<Task, 'description' | 'notes' | 'acceptance'> & {
+  /** 看板列表（view=summary）才有：评论、交付物、进度记录条数 */
+  counts?: { comments: number; artifacts: number; progress: number };
+};
 
 export interface TaskDetail extends Task {
   subtasks: TaskCard[];
