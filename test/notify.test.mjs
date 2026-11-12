@@ -76,3 +76,18 @@ test('消息渲染：超过 10 条只显示最后 10 条', () => {
   assert.doesNotMatch(text, /第 1 条/);
   assert.match(text, /第 11 条/);
 });
+
+test('消息里的「查看」直达那一条：评论定位到评论、私信定位到私信', () => {
+  const base = { at: '', actor: 'A-1', project: 'P-1', audience: null, summary: 'x' };
+  const { text } = renderMessage(
+    [
+      { ...base, seq: 1, type: 'comment.created', task: 'P1-T3', data: { comment_id: 7 } },
+      { ...base, seq: 2, type: 'message.direct', task: null, data: { message_id: 9 } },
+      { ...base, seq: 3, type: 'task.status_changed', task: 'P1-T4', data: { to: 'review' } },
+    ],
+    'https://hub.example',
+  );
+  assert.match(text, /\(https:\/\/hub\.example\/#\/board\/P1-T3\/comment-7\)/);
+  assert.match(text, /\(https:\/\/hub\.example\/#\/messages\/message-9\)/);
+  assert.match(text, /\(https:\/\/hub\.example\/#\/board\/P1-T4\)/);
+});
