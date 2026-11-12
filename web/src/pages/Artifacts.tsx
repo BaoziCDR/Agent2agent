@@ -17,6 +17,25 @@ const textOf = (parts: Part[]) => (parts.length === 1 && parts[0].kind === 'text
 /** 交付说明这份交付物的名字存的是中文，显示时按语言翻译 */
 const artifactName = (name: string) => (name === '交付说明' ? t('交付说明') : name);
 
+/** 折叠后标题后面显示的一行摘要：第一行文字，或文件名、链接 */
+function previewOf(parts: Part[]): string {
+  for (const p of parts) {
+    if (p.kind === 'file' && p.name) return p.name;
+    if (p.kind === 'link' && typeof p.url === 'string') return p.url;
+    if (typeof p.text === 'string') {
+      const line = p.text
+        .split('\n')
+        .map((l) => l.replace(/^[\s#>*\-+`|]+/, '').replace(/[*_`]/g, '').trim())
+        .find(Boolean);
+      if (line) return line;
+    }
+  }
+  return '';
+}
+
+/** 折叠状态按任务记在内存里，切换分页、关掉再打开同一个任务都还在 */
+const foldMemory = new Map<string, { collapsed: Set<number>; open: Set<number> }>();
+
 const who = (agents: Agent[], code: string | null) => (!code ? '' : code === 'owner' ? t('负责人') : agentLabel(agents, code));
 
 /** 文件：图片显示缩略图，其他显示文件名和大小。 */
@@ -208,11 +227,49 @@ function EditDialog({ task, artifact, onClose, onSaved }: { task: string; artifa
 }
 
 /** 任务详情里的交付物：按提交轮次分组，最新一次展开，更早的折叠。 */
-export function Artifacts({ task, artifacts, onChanged }: { task: string; artifacts: Artifact[]; onChanged: () => void }) {
+export function Artifacts({ task, artifacts, onChanged, hint }: { task: string; artifacts: Artifact[]; onChanged: () => void; hint?: string }) {
   const { agents } = useHub();
   const rounds = [...new Set(artifacts.map((a) => a.round))].sort((x, y) => y - x);
   const latest = rounds[0];
-  const [open, setOpen] = useState<Set<number>>(() => new Set());
+  const remembered = foldMemory.get(task);
+  /** 更早几轮里展开了的轮次 */
+  const [open, setOpenState] = useState<Set<number>>(() => remembered?.open ?? new Set());
+  /** 折叠起来的交付物 */
+  const [collapsed, setCollapsedState] = useState<Set<number>>(() => remembered?.collapsed ?? new Set());
+  const remember = (next: { collapsed?: Set<number>; open?: Set<number> }) => {
+    const cur = foldMemory.get(task) ?? { collapsed, open };
+    foldMemory.set(task, { ...cur, ...next });
+  };
+  const setOpen = (f: (s: Set<number>) => Set<number>) =>
+    setOpenState((s) => {
+      const n = f(s);
+      remember({ open: n });
+      return n;
+    });
+  const setCollapsed = (f: (s: Set<number>) => Set<number>) =>
+    setCollapsedState((s) => {
+      const n = f(s);
+      remember({ collapsed: n });
+      return n;
+    });
+  const toggleCard = (id: number) =>
+    setCollapsed((s) => {
+      const n = new Set(s);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+  const olderRounds = rounds.filter((r) => r !== latest);
+  const allExpanded = olderRounds.every((r) => open.has(r)) && artifacts.every((a) => !collapsed.has(a.id));
+  const allCollapsed = open.size === 0 && artifacts.every((a) => collapsed.has(a.id));
+  const expandAll = () => {
+    setOpen(() => new Set(olderRounds));
+    setCollapsed(() => new Set());
+  };
+  const collapseAll = () => {
+    setOpen(() => new Set());
+    setCollapsed(() => new Set(artifacts.map((a) => a.id)));
+  };
   const [history, setHistory] = useState<Artifact | null>(null);
   const [compare, setCompare] = useState<{ before: Artifact; after: Artifact } | null>(null);
   const [editing, setEditing] = useState<Artifact | null>(null);
@@ -229,16 +286,28 @@ export function Artifacts({ task, artifacts, onChanged }: { task: string; artifa
 
   const card = (a: Artifact) => {
     const prev = previousOf(a);
+    const folded = collapsed.has(a.id);
     return (
-      <div key={a.id} className="artifact" data-source={t('「{name}」（{author}）', { name: artifactName(a.name), author: a.author })}>
+      <div
+        key={a.id}
+        className={`artifact ${folded ? 'folded' : ''}`}
+        data-source={t('「{name}」（{author}）', { name: artifactName(a.name), author: a.author })}
+      >
         <div className="artifact-meta">
-          <div className="artifact-title">
+          <button
+            type="button"
+            className="artifact-title"
+            aria-expanded={!folded}
+            title={folded ? t('展开') : t('折叠')}
+            onClick={() => toggleCard(a.id)}
+          >
+            <span className="round-caret">{folded ? '▸' : '▾'}</span>
             <b>{artifactName(a.name)}</b>
             <span className="faint">#{a.id}</span>
             <span className={`badge ${a.rev > 1 ? 'accent' : ''}`} title={t('版本号：每次修改加一')}>
               v{a.rev}
             </span>
-          </div>
+          </button>
           <div className="faint artifact-who">
             {t('{who} {time} 提交', { who: who(agents, a.author), time: clock(a.created_at) })}
             {a.rev > 1 && a.updated_at && (
@@ -265,14 +334,28 @@ export function Artifacts({ task, artifacts, onChanged }: { task: string; artifa
               </button>
             )}
           </div>
+          {folded && <div className="artifact-preview faint">{previewOf(a.parts)}</div>}
         </div>
-        <PartsView parts={a.parts} />
+        {!folded && <PartsView parts={a.parts} />}
       </div>
     );
   };
 
   return (
     <>
+      <div className="btn-row pane-head artifacts-head">
+        <span className="faint">{hint}</span>
+        {artifacts.length > 0 && (
+          <span className="btn-row artifacts-fold">
+            <button type="button" className="btn small" disabled={allCollapsed} onClick={collapseAll}>
+              {t('全部折叠')}
+            </button>
+            <button type="button" className="btn small" disabled={allExpanded} onClick={expandAll}>
+              {t('全部展开')}
+            </button>
+          </span>
+        )}
+      </div>
       {rounds.map((r) => {
         const items = artifacts.filter((a) => a.round === r);
         const expanded = r === latest || open.has(r);
