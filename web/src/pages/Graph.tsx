@@ -13,6 +13,20 @@ const GROUP_GAP_Y = 32;
 /** 没有任何关联的任务排成网格，间距小一些 */
 const GRID_GAP = 14;
 const LABEL_H = 26;
+/** 同一层最多竖排几个，超过就折成多列 */
+const MAX_ROWS = 8;
+/** 同一层折出来的列之间的间距 */
+const SUB_GAP = 20;
+/** 折叠层外框和任务之间的留白 */
+const BLOCK_PAD = 8;
+
+interface Block {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  ids: Set<string>;
+}
 
 const STATUS_CLASS: Partial<Record<TaskCard['status'], string>> = {
   completed: 'done',
@@ -48,6 +62,11 @@ function layoutGroup(tasks: TaskCard[]) {
   const cols: TaskCard[][] = [];
   for (const t of tasks) (cols[level.get(t.id)!] ??= []).push(t);
   const row = new Map<string, number>();
+  // 一层任务太多（比如一个父任务下几十个子任务）时折成几列，不再排成一长条
+  const wrap = cols.map((col) => {
+    const subs = Math.max(1, Math.ceil(col.length / MAX_ROWS));
+    return { subs, rows: Math.ceil(col.length / subs) };
+  });
   cols.forEach((col, ci) => {
     if (ci > 0) {
       const key = (t: TaskCard) => {
@@ -58,17 +77,25 @@ function layoutGroup(tasks: TaskCard[]) {
       };
       col.sort((a, b) => key(a) - key(b) || byNum(a, b));
     } else col.sort(byNum);
-    col.forEach((t, i) => row.set(t.id, i));
+    col.forEach((t, i) => row.set(t.id, i % wrap[ci].rows));
   });
-  const rows = Math.max(1, ...cols.map((c) => c.length));
+  const rows = Math.max(1, ...wrap.map((w) => w.rows));
   const height = rows * (NODE_H + GAP_Y) - GAP_Y;
   const pos = new Map<string, { x: number; y: number }>();
+  // 折成多列的层画一个框，父任务连到框上，不再一个个连（几十条虚线会糊成一片）
+  const blocks: Block[] = [];
+  let x = 0;
   // 每列在组内竖直居中，层数少的列不会都贴在顶上
   cols.forEach((col, ci) => {
-    const offset = (height - (col.length * (NODE_H + GAP_Y) - GAP_Y)) / 2;
-    col.forEach((t, i) => pos.set(t.id, { x: ci * (NODE_W + GAP_X), y: offset + i * (NODE_H + GAP_Y) }));
+    const { subs, rows: r } = wrap[ci];
+    const h = Math.min(r, col.length) * (NODE_H + GAP_Y) - GAP_Y;
+    const offset = (height - h) / 2;
+    const w = subs * (NODE_W + SUB_GAP) - SUB_GAP;
+    col.forEach((t, i) => pos.set(t.id, { x: x + Math.floor(i / r) * (NODE_W + SUB_GAP), y: offset + (i % r) * (NODE_H + GAP_Y) }));
+    if (subs > 1) blocks.push({ x: x - BLOCK_PAD, y: offset - BLOCK_PAD, w: w + BLOCK_PAD * 2, h: h + BLOCK_PAD * 2, ids: new Set(col.map((t) => t.id)) });
+    x += w + GAP_X;
   });
-  return { pos, width: cols.length * (NODE_W + GAP_X) - GAP_X, height };
+  return { pos, blocks, width: x - GAP_X, height };
 }
 
 /** 按前置和父子关系把任务分成若干组（连通分量） */
@@ -104,6 +131,7 @@ function layout(tasks: TaskCard[], avail: number) {
     .map((g) => g[0])
     .sort(byNum);
   const pos = new Map<string, { x: number; y: number }>();
+  const blocks: Block[] = [];
   const labels: { y: number; text: string }[] = [];
   let x = 0;
   let y = 0;
@@ -115,6 +143,7 @@ function layout(tasks: TaskCard[], avail: number) {
   }
   for (const g of linked) {
     const l = layoutGroup(g);
+    for (const b of l.blocks) blocks.push({ ...b, x: x + b.x, y: y + b.y });
     if (x > 0 && x + l.width > avail) {
       x = 0;
       y += shelf + GROUP_GAP_Y;
@@ -139,7 +168,7 @@ function layout(tasks: TaskCard[], avail: number) {
     width = Math.max(width, cols * (NODE_W + GRID_GAP) - GRID_GAP);
     y += Math.ceil(single.length / perRow) * (NODE_H + GRID_GAP) - GRID_GAP;
   } else y -= GROUP_GAP_Y;
-  return { pos, labels, width: Math.max(width, NODE_W), height: Math.max(y, NODE_H) };
+  return { pos, labels, blocks, width: Math.max(width, NODE_W), height: Math.max(y, NODE_H) };
 }
 
 const PAD_X = 24;
@@ -190,14 +219,29 @@ export function Graph({ tasks }: { tasks: TaskCard[] }) {
 }
 
 function ProjectGraph({ tasks, title, avail, onOpen }: { tasks: TaskCard[]; title: string | null; avail: number; onOpen: (id: string) => void }) {
-  const { pos, labels, width, height } = useMemo(() => layout(tasks, avail), [tasks, avail]);
+  const { pos, labels, blocks, width, height } = useMemo(() => layout(tasks, avail), [tasks, avail]);
   const byId = new Map(tasks.map((t) => [t.id, t]));
-  const edges: { from: string; to: string; kind: 'dep' | 'sub'; live: boolean }[] = [];
+  const edges: { from: string; to: string; kind: 'dep' | 'sub'; live: boolean; block?: number }[] = [];
+  const blockOf = (id: string) => blocks.findIndex((b) => b.ids.has(id));
+  const toBlock = new Set<string>();
   for (const t of tasks) {
     for (const d of t.depends_on)
       if (byId.has(d)) edges.push({ from: d, to: t.id, kind: 'dep', live: !['completed', 'archived'].includes(byId.get(d)!.status) });
-    if (t.parent && byId.has(t.parent)) edges.push({ from: t.parent, to: t.id, kind: 'sub', live: false });
+    if (t.parent && byId.has(t.parent)) {
+      const bi = blockOf(t.id);
+      // 连到折叠层的父子线合并成一条，连到框的左边
+      if (bi < 0) edges.push({ from: t.parent, to: t.id, kind: 'sub', live: false });
+      else if (!toBlock.has(`${t.parent}>${bi}`)) {
+        toBlock.add(`${t.parent}>${bi}`);
+        edges.push({ from: t.parent, to: t.id, kind: 'sub', live: false, block: bi });
+      }
+    }
   }
+  const target = (e: (typeof edges)[number]) => {
+    if (e.block === undefined) return pos.get(e.to)!;
+    const b = blocks[e.block];
+    return { x: b.x, y: b.y + b.h / 2 - NODE_H / 2 };
+  };
   const path = (a: { x: number; y: number }, b: { x: number; y: number }) => {
     const x1 = a.x + NODE_W;
     const y1 = a.y + NODE_H / 2;
@@ -229,10 +273,13 @@ function ProjectGraph({ tasks, title, avail, onOpen }: { tasks: TaskCard[]; titl
                 {l.text}
               </text>
             ))}
+            {blocks.map((b, i) => (
+              <rect key={i} x={b.x} y={b.y} width={b.w} height={b.h} rx={10} className="graph-block" />
+            ))}
             {edges.map((e) => (
               <path
                 key={`${e.kind}${e.from}${e.to}`}
-                d={path(pos.get(e.from)!, pos.get(e.to)!)}
+                d={path(pos.get(e.from)!, target(e))}
                 className={`graph-edge ${e.kind === 'sub' ? 'dashed' : ''} ${e.live ? 'live' : ''}`}
                 markerEnd={e.kind === 'dep' ? `url(#${e.live ? 'arrow-live' : 'arrow'})` : undefined}
               />

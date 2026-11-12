@@ -299,6 +299,30 @@ pre {
   cursor: default;
 }
 
+/* 请求进行中：按钮前面转个圈，不再响应点击 */
+.btn[aria-busy='true'] {
+  opacity: 0.75;
+  cursor: progress;
+  pointer-events: none;
+}
+
+.btn[aria-busy='true']::before {
+  content: '';
+  width: 0.9em;
+  height: 0.9em;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  animation: btn-spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes btn-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .btn.primary {
   background: var(--accent);
   border-color: var(--accent);
@@ -1073,14 +1097,144 @@ table.table {
   margin: 0;
 }
 
-/* 右栏一般不长，滚动正文时让它停在顶部，随时看得到负责人和进度 */
+/* 右栏一般不长，滚动正文时让它停在顶部 */
 @media (min-width: 901px) {
   .drawer-side {
     position: sticky;
     top: 0;
-    max-height: calc(100vh - 220px);
-    overflow-y: auto;
   }
+}
+
+/* 标题下面一行：负责人和进度一直看得到，点进度条切到进度记录 */
+.drawer-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.drawer-summary-who {
+  flex-shrink: 0;
+  font-weight: 600;
+}
+
+.drawer-summary-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+  padding: 2px 6px;
+  margin: -2px -6px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.drawer-summary-progress:hover {
+  background: var(--panel-2);
+}
+
+.drawer-summary-progress .progress {
+  display: block;
+  width: 120px;
+  flex-shrink: 0;
+}
+
+.drawer-summary-progress .progress > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.drawer-summary-progress .faint {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* 详情分页：固定在标题下面，只有下面的内容滚动 */
+.drawer-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 22px;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  scrollbar-width: none;
+  flex-shrink: 0;
+}
+
+.drawer-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.drawer-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 10px 9px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  font: inherit;
+  color: var(--text-2);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.drawer-tabs button:hover {
+  color: var(--text);
+}
+
+.drawer-tabs button.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+.tab-count {
+  font-size: 11.5px;
+  font-weight: 500;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.drawer-tabs button.active .tab-count {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* 讨论、笔记、交付物等单栏分页：宽屏时限制行宽，居中 */
+.drawer-pane {
+  max-width: 980px;
+}
+
+.drawer.wide .drawer-pane {
+  margin: 0 auto;
+}
+
+.pane-head {
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.pane-hint {
+  margin: 0 0 12px;
+  font-size: 12.5px;
+}
+
+.show-more {
+  margin: 4px 0 14px;
 }
 
 .side-card {
@@ -1114,6 +1268,14 @@ table.table {
 
   .drawer-body {
     padding: 16px 16px 40px;
+  }
+
+  .drawer-tabs {
+    padding: 0 8px;
+  }
+
+  .drawer-summary-progress .progress {
+    width: 72px;
   }
 
   .drawer-title {
@@ -1517,6 +1679,12 @@ table.table {
   display: flex;
   flex-wrap: wrap;
   gap: 4px 20px;
+}
+
+.graph-block {
+  fill: var(--panel-2);
+  stroke: var(--border);
+  stroke-dasharray: 5 4;
 }
 
 .graph-edge {
@@ -2389,4 +2557,71 @@ table.table {
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+}
+
+/* 看板页：标题、筛选栏固定不动，只滚动每一列里的卡片（关系图在自己的区域里滚动） */
+.main:has(> .board-page) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-bottom: 12px;
+}
+
+.board-page {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.board-page > .board,
+.board-page > .board-scroll {
+  flex: 1;
+  min-height: 0;
+}
+
+.board-page > .board {
+  align-items: stretch;
+}
+
+.board-page .column {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.board-page .column-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin: 0 -6px;
+  padding: 0 6px 4px;
+}
+
+.board-scroll {
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.column-more {
+  width: 100%;
+  justify-content: center;
+}
+
+/* 窗口很矮（如手机横屏）时固定区域放不下，退回整页滚动 */
+@media (max-height: 520px) {
+  .main:has(> .board-page) {
+    display: block;
+    overflow: auto;
+  }
+  .board-page {
+    display: block;
+  }
+  .board-page > .board {
+    align-items: start;
+  }
+  .board-page .column-body {
+    overflow: visible;
+  }
 }

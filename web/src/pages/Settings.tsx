@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { LOCALES, joinList, lang, msg, savedLang, t } from '../i18n';
 import { del, get, patch, post, put } from '../api';
-import { Modal, dateTime, resetTagOptions, splitList, timeAgo, useData, useHub } from '../ui';
+import { Modal, dateTime, resetTagOptions, splitList, timeAgo, useBusy, useBusyKey, useData, useHub } from '../ui';
 
 interface Channel {
   id: number;
@@ -59,15 +59,19 @@ export function Settings() {
   const [editing, setEditing] = useState<Channel | 'new' | null>(null);
   const topics = data?.topics ?? {};
 
-  const run = async (fn: () => Promise<unknown>, done: string) => {
-    try {
-      await fn();
-      toast(done);
-      reload();
-    } catch (err) {
-      toast((err as Error).message, true);
-    }
-  };
+  // 渠道上的操作同一时间只做一个，被点的按钮转圈
+  const [doing, guard] = useBusyKey();
+  const run = (key: string, fn: () => Promise<unknown>, done: string) =>
+    guard(key, async () => {
+      try {
+        await fn();
+        toast(done);
+        reload();
+      } catch (err) {
+        toast((err as Error).message, true);
+      }
+    });
+  const busy = (key: string) => ({ disabled: doing !== null, 'aria-busy': doing === key });
 
   return (
     <div style={{ maxWidth: 900 }}>
@@ -115,10 +119,10 @@ export function Settings() {
                 )}
               </div>
               <div className="btn-row">
-                <button className="btn small" onClick={() => run(() => post(`/notify/channels/${c.id}/test`), t('测试消息已发送，去钉钉群里看看'))}>
+                <button className="btn small" {...busy(`${c.id}:test`)} onClick={() => run(`${c.id}:test`, () => post(`/notify/channels/${c.id}/test`), t('测试消息已发送，去钉钉群里看看'))}>
                   {t('测试')}
                 </button>
-                <button className="btn small" onClick={() => run(() => patch(`/notify/channels/${c.id}`, { enabled: !c.enabled }), c.enabled ? t('已停用') : t('已启用'))}>
+                <button className="btn small" {...busy(`${c.id}:toggle`)} onClick={() => run(`${c.id}:toggle`, () => patch(`/notify/channels/${c.id}`, { enabled: !c.enabled }), c.enabled ? t('已停用') : t('已启用'))}>
                   {c.enabled ? t('停用') : t('启用')}
                 </button>
                 <button className="btn small" onClick={() => setEditing(c)}>
@@ -126,7 +130,8 @@ export function Settings() {
                 </button>
                 <button
                   className="btn small danger"
-                  onClick={() => confirm(t('删除「{name}」？', { name: c.name })) && run(() => del(`/notify/channels/${c.id}`), t('已删除'))}
+                  {...busy(`${c.id}:del`)}
+                  onClick={() => confirm(t('删除「{name}」？', { name: c.name })) && run(`${c.id}:del`, () => del(`/notify/channels/${c.id}`), t('已删除'))}
                 >
                   {t('删除')}
                 </button>
@@ -164,6 +169,7 @@ function ChannelForm({
   onSaved: () => void;
 }) {
   const { projects, toast } = useHub();
+  const [saving, guard] = useBusy();
   const [name, setName] = useState(channel?.name ?? t('钉钉群'));
   const [webhook, setWebhook] = useState('');
   const [secret, setSecret] = useState('');
@@ -227,8 +233,9 @@ function ChannelForm({
       <div className="btn-row">
         <button
           className="btn primary"
-          disabled={(!channel && !webhook.trim()) || picked.length === 0}
-          onClick={async () => {
+          disabled={(!channel && !webhook.trim()) || picked.length === 0 || saving}
+          aria-busy={saving}
+          onClick={() => guard(async () => {
             const body = {
               name,
               ...(webhook.trim() ? { webhook: webhook.trim() } : {}),
@@ -245,7 +252,7 @@ function ChannelForm({
             } catch (err) {
               toast((err as Error).message, true);
             }
-          }}
+          })}
         >
           {t('保存')}
         </button>
@@ -263,17 +270,19 @@ function PresenceCard() {
   const { data, reload } = useData(() => get<{ idle_minutes: number; stream_grace_minutes: number }>('/presence-settings'), []);
   const [idle, setIdle] = useState('');
   const [grace, setGrace] = useState('');
-  const save = async () => {
-    try {
-      await patch('/presence-settings', { idle_minutes: idle || undefined, stream_grace_minutes: grace || undefined });
-      toast(t('已保存'));
-      setIdle('');
-      setGrace('');
-      reload();
-    } catch (err) {
-      toast((err as Error).message, true);
-    }
-  };
+  const [saving, guard] = useBusy();
+  const save = () =>
+    guard(async () => {
+      try {
+        await patch('/presence-settings', { idle_minutes: idle || undefined, stream_grace_minutes: grace || undefined });
+        toast(t('已保存'));
+        setIdle('');
+        setGrace('');
+        reload();
+      } catch (err) {
+        toast((err as Error).message, true);
+      }
+    });
   return (
     <div className="card" style={{ marginBottom: 16 }}>
       <h3 style={{ margin: '0 0 8px' }}>{t('自动下线')}</h3>
@@ -291,7 +300,7 @@ function PresenceCard() {
         </div>
       </div>
       <div className="btn-row" style={{ justifyContent: 'flex-end' }}>
-        <button className="btn primary small" disabled={!idle && !grace} onClick={save}>
+        <button className="btn primary small" disabled={(!idle && !grace) || saving} aria-busy={saving} onClick={save}>
           {t('保存')}
         </button>
       </div>
@@ -304,16 +313,18 @@ function ArchiveCard() {
   const { toast } = useHub();
   const { data, reload } = useData(() => get<{ auto_archive_hours: number }>('/archive-settings'), []);
   const [hours, setHours] = useState('');
-  const save = async () => {
-    try {
-      await patch('/archive-settings', { auto_archive_hours: Number(hours) });
-      toast(t('已保存'));
-      setHours('');
-      reload();
-    } catch (err) {
-      toast((err as Error).message, true);
-    }
-  };
+  const [saving, guard] = useBusy();
+  const save = () =>
+    guard(async () => {
+      try {
+        await patch('/archive-settings', { auto_archive_hours: Number(hours) });
+        toast(t('已保存'));
+        setHours('');
+        reload();
+      } catch (err) {
+        toast((err as Error).message, true);
+      }
+    });
   return (
     <div className="card" style={{ marginBottom: 16 }}>
       <h3 style={{ margin: '0 0 8px' }}>{t('自动归档')}</h3>
@@ -337,7 +348,7 @@ function ArchiveCard() {
         </div>
       </div>
       <div className="btn-row" style={{ justifyContent: 'flex-end' }}>
-        <button className="btn primary small" disabled={hours.trim() === ''} onClick={save}>
+        <button className="btn primary small" disabled={hours.trim() === '' || saving} aria-busy={saving} onClick={save}>
           {t('保存')}
         </button>
       </div>
@@ -364,16 +375,18 @@ function LlmCard() {
   const set = (patchv: Partial<typeof f>) => setForm({ ...f, ...patchv });
   const body = () => ({ base_url: f.base_url, model: f.model, auto_tag: f.auto_tag, ...(f.api_key ? { api_key: f.api_key } : {}) });
 
-  const save = async () => {
-    try {
-      await put('/llm', body());
-      toast(t('已保存'));
-      setForm(null);
-      reload();
-    } catch (err) {
-      toast((err as Error).message, true);
-    }
-  };
+  const [saving, guard] = useBusy();
+  const save = () =>
+    guard(async () => {
+      try {
+        await put('/llm', body());
+        toast(t('已保存'));
+        setForm(null);
+        reload();
+      } catch (err) {
+        toast((err as Error).message, true);
+      }
+    });
   const test = async () => {
     setBusy(true);
     try {
@@ -420,10 +433,10 @@ function LlmCard() {
         <input type="checkbox" checked={f.auto_tag} onChange={(e) => set({ auto_tag: e.target.checked })} /> {t('发布任务时自动打标签')}
       </label>
       <div className="btn-row" style={{ marginTop: 12 }}>
-        <button className="btn primary small" onClick={save}>
+        <button className="btn primary small" disabled={saving} aria-busy={saving} onClick={save}>
           {t('保存')}
         </button>
-        <button className="btn small" disabled={busy || !f.base_url || !f.model} onClick={test}>
+        <button className="btn small" disabled={busy || !f.base_url || !f.model} aria-busy={busy} onClick={test}>
           {busy ? t('测试中…') : t('测试')}
         </button>
         {data?.has_key && (
@@ -442,17 +455,19 @@ function PresetTagsCard() {
   const { data, reload } = useData(() => get<{ presets: string[]; in_use: string[] }>('/tags'), []);
   const [text, setText] = useState<string | null>(null);
   const value = text ?? data?.presets.join(', ') ?? '';
-  const save = async () => {
-    try {
-      await put('/tags/presets', { presets: splitList(value) });
-      resetTagOptions();
-      toast(t('已保存'));
-      setText(null);
-      reload();
-    } catch (err) {
-      toast((err as Error).message, true);
-    }
-  };
+  const [saving, guard] = useBusy();
+  const save = () =>
+    guard(async () => {
+      try {
+        await put('/tags/presets', { presets: splitList(value) });
+        resetTagOptions();
+        toast(t('已保存'));
+        setText(null);
+        reload();
+      } catch (err) {
+        toast((err as Error).message, true);
+      }
+    });
   return (
     <div className="card" style={{ marginTop: 16 }}>
       <h3 style={{ marginTop: 0 }}>{t('预设标签')}</h3>
@@ -464,7 +479,7 @@ function PresetTagsCard() {
         <textarea id="preset-tags" className="textarea" rows={2} value={value} onChange={(e) => setText(e.target.value)} />
         {data && data.in_use.length > 0 && <span className="hint">{t('正在使用、但不在预设里的：{tags}', { tags: joinList(data.in_use) })}</span>}
       </div>
-      <button className="btn primary small" onClick={save}>
+      <button className="btn primary small" disabled={saving} aria-busy={saving} onClick={save}>
         {t('保存')}
       </button>
     </div>

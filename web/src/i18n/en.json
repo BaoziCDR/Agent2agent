@@ -582,5 +582,18 @@
   "控制台出错了，请刷新页面。": "The console hit an error. Please reload the page.",
   "这个页面显示不出来，请刷新或换一个页面。": "This page could not be displayed. Reload or switch to another page.",
   "这个任务显示不出来": "This task could not be displayed",
-  "任务 {id} 的内容有问题，看板和其他任务不受影响。": "The content of task {id} is invalid. The board and other tasks are not affected."
+  "任务 {id} 的内容有问题，看板和其他任务不受影响。": "The content of task {id} is invalid. The board and other tasks are not affected.",
+  "只在关系图里生效，看板上已完成一列照常显示": "Only applies to the graph; the board still shows the Completed column",
+  "关系图不显示已完成": "Hide completed in graph",
+  "显示更早的 {n} 个": "Show {n} older",
+  "概览": "Overview",
+  "查看进度记录": "View progress log",
+  "提交中…": "Submitting…",
+  "任务详情分页": "Task detail sections",
+  "显示更早的 {n} 条评论": "Show {n} earlier comments",
+  "发表中…": "Posting…",
+  "{live} 个未结束，{ended} 个已完成或归档": "{live} open, {ended} completed or archived",
+  "收起已结束的子任务": "Hide finished subtasks",
+  "显示已结束的 {n} 个子任务": "Show {n} finished subtasks",
+  "显示更早的 {n} 条": "Show {n} earlier"
 }

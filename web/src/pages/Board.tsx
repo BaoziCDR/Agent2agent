@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { joinList, msg, t as tr, withCode } from '../i18n';
 import { get, post, type TaskCard, type TaskStatus } from '../api';
 import { changesTaskList } from '../../../src/shared/event-view';
-import { Modal, dueInfo, timeAgo, useData, useHub } from '../ui';
+import { Modal, dueInfo, timeAgo, useBusy, useData, useHub } from '../ui';
 import { Graph } from './Graph';
 import { Suggest, useRecommend } from '../suggest';
 
@@ -67,6 +67,8 @@ interface Filters {
   showArchived: boolean;
   /** 归档里只看手动或自动归档；空表示都看 */
   archiveKind: '' | 'manual' | 'auto';
+  /** 关系图里不画已完成的任务 */
+  hideDone: boolean;
 }
 
 const EMPTY: Filters = {
@@ -80,7 +82,11 @@ const EMPTY: Filters = {
   to: '',
   showArchived: false,
   archiveKind: '',
+  hideDone: false,
 };
+
+/** 已完成、已归档这两列默认只显示最近的这么多张，更早的点一下再展开 */
+const ENDED_LIMIT = 30;
 
 const FILTER_KEY = 'ahub.board-filters';
 
@@ -194,19 +200,23 @@ export function Board() {
   ].filter(Boolean).length;
   const active = activeCount > 0;
   const [filtersOpen, setFiltersOpen] = useState(false);
+  // 展开了全部卡片的列（已完成、已归档默认只显示最近的）
+  const [expanded, setExpanded] = useState<TaskStatus[]>([]);
   const total = (tasks ?? []).filter((t) => f.showArchived || t.status !== 'archived').length;
-  const act = async (t: TaskCard, verb: string, body: Record<string, unknown> = {}, done?: string) => {
-    try {
-      await post(`/tasks/${t.id}/${verb}`, body);
-      if (done) toast(`${t.id} ${done}`);
-      reload();
-      refresh();
-      return true;
-    } catch (err) {
-      toast((err as Error).message, true);
-      return false;
-    }
-  };
+  const [busy, guard] = useBusy();
+  const act = async (t: TaskCard, verb: string, body: Record<string, unknown> = {}, done?: string) =>
+    (await guard(async () => {
+      try {
+        await post(`/tasks/${t.id}/${verb}`, body);
+        if (done) toast(`${t.id} ${done}`);
+        reload();
+        refresh();
+        return true;
+      } catch (err) {
+        toast((err as Error).message, true);
+        return false;
+      }
+    })) ?? false;
 
   const drop = (to: TaskStatus) => {
     const t = dragging;
@@ -228,7 +238,7 @@ export function Board() {
   );
 
   return (
-    <div>
+    <div className="board-page">
       <div className="btn-row" style={{ justifyContent: 'space-between', marginBottom: 12 }}>
         <div>
           <h1 className="page-title">{tr('任务看板')}</h1>
@@ -363,6 +373,11 @@ export function Board() {
         <label className="filter-check">
           <input type="checkbox" checked={f.showArchived} onChange={(e) => set({ showArchived: e.target.checked })} /> {tr('显示已归档')}
         </label>
+        {view === 'graph' && (
+          <label className="filter-check" title={tr('只在关系图里生效，看板上已完成一列照常显示')}>
+            <input type="checkbox" checked={f.hideDone} onChange={(e) => set({ hideDone: e.target.checked })} /> {tr('关系图不显示已完成')}
+          </label>
+        )}
         {f.showArchived && (
           <select
             className="select"
@@ -386,13 +401,22 @@ export function Board() {
         )}
       </div>
       {view === 'graph' ? (
-        <Graph tasks={filtered} />
+        <div className="board-scroll">
+          <Graph tasks={f.hideDone ? filtered.filter((t) => t.status !== 'completed') : filtered} />
+        </div>
       ) : (
         <div className="board">
           {columns.map((col) => {
-            const items = filtered
+            const all = filtered
               .filter((t) => t.status === col.status)
-              .sort((a, b) => a.priority.localeCompare(b.priority) || b.updated_at.localeCompare(a.updated_at));
+              .sort((a, b) =>
+                // 已结束的按最近更新排，进行中的先按优先级
+                ['completed', 'archived'].includes(col.status)
+                  ? b.updated_at.localeCompare(a.updated_at)
+                  : a.priority.localeCompare(b.priority) || b.updated_at.localeCompare(a.updated_at),
+              );
+            const limited = ['completed', 'archived'].includes(col.status) && !expanded.includes(col.status) && all.length > ENDED_LIMIT;
+            const items = limited ? all.slice(0, ENDED_LIMIT) : all;
             return (
               <section
                 key={col.status}
@@ -412,71 +436,78 @@ export function Board() {
               >
                 <div className="column-head">
                   <span>{tr(col.label)}</span>
-                  <span className="badge">{items.length}</span>
+                  <span className="badge">{all.length}</span>
                 </div>
-                {items.map((t) => (
-                  <article
-                    key={t.id}
-                    className={`task-card ${dragging?.id === t.id ? 'dragging' : ''}`}
-                    draggable={!['completed', 'archived'].includes(t.status)}
-                    onDragStart={(e) => {
-                      e.dataTransfer.effectAllowed = 'move';
-                      e.dataTransfer.setData('text/plain', t.id);
-                      setDragging(t);
-                    }}
-                    onDragEnd={() => (setDragging(null), setOver(null))}
-                    onClick={() => openTask(t.id)}
-                  >
-                    <div className="meta">
-                      <span>
-                        {t.id}
-                        {t.parent ? ` · ${tr('子任务')}` : children.get(t.id) ? ` · ${tr('{n} 个子任务', { n: children.get(t.id)! })}` : ''}
-                      </span>
-                      <span className={`badge ${t.priority}`}>{t.priority}</span>
-                    </div>
-                    <div className="title">{t.title}</div>
-                    {(() => {
-                      const d = dueInfo(t);
-                      return (
-                        d && (
-                          <div className={`due ${d.cls}`} title={d.title}>
-                            ⏰ {d.text}
-                          </div>
-                        )
-                      );
-                    })()}
-                    {t.stalled && (
-                      <div className="due warn" title={tr('一直在报进度，但百分比 2 小时以上没变')}>
-                        {tr('↻ 疑似原地打转')}
-                      </div>
-                    )}
-                    {['working', 'input_required', 'review'].includes(t.status) && (
-                      <div className="progress" title={`${t.progress}%`}>
-                        <div style={{ width: `${t.progress}%` }} />
-                      </div>
-                    )}
-                    <div className="meta" style={{ marginTop: 7 }}>
-                      <span>{t.assignee_name ?? (t.required_tags.length ? tr('需要：{tags}', { tags: joinList(t.required_tags) }) : tr('未指派'))}</span>
-                      {t.archive_kind ? (
-                        <span className={`badge archive-${t.archive_kind}`} title={t.archived_at ? tr('归档于 {time}', { time: timeAgo(t.archived_at) }) : undefined}>
-                          {t.archive_kind === 'auto' ? tr('自动归档') : tr('手动归档')}
+                <div className="column-body">
+                  {items.map((t) => (
+                    <article
+                      key={t.id}
+                      className={`task-card ${dragging?.id === t.id ? 'dragging' : ''}`}
+                      draggable={!['completed', 'archived'].includes(t.status)}
+                      onDragStart={(e) => {
+                        e.dataTransfer.effectAllowed = 'move';
+                        e.dataTransfer.setData('text/plain', t.id);
+                        setDragging(t);
+                      }}
+                      onDragEnd={() => (setDragging(null), setOver(null))}
+                      onClick={() => openTask(t.id)}
+                    >
+                      <div className="meta">
+                        <span>
+                          {t.id}
+                          {t.parent ? ` · ${tr('子任务')}` : children.get(t.id) ? ` · ${tr('{n} 个子任务', { n: children.get(t.id)! })}` : ''}
                         </span>
-                      ) : (
-                        <span>{timeAgo(t.updated_at)}</span>
+                        <span className={`badge ${t.priority}`}>{t.priority}</span>
+                      </div>
+                      <div className="title">{t.title}</div>
+                      {(() => {
+                        const d = dueInfo(t);
+                        return (
+                          d && (
+                            <div className={`due ${d.cls}`} title={d.title}>
+                              ⏰ {d.text}
+                            </div>
+                          )
+                        );
+                      })()}
+                      {t.stalled && (
+                        <div className="due warn" title={tr('一直在报进度，但百分比 2 小时以上没变')}>
+                          {tr('↻ 疑似原地打转')}
+                        </div>
                       )}
-                    </div>
-                    {t.status === 'input_required' && t.block_reason && (
-                      <div className="faint" style={{ color: 'var(--bad)', marginTop: 4 }}>
-                        {t.block_reason}
+                      {['working', 'input_required', 'review'].includes(t.status) && (
+                        <div className="progress" title={`${t.progress}%`}>
+                          <div style={{ width: `${t.progress}%` }} />
+                        </div>
+                      )}
+                      <div className="meta" style={{ marginTop: 7 }}>
+                        <span>{t.assignee_name ?? (t.required_tags.length ? tr('需要：{tags}', { tags: joinList(t.required_tags) }) : tr('未指派'))}</span>
+                        {t.archive_kind ? (
+                          <span className={`badge archive-${t.archive_kind}`} title={t.archived_at ? tr('归档于 {time}', { time: timeAgo(t.archived_at) }) : undefined}>
+                            {t.archive_kind === 'auto' ? tr('自动归档') : tr('手动归档')}
+                          </span>
+                        ) : (
+                          <span>{timeAgo(t.updated_at)}</span>
+                        )}
                       </div>
-                    )}
-                    {t.status === 'working' && t.progress_note && (
-                      <div className="faint" style={{ marginTop: 4 }}>
-                        {t.progress_note}
-                      </div>
-                    )}
-                  </article>
-                ))}
+                      {t.status === 'input_required' && t.block_reason && (
+                        <div className="faint" style={{ color: 'var(--bad)', marginTop: 4 }}>
+                          {t.block_reason}
+                        </div>
+                      )}
+                      {t.status === 'working' && t.progress_note && (
+                        <div className="faint" style={{ marginTop: 4 }}>
+                          {t.progress_note}
+                        </div>
+                      )}
+                    </article>
+                  ))}
+                  {limited && (
+                    <button type="button" className="btn small column-more" onClick={() => setExpanded((x) => [...x, col.status])}>
+                      {tr('显示更早的 {n} 个', { n: all.length - ENDED_LIMIT })}
+                    </button>
+                  )}
+                </div>
               </section>
             );
           })}
@@ -506,7 +537,9 @@ export function Board() {
           <div className="btn-row">
             <button
               className={`btn ${pending.dialog === 'cancel' ? 'danger' : 'primary'}`}
+              aria-busy={busy}
               disabled={
+                busy ||
                 (pending.dialog !== 'cancel' && !text.trim()) ||
                 (pending.dialog === 'assign' && text === pending.task.assignee && pending.task.status === 'assigned')
               }

@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { joinList, t as tr, withCode } from '../i18n';
 import { get, markOwnerRead, patch, post, type Part, type TaskDetail } from '../api';
-import { Modal, Receipts, StatusBadge, TagPicker, clock, dateTime, dueInfo, splitList, timeAgo, toLocalInput, useData, useHub, useJumpTo } from '../ui';
+import { Modal, Receipts, StatusBadge, TagPicker, clock, dateTime, dueInfo, splitList, timeAgo, toLocalInput, useBusy, useBusyKey, useData, useHub, useJumpTo } from '../ui';
 import { MentionTextarea, agentCandidates } from '../mention';
 import { Markdown } from '../markdown';
 import { changesTaskDetail } from '../../../src/shared/event-view';
@@ -17,13 +17,50 @@ const partText = (parts: Part[]) =>
     .map((p) => p.text ?? p.url ?? JSON.stringify(p.data))
     .join('\n');
 
+type Tab = 'overview' | 'discussion' | 'notes' | 'artifacts' | 'subtasks' | 'progress';
+
+/** 地址里的定位落在哪个分页：评论和讨论区在「讨论」，交付物、进度各有分页 */
+function tabOf(anchor: string | null): Tab {
+  if (!anchor) return 'overview';
+  if (anchor === 'discussion' || anchor.startsWith('comment-')) return 'discussion';
+  if (anchor === 'artifacts') return 'artifacts';
+  if (anchor === 'progress') return 'progress';
+  return 'overview';
+}
+
+/** 讨论默认只显示最近这么多条，更早的点一下再展开 */
+const RECENT_COMMENTS = 20;
+/** 进度记录默认显示的条数 */
+const RECENT_PROGRESS = 30;
+const ENDED: TaskDetail['status'][] = ['completed', 'archived'];
+
 export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void }) {
   const { agents, toast, refresh, openTask, anchor } = useHub();
   const { data: t, error, reload } = useData(() => get<TaskDetail>(`/tasks/${id}?view=summary`), [id], {
     refreshOn: (e, data) => changesTaskDetail(e, id, data?.id === id ? data : null),
   });
-  // 切换任务时 t 还是上一个任务，等新任务载入后再定位
-  useJumpTo(anchor, t?.id === id ? t : null);
+  // 当前分页：换了任务或地址里的定位变了，就切到定位所在的分页（在渲染时同步切换，定位时目标已经在页面上）
+  const [tab, setTab] = useState<Tab>(() => tabOf(anchor));
+  const [tabFor, setTabFor] = useState(`${id}|${anchor}`);
+  const [allComments, setAllComments] = useState(false);
+  const [allProgress, setAllProgress] = useState(false);
+  const [showEnded, setShowEnded] = useState(false);
+  if (tabFor !== `${id}|${anchor}`) {
+    setTabFor(`${id}|${anchor}`);
+    setTab(tabOf(anchor));
+    if (!tabFor.startsWith(`${id}|`)) {
+      setAllComments(false);
+      setAllProgress(false);
+      setShowEnded(false);
+    }
+  }
+  const loaded = t?.id === id ? t : null;
+  // 定位的评论在「最近 20 条」之外时，直接全部展开
+  const anchorIdx = loaded && anchor?.startsWith('comment-') ? loaded.comments.findIndex((c) => `comment-${c.id}` === anchor) : -1;
+  const commentsAll = allComments || (anchorIdx >= 0 && anchorIdx < loaded!.comments.length - RECENT_COMMENTS);
+  // 只有具体某条评论需要滚过去高亮；讨论、交付物、进度这类定位切到对应分页就到了
+  const jumpAnchor = anchor?.startsWith('comment-') ? anchor : null;
+  useJumpTo(jumpAnchor, loaded ? `${loaded.id}:${tab}:${commentsAll}` : null);
   // 打开任务、看到评论，就当读过这个任务里 @负责人 的话；没有新标记的就不刷新，避免来回请求
   useEffect(() => {
     if (t) markOwnerRead({ task: id }).then((n) => n && refresh());
@@ -39,6 +76,16 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
       return false;
     }
   });
+  const bodyRef = useRef<HTMLDivElement>(null);
+  // 切换分页：讨论从最新（底部）看起，其他分页从顶部看起；有具体评论要定位时交给 useJumpTo
+  const shownTab = loaded ? `${loaded.id}:${tab}` : '';
+  useLayoutEffect(() => {
+    const body = bodyRef.current;
+    if (!body || !shownTab || jumpAnchor) return;
+    body.scrollTop = tab === 'discussion' ? body.scrollHeight : 0;
+    // 只在换分页、换任务时滚动；同一分页里数据刷新不要把人拽走
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shownTab]);
   // 在交付物上划选文字时，浮出「引用到评论」按钮
   const drawerRef = useRef<HTMLElement>(null);
   const [quote, setQuote] = useState<{ text: string; source: string; x: number; y: number } | null>(null);
@@ -77,12 +124,14 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
     setComment((c) => (c.trim() ? `${c.replace(/\s*$/, '')}\n\n${block}` : block));
     setQuote(null);
     document.getSelection()?.removeAllRanges();
+    // 评论框在「讨论」分页，切过去再聚焦
+    setTab('discussion');
     setTimeout(() => {
       const ta = drawerRef.current?.querySelector<HTMLTextAreaElement>('.comment-form textarea');
       if (!ta) return;
       ta.focus();
       ta.setSelectionRange(ta.value.length, ta.value.length);
-      ta.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      ta.scrollIntoView({ block: 'center' });
     });
   };
 
@@ -103,21 +152,25 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose, dialog]);
 
-  const act = async (path: string, body: unknown = {}, done?: string) => {
-    try {
-      await post(`/tasks/${id}/${path}`, body);
-      if (done) toast(done);
-      reload();
-      refresh();
-      return true;
-    } catch (err) {
-      toast((err as Error).message, true);
-      return false;
-    }
-  };
+  // 同一时间只做一个操作：请求没返回前再点不会重复提交，被点的按钮转圈
+  const [doing, guard] = useBusyKey();
+  const act = async (path: string, body: unknown = {}, done?: string) =>
+    (await guard(path, async () => {
+      try {
+        await post(`/tasks/${id}/${path}`, body);
+        if (done) toast(done);
+        reload();
+        refresh();
+        return true;
+      } catch (err) {
+        toast((err as Error).message, true);
+        return false;
+      }
+    })) ?? false;
+  const busy = (path: string) => ({ disabled: doing !== null, 'aria-busy': doing === path });
 
   const sendComment = async () => {
-    if ((!comment.trim() && !files.length) || uploading) return;
+    if ((!comment.trim() && !files.length) || uploading || doing) return;
     if (await act('comments', { text: comment, files: files.map((f) => f.id) })) {
       setComment('');
       setFiles([]);
@@ -126,7 +179,35 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
 
   const recs = useRecommend({ task: id }, t?.status === 'open' && !t.assignee);
   const members = t ? agents.filter((a) => a.status === 'active' && a.projects.some((p) => p.id === t.project)) : [];
-  const closed = t && ['completed', 'archived'].includes(t.status);
+  const closed = t && ENDED.includes(t.status);
+
+  const tabs: { id: Tab; label: string; count?: number }[] = t
+    ? [
+        { id: 'overview', label: tr('概览') },
+        { id: 'discussion', label: tr('讨论'), count: t.comments.length },
+        ...(t.notes ? [{ id: 'notes' as Tab, label: tr('工作笔记') }] : []),
+        ...(t.artifacts.length ? [{ id: 'artifacts' as Tab, label: tr('交付物'), count: t.artifacts.length }] : []),
+        ...(t.subtasks.length || !closed ? [{ id: 'subtasks' as Tab, label: tr('子任务'), count: t.subtasks.length }] : []),
+        ...(t.progress_log.length ? [{ id: 'progress' as Tab, label: tr('进度记录'), count: t.progress_log.length }] : []),
+      ]
+    : [];
+  // 当前分页在这个任务上不存在（比如没有交付物），退回概览
+  const current: Tab = tabs.some((x) => x.id === tab) ? tab : 'overview';
+
+  const subtasks = t ? [...t.subtasks].sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true })) : [];
+  const liveSubs = subtasks.filter((s) => !ENDED.includes(s.status));
+  const endedSubs = subtasks.filter((s) => ENDED.includes(s.status));
+  const subItem = (s: TaskDetail['subtasks'][number]) => (
+    <div key={s.id} className="list-item clickable" onClick={() => openTask(s.id)}>
+      <StatusBadge task={s} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <b>{s.id}</b> {s.title}
+        <div className="faint">{s.assignee_name ?? tr('未指派')}</div>
+      </div>
+    </div>
+  );
+  const comments = t ? (commentsAll ? t.comments : t.comments.slice(-RECENT_COMMENTS)) : [];
+  const progress = t ? [...t.progress_log].reverse() : [];
 
   return (
     <>
@@ -165,25 +246,38 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
                   {tr('创建者 {who}', { who: t.created_by === 'owner' ? tr('负责人') : t.created_by })} · {tr('更新于 {time}', { time: timeAgo(t.updated_at) })}
                 </span>
               </div>
+              {/* 负责人和进度一直显示在顶部，不用翻到哪里去找 */}
+              <div className="drawer-summary">
+                <span className="drawer-summary-who">{t.assignee ? withCode(t.assignee_name ?? '', t.assignee) : tr('未指派')}</span>
+                {t.status !== 'open' && t.status !== 'draft' && (
+                  <button type="button" className="drawer-summary-progress" onClick={() => setTab(t.progress_log.length ? 'progress' : 'overview')} title={tr('查看进度记录')}>
+                    <span className="progress">
+                      <span style={{ width: `${t.progress}%` }} />
+                    </span>
+                    <b>{t.progress}%</b>
+                    {t.progress_note && <span className="faint">{t.progress_note}</span>}
+                  </button>
+                )}
+              </div>
               <Receipts list={t.receipts} />
               <div className="btn-row drawer-actions">
                 {t.status === 'draft' && (
-                  <button className="btn primary" onClick={() => act('publish', {}, tr('已发布'))}>
+                  <button className="btn primary" {...busy('publish')} onClick={() => act('publish', {}, tr('已发布'))}>
                     {tr('发布')}
                   </button>
                 )}
                 {t.status === 'review' && (
                   <>
-                    <button className="btn primary" onClick={() => act('approve', {}, tr('已验收通过'))}>
+                    <button className="btn primary" {...busy('approve')} onClick={() => act('approve', {}, tr('已验收通过'))}>
                       {tr('验收通过')}
                     </button>
-                    <button className="btn" onClick={() => (setReason(''), setDialog('reject'))}>
+                    <button className="btn" disabled={doing !== null} onClick={() => (setReason(''), setDialog('reject'))}>
                       {tr('退回修改')}
                     </button>
                   </>
                 )}
                 {t.status === 'input_required' && (
-                  <button className="btn" onClick={() => act('unblock', {}, tr('已解除阻塞'))}>
+                  <button className="btn" {...busy('unblock')} onClick={() => act('unblock', {}, tr('已解除阻塞'))}>
                     {tr('解除阻塞')}
                   </button>
                 )}
@@ -192,13 +286,15 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
                     className="select"
                     style={{ width: 'auto' }}
                     value=""
+                    disabled={doing !== null}
+                    aria-busy={doing === 'assign'}
                     onChange={(e) => {
                       const v = e.target.value;
                       if (v) void act('assign', { agent: v === '-' ? null : v }, v === '-' ? tr('已放回任务池') : tr('已指派'));
                     }}
                     aria-label={tr('指派')}
                   >
-                    <option value="">{t.assignee ? tr('改派给…') : tr('指派给…')}</option>
+                    <option value="">{doing === 'assign' ? tr('提交中…') : t.assignee ? tr('改派给…') : tr('指派给…')}</option>
                     {members
                       .filter((a) => a.id !== t.assignee)
                       .map((a) => (
@@ -215,7 +311,7 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
                   </button>
                 )}
                 {!closed && (
-                  <button className="btn danger" onClick={() => (setReason(''), setDialog('cancel'))}>
+                  <button className="btn danger" disabled={doing !== null} onClick={() => (setReason(''), setDialog('cancel'))}>
                     {tr('归档任务')}
                   </button>
                 )}
@@ -224,82 +320,202 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
           )}
         </div>
         {t && (
-          <div className="drawer-body drawer-grid">
-            <div className="drawer-main">
-              {t.status === 'input_required' && <AnswerBox task={t} onDone={reload} />}
-              {t.stalled && (
-                <p className="due warn stall-hint">
-                  {tr('进度停在 {progress}% 已经很久，期间一直在上报，可能在原地打转。可以在下面评论问问卡在哪，或者拆成更小的子任务、改派给别人。', { progress: t.progress })}
-                </p>
-              )}
-              <div className="section">
-                <h4>{tr('描述')}</h4>
-                {t.description ? <Markdown text={t.description} agents={agents} /> : <span className="faint">{tr('（无）')}</span>}
-              </div>
-
-              {t.attachments.length > 0 && (
-                <div className="section">
-                  <h4>
-                    {tr('附件')}<span className="h4-hint">{tr('agent 用 ahub download {id} 下载到本地', { id: t.id })}</span>
-                  </h4>
-                  <div className="attachments">
-                    {t.attachments.map((p, i) => (
-                      <FilePart key={i} p={p} />
-                    ))}
+          <div className="drawer-tabs" role="tablist" aria-label={tr('任务详情分页')}>
+            {tabs.map((x) => (
+              <button
+                key={x.id}
+                type="button"
+                role="tab"
+                aria-selected={current === x.id}
+                className={current === x.id ? 'active' : ''}
+                onClick={() => setTab(x.id)}
+              >
+                {x.label}
+                {x.count !== undefined && x.count > 0 && <span className="tab-count">{x.count}</span>}
+              </button>
+            ))}
+          </div>
+        )}
+        {t && (
+          <div ref={bodyRef} className={`drawer-body${current === 'overview' ? ' drawer-grid' : ''}`} role="tabpanel">
+            {current === 'overview' && (
+              <>
+                <div className="drawer-main">
+                  {t.status === 'input_required' && <AnswerBox task={t} onDone={reload} />}
+                  {t.stalled && (
+                    <p className="due warn stall-hint">
+                      {tr('进度停在 {progress}% 已经很久，期间一直在上报，可能在原地打转。可以在下面评论问问卡在哪，或者拆成更小的子任务、改派给别人。', { progress: t.progress })}
+                    </p>
+                  )}
+                  <div className="section">
+                    <h4>{tr('描述')}</h4>
+                    {t.description ? <Markdown text={t.description} agents={agents} /> : <span className="faint">{tr('（无）')}</span>}
                   </div>
-                </div>
-              )}
 
-              {t.acceptance.length > 0 && (
-                <div className="section">
-                  <h4>{tr('验收标准')}</h4>
-                  <ul style={{ margin: 0, paddingLeft: 20 }}>
-                    {t.acceptance.map((a, i) => (
-                      <li key={i}>{a}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
+                  {t.attachments.length > 0 && (
+                    <div className="section">
+                      <h4>
+                        {tr('附件')}<span className="h4-hint">{tr('agent 用 ahub download {id} 下载到本地', { id: t.id })}</span>
+                      </h4>
+                      <div className="attachments">
+                        {t.attachments.map((p, i) => (
+                          <FilePart key={i} p={p} />
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
-              {t.ref_tasks.length > 0 && (
-                <div className="section">
-                  <h4>
-                    {tr('引用的任务')}<span className="h4-hint">{tr('参考资料，agent 可以读取它们的详情、交付物和讨论')}</span>
-                  </h4>
-                  <div className="list">
-                    {t.ref_tasks.map((r) => (
-                      <div key={r.id} className="list-item clickable" onClick={() => openTask(r.id)}>
-                        <StatusBadge task={r} />
-                        <div style={{ flex: 1 }}>
-                          <b>{r.id}</b> {r.title}
-                          <div className="faint">{r.assignee_name ?? tr('未指派')}</div>
+                  {t.acceptance.length > 0 && (
+                    <div className="section">
+                      <h4>{tr('验收标准')}</h4>
+                      <ul style={{ margin: 0, paddingLeft: 20 }}>
+                        {t.acceptance.map((a, i) => (
+                          <li key={i}>{a}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {t.ref_tasks.length > 0 && (
+                    <div className="section">
+                      <h4>
+                        {tr('引用的任务')}<span className="h4-hint">{tr('参考资料，agent 可以读取它们的详情、交付物和讨论')}</span>
+                      </h4>
+                      <div className="list">
+                        {t.ref_tasks.map((r) => (
+                          <div key={r.id} className="list-item clickable" onClick={() => openTask(r.id)}>
+                            <StatusBadge task={r} />
+                            <div style={{ flex: 1 }}>
+                              <b>{r.id}</b> {r.title}
+                              <div className="faint">{r.assignee_name ?? tr('未指派')}</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="drawer-side">
+                  <div className="section side-card">
+                    <h4>{tr('负责人与进度')}</h4>
+                    <div>
+                      {t.assignee ? withCode(t.assignee_name ?? '', t.assignee) : tr('未指派')}
+                      {t.required_tags.length > 0 && <span className="faint"> · {tr('需要：{tags}', { tags: joinList(t.required_tags) })}</span>}
+                    </div>
+                    {!t.assignee && t.status === 'open' && (
+                      <Suggest list={recs} label={tr('推荐指派')} onPick={(a) => void act('assign', { agent: a }, tr('已指派'))} />
+                    )}
+                    {t.status !== 'open' && t.status !== 'draft' && (
+                      <div style={{ marginTop: 8 }}>
+                        <div className="progress">
+                          <div style={{ width: `${t.progress}%` }} />
+                        </div>
+                        <div className="faint" style={{ marginTop: 4 }}>
+                          {t.progress}% {t.progress_note && `· ${t.progress_note}`}
                         </div>
                       </div>
-                    ))}
+                    )}
+                    {t.lease_until && !closed && <div className="faint">{tr('租约到期：{time}', { time: clock(t.lease_until) })}</div>}
+                    {t.due_at && (
+                      <div className="faint">
+                        {tr('截止：{time}', { time: dateTime(t.due_at) })}
+                        {(() => {
+                          const d = dueInfo(t);
+                          return d?.cls && <span className={`due ${d.cls}`} style={{ marginLeft: 6 }}>{d.text}</span>;
+                        })()}
+                      </div>
+                    )}
+                    {t.referenced_by.length > 0 && (
+                      <div className="faint">
+                        {tr('被引用：')}
+                        {t.referenced_by.map((r) => (
+                          <a key={r.id} href="#" style={{ marginRight: 6 }} title={r.title} onClick={(e) => (e.preventDefault(), openTask(r.id))}>
+                            {r.id}
+                          </a>
+                        ))}
+                      </div>
+                    )}
+                    {t.depends_on.length > 0 && (
+                      <div className="faint">
+                        {tr('前置任务：')}
+                        {t.depends_on.map((d) => (
+                          <a key={d} href="#" style={{ marginRight: 6 }} onClick={(e) => (e.preventDefault(), openTask(d))}>
+                            {d}
+                          </a>
+                        ))}
+                      </div>
+                    )}
                   </div>
+                  {t.status === 'open' && !t.assignee && t.candidates && (
+                    <div className="section">
+                      <h4>{tr('领取候选')}</h4>
+                      {t.candidates.length === 0 ? (
+                        <div className="faint">{tr('现在没有能自动领取的 agent（需要值守进程在线或常驻待命，并且有匹配的能力标签），可以直接指派。')}</div>
+                      ) : (
+                        <>
+                          <div className="faint" style={{ marginBottom: 6 }}>
+                            {tr('值守进程按名次错峰唤起：第 1 名立即，之后每靠后一名默认多等 10 分钟{since}；看过后不合适会让给下一名。', { since: t.open_since ? tr('（从 {time} 开始算）', { time: clock(t.open_since) }) : '' })}
+                          </div>
+                          <div className="list">
+                            {t.candidates.map((c) => (
+                              <div key={c.agent} className="list-item">
+                                <span className="badge">{tr('第 {n} 名', { n: c.rank })}</span>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <b>{c.agent_name || c.agent}</b> <span className="faint">{tr('匹配度 {n}', { n: c.score })}</span>
+                                  {(c.reasons.length > 0 || c.warnings.length > 0) && (
+                                    <div className="faint">
+                                      {joinList([...c.reasons, ...c.warnings.map((w) => `⚠ ${w}`)])}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
+                  {t.status === 'open' && !!t.passes?.length && (
+                    <div className="section">
+                      <h4>{tr('让出记录')}</h4>
+                      <div className="list">
+                        {t.passes.map((p) => (
+                          <div key={p.agent} className="list-item">
+                            <span className="feed-time">{clock(p.created_at)}</span>
+                            <span className="badge">{p.agent_name || p.agent}</span>
+                            <div style={{ flex: 1 }}>{p.reason}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
-              )}
+              </>
+            )}
 
-              {t.notes && (
-                <div className="section">
-                  <h4>{tr('工作笔记')}</h4>
-                  <Markdown text={t.notes} agents={agents} />
-                </div>
-              )}
+            {current === 'notes' && (
+              <div className="drawer-main drawer-pane">
+                <Markdown text={t.notes} agents={agents} />
+              </div>
+            )}
 
-              {t.artifacts.length > 0 && (
-                <div className="section" data-anchor="artifacts">
-                  <h4>
-                    {tr('交付物')}<span className="h4-hint">{tr('划选文字可以引用到评论')}</span>
-                  </h4>
-                  <Artifacts task={t.id} artifacts={t.artifacts} onChanged={reload} />
-                </div>
-              )}
+            {current === 'artifacts' && (
+              <div className="drawer-main drawer-pane" data-anchor="artifacts">
+                <p className="faint pane-hint">{tr('划选文字可以引用到评论')}</p>
+                <Artifacts task={t.id} artifacts={t.artifacts} onChanged={reload} />
+              </div>
+            )}
 
-              <div className="section" data-anchor="discussion">
-                <h4>{tr('讨论')}</h4>
+            {current === 'discussion' && (
+              <div className="drawer-main drawer-pane" data-anchor="discussion">
                 {t.comments.length === 0 && <div className="faint">{tr('还没有评论')}</div>}
-                {t.comments.map((c) => (
+                {!commentsAll && t.comments.length > RECENT_COMMENTS && (
+                  <button type="button" className="btn small show-more" onClick={() => setAllComments(true)}>
+                    {tr('显示更早的 {n} 条评论', { n: t.comments.length - RECENT_COMMENTS })}
+                  </button>
+                )}
+                {comments.map((c) => (
                   <div key={c.id} data-anchor={`comment-${c.id}`} className={`comment ${c.author === 'owner' ? 'owner' : ''}`}>
                     <div className="faint">
                       {c.author === 'owner' ? tr('负责人') : withCode(c.author_name, c.author)} · {clock(c.created_at)}
@@ -343,8 +559,8 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
                   />
                   <AttachmentChips files={files} uploading={uploading} onRemove={removeFile} />
                   <div className="btn-row" style={{ marginTop: 6 }}>
-                    <button className="btn" disabled={(!comment.trim() && !files.length) || uploading > 0}>
-                      {tr('发表评论')}
+                    <button className="btn" disabled={(!comment.trim() && !files.length) || uploading > 0 || doing !== null} aria-busy={doing === 'comments'}>
+                      {doing === 'comments' ? tr('发表中…') : tr('发表评论')}
                     </button>
                     <button type="button" className="btn" onClick={() => fileInput.current?.click()}>
                       {tr('添加附件')}
@@ -362,141 +578,52 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
                   </div>
                 </form>
               </div>
-            </div>
+            )}
 
-            <div className="drawer-side">
-              <div className="section side-card">
-                <h4>{tr('负责人与进度')}</h4>
-                <div>
-                  {t.assignee ? withCode(t.assignee_name ?? '', t.assignee) : tr('未指派')}
-                  {t.required_tags.length > 0 && <span className="faint"> · {tr('需要：{tags}', { tags: joinList(t.required_tags) })}</span>}
-                </div>
-                {!t.assignee && t.status === 'open' && (
-                  <Suggest list={recs} label={tr('推荐指派')} onPick={(a) => void act('assign', { agent: a }, tr('已指派'))} />
-                )}
-                {t.status !== 'open' && t.status !== 'draft' && (
-                  <div style={{ marginTop: 8 }}>
-                    <div className="progress">
-                      <div style={{ width: `${t.progress}%` }} />
-                    </div>
-                    <div className="faint" style={{ marginTop: 4 }}>
-                      {t.progress}% {t.progress_note && `· ${t.progress_note}`}
-                    </div>
-                  </div>
-                )}
-                {t.lease_until && !closed && <div className="faint">{tr('租约到期：{time}', { time: clock(t.lease_until) })}</div>}
-                {t.due_at && (
-                  <div className="faint">
-                    {tr('截止：{time}', { time: dateTime(t.due_at) })}
-                    {(() => {
-                      const d = dueInfo(t);
-                      return d?.cls && <span className={`due ${d.cls}`} style={{ marginLeft: 6 }}>{d.text}</span>;
-                    })()}
-                  </div>
-                )}
-                {t.referenced_by.length > 0 && (
-                  <div className="faint">
-                    {tr('被引用：')}
-                    {t.referenced_by.map((r) => (
-                      <a key={r.id} href="#" style={{ marginRight: 6 }} title={r.title} onClick={(e) => (e.preventDefault(), openTask(r.id))}>
-                        {r.id}
-                      </a>
-                    ))}
-                  </div>
-                )}
-                {t.depends_on.length > 0 && (
-                  <div className="faint">
-                    {tr('前置任务：')}
-                    {t.depends_on.map((d) => (
-                      <a key={d} href="#" style={{ marginRight: 6 }} onClick={(e) => (e.preventDefault(), openTask(d))}>
-                        {d}
-                      </a>
-                    ))}
-                  </div>
-                )}
-              </div>
-              {(t.subtasks.length > 0 || !closed) && (
-                <div className="section">
-                  <div className="btn-row" style={{ justifyContent: 'space-between' }}>
-                    <h4>{tr('子任务')}</h4>
-                    {!closed && (
-                      <button className="btn small" onClick={() => setDialog('subtask')}>
-                        {tr('新建子任务')}
-                      </button>
-                    )}
-                  </div>
-                  {t.subtasks.length === 0 && <div className="faint">{tr('还没有子任务')}</div>}
-                  <div className="list">
-                    {t.subtasks.map((s) => (
-                      <div key={s.id} className="list-item clickable" onClick={() => openTask(s.id)}>
-                        <StatusBadge task={s} />
-                        <div style={{ flex: 1 }}>
-                          <b>{s.id}</b> {s.title}
-                          <div className="faint">{s.assignee_name ?? tr('未指派')}</div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {t.status === 'open' && !t.assignee && t.candidates && (
-                <div className="section">
-                  <h4>{tr('领取候选')}</h4>
-                  {t.candidates.length === 0 ? (
-                    <div className="faint">{tr('现在没有能自动领取的 agent（需要值守进程在线或常驻待命，并且有匹配的能力标签），可以直接指派。')}</div>
-                  ) : (
-                    <>
-                      <div className="faint" style={{ marginBottom: 6 }}>
-                        {tr('值守进程按名次错峰唤起：第 1 名立即，之后每靠后一名默认多等 10 分钟{since}；看过后不合适会让给下一名。', { since: t.open_since ? tr('（从 {time} 开始算）', { time: clock(t.open_since) }) : '' })}
-                      </div>
-                      <div className="list">
-                        {t.candidates.map((c) => (
-                          <div key={c.agent} className="list-item">
-                            <span className="badge">{tr('第 {n} 名', { n: c.rank })}</span>
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <b>{c.agent_name || c.agent}</b> <span className="faint">{tr('匹配度 {n}', { n: c.score })}</span>
-                              {(c.reasons.length > 0 || c.warnings.length > 0) && (
-                                <div className="faint">
-                                  {joinList([...c.reasons, ...c.warnings.map((w) => `⚠ ${w}`)])}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </>
+            {current === 'subtasks' && (
+              <div className="drawer-main drawer-pane">
+                <div className="btn-row pane-head">
+                  <span className="faint">
+                    {subtasks.length === 0
+                      ? tr('还没有子任务')
+                      : tr('{live} 个未结束，{ended} 个已完成或归档', { live: liveSubs.length, ended: endedSubs.length })}
+                  </span>
+                  {!closed && (
+                    <button className="btn small" onClick={() => setDialog('subtask')}>
+                      {tr('新建子任务')}
+                    </button>
                   )}
                 </div>
-              )}
-              {t.status === 'open' && !!t.passes?.length && (
-                <div className="section">
-                  <h4>{tr('让出记录')}</h4>
-                  <div className="list">
-                    {t.passes.map((p) => (
-                      <div key={p.agent} className="list-item">
-                        <span className="feed-time">{clock(p.created_at)}</span>
-                        <span className="badge">{p.agent_name || p.agent}</span>
-                        <div style={{ flex: 1 }}>{p.reason}</div>
-                      </div>
-                    ))}
-                  </div>
+                <div className="list">{liveSubs.map(subItem)}</div>
+                {endedSubs.length > 0 && (
+                  <>
+                    <button type="button" className="btn small show-more" aria-expanded={showEnded} onClick={() => setShowEnded((v) => !v)}>
+                      {showEnded ? tr('收起已结束的子任务') : tr('显示已结束的 {n} 个子任务', { n: endedSubs.length })}
+                    </button>
+                    {showEnded && <div className="list">{endedSubs.map(subItem)}</div>}
+                  </>
+                )}
+              </div>
+            )}
+
+            {current === 'progress' && (
+              <div className="drawer-main drawer-pane" data-anchor="progress">
+                <div className="list">
+                  {(allProgress ? progress : progress.slice(0, RECENT_PROGRESS)).map((p, i) => (
+                    <div key={i} className="list-item">
+                      <span className="feed-time">{dateTime(p.created_at)}</span>
+                      <span className="badge">{p.percent}%</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>{p.note}</div>
+                    </div>
+                  ))}
                 </div>
-              )}
-              {t.progress_log.length > 0 && (
-                <div className="section" data-anchor="progress">
-                  <h4>{tr('进度记录')}</h4>
-                  <div className="list">
-                    {[...t.progress_log].reverse().map((p, i) => (
-                      <div key={i} className="list-item">
-                        <span className="feed-time">{clock(p.created_at)}</span>
-                        <span className="badge">{p.percent}%</span>
-                        <div style={{ flex: 1 }}>{p.note}</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
+                {!allProgress && progress.length > RECENT_PROGRESS && (
+                  <button type="button" className="btn small show-more" onClick={() => setAllProgress(true)}>
+                    {tr('显示更早的 {n} 条', { n: progress.length - RECENT_PROGRESS })}
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         )}
         {quote && (
@@ -521,7 +648,8 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
           <div className="btn-row">
             <button
               className="btn primary"
-              disabled={!reason.trim()}
+              disabled={!reason.trim() || doing !== null}
+              aria-busy={doing === 'reject'}
               onClick={async () => (await act('reject', { reason }, tr('已退回'))) && setDialog(null)}
             >
               {tr('退回')}
@@ -539,7 +667,7 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
             <input id="cancel-reason" className="input" value={reason} onChange={(e) => setReason(e.target.value)} autoFocus />
           </div>
           <div className="btn-row">
-            <button className="btn danger" onClick={async () => (await act('cancel', { reason }, tr('已归档'))) && setDialog(null)}>
+            <button className="btn danger" {...busy('cancel')} onClick={async () => (await act('cancel', { reason }, tr('已归档'))) && setDialog(null)}>
               {tr('确认归档')}
             </button>
             <button className="btn" onClick={() => setDialog(null)}>
@@ -587,6 +715,7 @@ function NewSubtask({ parent, onClose, onCreated }: { parent: TaskDetail; onClos
   const attachments = useAttachments(10, tr('一个任务'));
   const members = agents.filter((a) => a.status === 'active' && a.projects.some((p) => p.id === parent.project));
   const create = async () => {
+    if (busy) return;
     setBusy(true);
     try {
       const sub = await post<{ id: string }>('/tasks', {
@@ -652,7 +781,7 @@ function NewSubtask({ parent, onClose, onCreated }: { parent: TaskDetail; onClos
         <AttachmentField id="st-files" state={attachments} />
       </div>
       <div className="btn-row">
-        <button className="btn primary" disabled={!title.trim() || busy || attachments.uploading > 0} onClick={create}>
+        <button className="btn primary" disabled={!title.trim() || busy || attachments.uploading > 0} aria-busy={busy} onClick={create}>
           {tr('发布子任务')}
         </button>
         <button className="btn" onClick={onClose}>
@@ -675,6 +804,7 @@ function EditTask({ task, onClose, onSaved }: { task: TaskDetail; onClose: () =>
   const [refs, setRefs] = useState(task.refs);
   const attachments = useAttachments(10, tr('一个任务'), fromParts(task.attachments));
   const fileIds = attachments.files.map((f) => f.id);
+  const [saving, guard] = useBusy();
   return (
     <Modal title={tr('编辑 {id}', { id: task.id })} onClose={onClose}>
       <div className="field">
@@ -724,8 +854,9 @@ function EditTask({ task, onClose, onSaved }: { task: TaskDetail; onClose: () =>
       <div className="btn-row">
         <button
           className="btn primary"
-          disabled={!title.trim() || attachments.uploading > 0}
-          onClick={async () => {
+          disabled={!title.trim() || attachments.uploading > 0 || saving}
+          aria-busy={saving}
+          onClick={() => guard(async () => {
             try {
               await patch(`/tasks/${task.id}`, {
                 title,
@@ -744,7 +875,7 @@ function EditTask({ task, onClose, onSaved }: { task: TaskDetail; onClose: () =>
             } catch (err) {
               toast((err as Error).message, true);
             }
-          }}
+          })}
         >
           {tr('保存')}
         </button>
