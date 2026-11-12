@@ -20,7 +20,8 @@ export interface HubCtx {
   events: HubEvent[]; // 最近的实时事件
   refresh: () => void;
   toast: (msg: string, error?: boolean) => void;
-  openTask: (id: string) => void;
+  /** 打开任务详情；anchor 定位到某个分页或某条评论，如 discussion、progress、artifacts */
+  openTask: (id: string, anchor?: string) => void;
   /** 打开一条事件对应的位置（评论、私信、agent 等） */
   openEvent: (e: HubEvent) => void;
   /** 地址里带的定位，如 comment-12；页面据此滚动并高亮 */

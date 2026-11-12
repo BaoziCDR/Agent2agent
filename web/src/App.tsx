@@ -236,8 +236,8 @@ export function App({ onLang }: { onLang: (code: string | null) => void }) {
     setMoreOpen(false);
     location.hash = `#/${page}`;
   }, []);
-  const openTask = useCallback((id: string) => {
-    location.hash = `#/${readHash().page}/${id}`;
+  const openTask = useCallback((id: string, anchor?: string) => {
+    location.hash = `#/${readHash().page}/${id}${anchor ? `/${anchor}` : ''}`;
   }, []);
   const closeTask = useCallback(() => {
     location.hash = `#/${readHash().page}`;

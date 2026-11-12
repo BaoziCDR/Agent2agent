@@ -796,7 +796,11 @@ export function buildApp(hub: Hub, opts: AppOptions = {}): FastifyInstance {
     admin.get(`${A}/tasks`, async (req) => {
       const q = req.query as Q;
       const tasks = hub.listTasks({ kind: 'owner' }, { project: q.project, status: q.status, assignee: q.assignee, parent: q.parent });
-      return q.view === 'summary' ? tasks.map(taskSummary) : tasks;
+      if (q.view !== 'summary') return tasks;
+      // 看板卡片上的「评论 / 进度 / 交付物」快捷入口要显示条数
+      const counts = hub.activityCounts();
+      const none = { comments: 0, artifacts: 0, progress: 0 };
+      return tasks.map((t) => ({ ...taskSummary(t), counts: counts.get(t.id) ?? none }));
     });
     admin.get(`${A}/tasks/:id`, async (req) => {
       const t = hub.getTask((req.params as { id: string }).id);

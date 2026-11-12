@@ -259,6 +259,13 @@ export interface TaskView {
 /** 看板卡片、关系图、子任务列表用不到正文，去掉后任务再多也不会拖慢这些页面。 */
 export type TaskSummary = Omit<TaskView, 'description' | 'notes' | 'acceptance'>;
 
+/** 任务下的评论、交付物、进度记录条数 */
+export interface ActivityCounts {
+  comments: number;
+  artifacts: number;
+  progress: number;
+}
+
 export function taskSummary(t: TaskView): TaskSummary {
   const { description: _description, notes: _notes, acceptance: _acceptance, ...summary } = t;
   return summary;
@@ -2328,6 +2335,21 @@ export class Hub {
       .prepare(`SELECT * FROM tasks ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY project_id, num`)
       .all(...params) as unknown as TaskRow[];
     return rows.map((t) => this.taskView(t));
+  }
+
+  /** 每个任务的评论、交付物、进度记录条数（看板卡片上的快捷入口用），只返回有记录的任务 */
+  activityCounts(): Map<string, ActivityCounts> {
+    const rows = this.db
+      .prepare(
+        `SELECT t.project_id, t.num, COALESCE(c.n, 0) AS comments, COALESCE(a.n, 0) AS artifacts, COALESCE(p.n, 0) AS progress
+         FROM tasks t
+         LEFT JOIN (SELECT task_id, COUNT(*) AS n FROM comments GROUP BY task_id) c ON c.task_id = t.id
+         LEFT JOIN (SELECT task_id, COUNT(*) AS n FROM artifacts GROUP BY task_id) a ON a.task_id = t.id
+         LEFT JOIN (SELECT task_id, COUNT(*) AS n FROM progress_log GROUP BY task_id) p ON p.task_id = t.id
+         WHERE c.n IS NOT NULL OR a.n IS NOT NULL OR p.n IS NOT NULL`,
+      )
+      .all() as { project_id: number; num: number; comments: number; artifacts: number; progress: number }[];
+    return new Map(rows.map((r) => [taskCode(r.project_id, r.num), { comments: r.comments, artifacts: r.artifacts, progress: r.progress }]));
   }
 
   private assertVisible(actor: Actor, t: TaskRow) {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { joinList, msg, t as tr, withCode } from '../i18n';
 import { get, post, type TaskCard, type TaskStatus } from '../api';
 import { changesTaskList } from '../../../src/shared/event-view';
@@ -143,7 +143,7 @@ function matches(t: TaskCard, f: Filters, range: { from: string; to: string } | 
 }
 
 export function Board() {
-  const { project, agents, openTask, go, toast, refresh } = useHub();
+  const { project, agents, openTask, go, toast, refresh, batch } = useHub();
   const [f, setF] = useState<Filters>(loadFilters);
   const set = (patch: Partial<Filters>) => setF((old) => ({ ...old, ...patch }));
   useEffect(() => {
@@ -180,6 +180,22 @@ export function Board() {
     [project],
     { refreshOn: changesTaskList },
   );
+
+  // 新评论不会让看板重新拉列表，卡片上的评论数在本地加上；列表重新拉回来后以服务端为准
+  const [bump, setBump] = useState<Record<string, number>>({});
+  const seenBatch = useRef(batch.id);
+  useEffect(() => {
+    if (batch.id === seenBatch.current) return;
+    seenBatch.current = batch.id;
+    const added = batch.events.filter((e) => e.type === 'comment.created' && e.task);
+    if (added.length)
+      setBump((b) => {
+        const next = { ...b };
+        for (const e of added) next[e.task!] = (next[e.task!] ?? 0) + 1;
+        return next;
+      });
+  }, [batch]);
+  useEffect(() => setBump({}), [tasks]);
 
   const range = dayRange(f);
   const filtered = useMemo(() => (tasks ?? []).filter((t) => matches(t, f, range)), [tasks, f, range?.from, range?.to]);
@@ -236,6 +252,50 @@ export function Board() {
   const columns = COLUMNS.filter((c) => f.showArchived || c.status !== 'archived' || dragging).filter(
     (c) => c.status !== 'draft' || filtered.some((t) => t.status === 'draft'),
   );
+  const countOf = (status: TaskStatus) => filtered.filter((t) => t.status === status).length;
+
+  // 刚进入看板时，横向滚到第一个有任务的列（前面几列都空着时不用自己去划）；之后换筛选、开关详情都不再动
+  const boardRef = useRef<HTMLDivElement>(null);
+  const autoScrolled = useRef(false);
+  const [activeCol, setActiveCol] = useState<TaskStatus | null>(null);
+  useLayoutEffect(() => {
+    if (autoScrolled.current || !tasks) return;
+    autoScrolled.current = true;
+    const board = boardRef.current;
+    const first = board?.querySelector<HTMLElement>('.column:not(.is-empty)');
+    if (!board || !first) return;
+    board.scrollLeft += first.getBoundingClientRect().left - board.getBoundingClientRect().left;
+  }, [tasks]);
+  // 手机上顶部的状态条跟着横向滚动高亮当前这一列
+  const onBoardScroll = () => {
+    const board = boardRef.current;
+    if (!board) return;
+    const left = board.getBoundingClientRect().left;
+    let best: { status: TaskStatus; d: number } | null = null;
+    for (const el of board.querySelectorAll<HTMLElement>('.column')) {
+      const d = Math.abs(el.getBoundingClientRect().left - left);
+      if (!best || d < best.d) best = { status: el.dataset.status as TaskStatus, d };
+    }
+    if (best && best.status !== activeCol) setActiveCol(best.status);
+  };
+  useLayoutEffect(onBoardScroll);
+  // 当前列的状态按钮被挤到状态条外面时，把它滚进来
+  const jumpRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const strip = jumpRef.current;
+    const chip = strip?.querySelector<HTMLElement>('.active');
+    if (!strip || !chip || strip.scrollWidth <= strip.clientWidth) return;
+    const s = strip.getBoundingClientRect();
+    const c = chip.getBoundingClientRect();
+    if (c.left < s.left) strip.scrollLeft -= s.left - c.left + 8;
+    else if (c.right > s.right) strip.scrollLeft += c.right - s.right + 8;
+  }, [activeCol]);
+  const jumpTo = (status: TaskStatus) => {
+    const board = boardRef.current;
+    const el = board?.querySelector<HTMLElement>(`.column[data-status="${status}"]`);
+    if (!board || !el) return;
+    board.scrollTo({ left: board.scrollLeft + el.getBoundingClientRect().left - board.getBoundingClientRect().left, behavior: 'smooth' });
+  };
 
   return (
     <div className="board-page">
@@ -405,113 +465,131 @@ export function Board() {
           <Graph tasks={f.hideDone ? filtered.filter((t) => t.status !== 'completed') : filtered} />
         </div>
       ) : (
-        <div className="board">
-          {columns.map((col) => {
-            const all = filtered
-              .filter((t) => t.status === col.status)
-              .sort((a, b) =>
-                // 已结束的按最近更新排，进行中的先按优先级
-                ['completed', 'archived'].includes(col.status)
-                  ? b.updated_at.localeCompare(a.updated_at)
-                  : a.priority.localeCompare(b.priority) || b.updated_at.localeCompare(a.updated_at),
-              );
-            const limited = ['completed', 'archived'].includes(col.status) && !expanded.includes(col.status) && all.length > ENDED_LIMIT;
-            const items = limited ? all.slice(0, ENDED_LIMIT) : all;
-            return (
-              <section
+        <>
+          <nav className="board-jump" ref={jumpRef} aria-label={tr('跳到状态')}>
+            {columns.map((col) => (
+              <button
                 key={col.status}
-                className={`column ${dragging ? (dropAction(dragging, col.status) ? 'droppable' : dragging.status === col.status ? '' : 'no-drop') : ''} ${over === col.status ? 'over' : ''}`}
-                aria-label={tr(col.label)}
-                onDragOver={(e) => {
-                  if (!dragging || !dropAction(dragging, col.status)) return;
-                  e.preventDefault();
-                  e.dataTransfer.dropEffect = 'move';
-                  if (over !== col.status) setOver(col.status);
-                }}
-                onDragLeave={(e) => !e.currentTarget.contains(e.relatedTarget as Node) && setOver(null)}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  drop(col.status);
-                }}
+                type="button"
+                className={`${activeCol === col.status ? 'active' : ''} ${countOf(col.status) ? '' : 'is-empty'}`}
+                aria-current={activeCol === col.status}
+                onClick={() => jumpTo(col.status)}
               >
-                <div className="column-head">
-                  <span>{tr(col.label)}</span>
-                  <span className="badge">{all.length}</span>
-                </div>
-                <div className="column-body">
-                  {items.map((t) => (
-                    <article
-                      key={t.id}
-                      className={`task-card ${dragging?.id === t.id ? 'dragging' : ''}`}
-                      draggable={!['completed', 'archived'].includes(t.status)}
-                      onDragStart={(e) => {
-                        e.dataTransfer.effectAllowed = 'move';
-                        e.dataTransfer.setData('text/plain', t.id);
-                        setDragging(t);
-                      }}
-                      onDragEnd={() => (setDragging(null), setOver(null))}
-                      onClick={() => openTask(t.id)}
-                    >
-                      <div className="meta">
-                        <span>
-                          {t.id}
-                          {t.parent ? ` · ${tr('子任务')}` : children.get(t.id) ? ` · ${tr('{n} 个子任务', { n: children.get(t.id)! })}` : ''}
-                        </span>
-                        <span className={`badge ${t.priority}`}>{t.priority}</span>
-                      </div>
-                      <div className="title">{t.title}</div>
-                      {(() => {
-                        const d = dueInfo(t);
-                        return (
-                          d && (
-                            <div className={`due ${d.cls}`} title={d.title}>
-                              ⏰ {d.text}
-                            </div>
-                          )
-                        );
-                      })()}
-                      {t.stalled && (
-                        <div className="due warn" title={tr('一直在报进度，但百分比 2 小时以上没变')}>
-                          {tr('↻ 疑似原地打转')}
-                        </div>
-                      )}
-                      {['working', 'input_required', 'review'].includes(t.status) && (
-                        <div className="progress" title={`${t.progress}%`}>
-                          <div style={{ width: `${t.progress}%` }} />
-                        </div>
-                      )}
-                      <div className="meta" style={{ marginTop: 7 }}>
-                        <span>{t.assignee_name ?? (t.required_tags.length ? tr('需要：{tags}', { tags: joinList(t.required_tags) }) : tr('未指派'))}</span>
-                        {t.archive_kind ? (
-                          <span className={`badge archive-${t.archive_kind}`} title={t.archived_at ? tr('归档于 {time}', { time: timeAgo(t.archived_at) }) : undefined}>
-                            {t.archive_kind === 'auto' ? tr('自动归档') : tr('手动归档')}
+                {tr(col.label)}
+                <span className="tab-count">{countOf(col.status)}</span>
+              </button>
+            ))}
+          </nav>
+          <div className="board" ref={boardRef} onScroll={onBoardScroll}>
+            {columns.map((col) => {
+              const all = filtered
+                .filter((t) => t.status === col.status)
+                .sort((a, b) =>
+                  // 已结束的按最近更新排，进行中的先按优先级
+                  ['completed', 'archived'].includes(col.status)
+                    ? b.updated_at.localeCompare(a.updated_at)
+                    : a.priority.localeCompare(b.priority) || b.updated_at.localeCompare(a.updated_at),
+                );
+              const limited = ['completed', 'archived'].includes(col.status) && !expanded.includes(col.status) && all.length > ENDED_LIMIT;
+              const items = limited ? all.slice(0, ENDED_LIMIT) : all;
+              return (
+                <section
+                  key={col.status}
+                  data-status={col.status}
+                  className={`column ${all.length ? '' : 'is-empty'} ${dragging ? (dropAction(dragging, col.status) ? 'droppable' : dragging.status === col.status ? '' : 'no-drop') : ''} ${over === col.status ? 'over' : ''}`}
+                  aria-label={tr(col.label)}
+                  onDragOver={(e) => {
+                    if (!dragging || !dropAction(dragging, col.status)) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    if (over !== col.status) setOver(col.status);
+                  }}
+                  onDragLeave={(e) => !e.currentTarget.contains(e.relatedTarget as Node) && setOver(null)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    drop(col.status);
+                  }}
+                >
+                  <div className="column-head">
+                    <span>{tr(col.label)}</span>
+                    <span className="badge">{all.length}</span>
+                  </div>
+                  <div className="column-body">
+                    {items.map((t) => (
+                      <article
+                        key={t.id}
+                        className={`task-card ${dragging?.id === t.id ? 'dragging' : ''}`}
+                        draggable={!['completed', 'archived'].includes(t.status)}
+                        onDragStart={(e) => {
+                          e.dataTransfer.effectAllowed = 'move';
+                          e.dataTransfer.setData('text/plain', t.id);
+                          setDragging(t);
+                        }}
+                        onDragEnd={() => (setDragging(null), setOver(null))}
+                        onClick={() => openTask(t.id)}
+                      >
+                        <div className="meta">
+                          <span>
+                            {t.id}
+                            {t.parent ? ` · ${tr('子任务')}` : children.get(t.id) ? ` · ${tr('{n} 个子任务', { n: children.get(t.id)! })}` : ''}
                           </span>
-                        ) : (
-                          <span>{timeAgo(t.updated_at)}</span>
+                          <span className={`badge ${t.priority}`}>{t.priority}</span>
+                        </div>
+                        <div className="title">{t.title}</div>
+                        {(() => {
+                          const d = dueInfo(t);
+                          return (
+                            d && (
+                              <div className={`due ${d.cls}`} title={d.title}>
+                                ⏰ {d.text}
+                              </div>
+                            )
+                          );
+                        })()}
+                        {t.stalled && (
+                          <div className="due warn" title={tr('一直在报进度，但百分比 2 小时以上没变')}>
+                            {tr('↻ 疑似原地打转')}
+                          </div>
                         )}
-                      </div>
-                      {t.status === 'input_required' && t.block_reason && (
-                        <div className="faint" style={{ color: 'var(--bad)', marginTop: 4 }}>
-                          {t.block_reason}
+                        {['working', 'input_required', 'review'].includes(t.status) && (
+                          <div className="progress" title={`${t.progress}%`}>
+                            <div style={{ width: `${t.progress}%` }} />
+                          </div>
+                        )}
+                        <div className="meta" style={{ marginTop: 7 }}>
+                          <span>{t.assignee_name ?? (t.required_tags.length ? tr('需要：{tags}', { tags: joinList(t.required_tags) }) : tr('未指派'))}</span>
+                          {t.archive_kind ? (
+                            <span className={`badge archive-${t.archive_kind}`} title={t.archived_at ? tr('归档于 {time}', { time: timeAgo(t.archived_at) }) : undefined}>
+                              {t.archive_kind === 'auto' ? tr('自动归档') : tr('手动归档')}
+                            </span>
+                          ) : (
+                            <span>{timeAgo(t.updated_at)}</span>
+                          )}
                         </div>
-                      )}
-                      {t.status === 'working' && t.progress_note && (
-                        <div className="faint" style={{ marginTop: 4 }}>
-                          {t.progress_note}
-                        </div>
-                      )}
-                    </article>
-                  ))}
-                  {limited && (
-                    <button type="button" className="btn small column-more" onClick={() => setExpanded((x) => [...x, col.status])}>
-                      {tr('显示更早的 {n} 个', { n: all.length - ENDED_LIMIT })}
-                    </button>
-                  )}
-                </div>
-              </section>
-            );
-          })}
-        </div>
+                        {t.status === 'input_required' && t.block_reason && (
+                          <div className="faint" style={{ color: 'var(--bad)', marginTop: 4 }}>
+                            {t.block_reason}
+                          </div>
+                        )}
+                        {t.status === 'working' && t.progress_note && (
+                          <div className="faint" style={{ marginTop: 4 }}>
+                            {t.progress_note}
+                          </div>
+                        )}
+                        <CardLinks task={t} comments={(t.counts?.comments ?? 0) + (bump[t.id] ?? 0)} onOpen={openTask} />
+                      </article>
+                    ))}
+                    {limited && (
+                      <button type="button" className="btn small column-more" onClick={() => setExpanded((x) => [...x, col.status])}>
+                        {tr('显示更早的 {n} 个', { n: all.length - ENDED_LIMIT })}
+                      </button>
+                    )}
+                  </div>
+                </section>
+              );
+            })}
+          </div>
+        </>
       )}
       {pending && (
         <Modal title={`${tr(DIALOG_TITLE[pending.dialog])} · ${pending.task.id}`} onClose={() => setPending(null)}>
@@ -562,6 +640,33 @@ export function Board() {
           </div>
         </Modal>
       )}
+    </div>
+  );
+}
+
+/** 卡片底部的快捷入口：直接打开详情里的讨论、进度记录、交付物分页 */
+function CardLinks({ task, comments, onOpen }: { task: TaskCard; comments: number; onOpen: (id: string, anchor?: string) => void }) {
+  const progress = task.counts?.progress ?? 0;
+  const artifacts = task.counts?.artifacts ?? 0;
+  const link = (anchor: string, label: string, n: number) => (
+    <button
+      type="button"
+      className="card-link"
+      draggable={false}
+      onClick={(e) => {
+        e.stopPropagation();
+        onOpen(task.id, anchor);
+      }}
+    >
+      {label}
+      {n > 0 && <span className="card-link-n">{n}</span>}
+    </button>
+  );
+  return (
+    <div className="card-links">
+      {link('discussion', tr('评论'), comments)}
+      {progress > 0 && link('progress', tr('进度'), progress)}
+      {artifacts > 0 && link('artifacts', tr('交付物'), artifacts)}
     </div>
   );
 }
