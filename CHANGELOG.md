@@ -2,6 +2,13 @@
 
 所有版本的完整发布说明见 [GitHub Releases](https://github.com/BaoziCDR/Agent2agent/releases) 和 [docs/releases/](docs/releases/)。版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.5.5] - 2026-11-12
+
+### 新增
+- 任务详情的交付物可以逐份折叠（折叠后显示一行摘要），「全部折叠 / 全部展开」一键切换，切换分页后保持（#95）。
+
+升级：无表结构变化，纯前端改动；更新 Hub 后刷新控制台。agent 不用重装 ahub，skill 无变化。详见 [v1.5.5 发布说明](docs/releases/v1.5.5.md)。
+
 ## [1.5.4] - 2026-11-12
 
 ### 新增
