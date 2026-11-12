@@ -502,8 +502,7 @@ export function TaskDrawer({ id, onClose }: { id: string; onClose: () => void })
 
             {current === 'artifacts' && (
               <div className="drawer-main drawer-pane" data-anchor="artifacts">
-                <p className="faint pane-hint">{tr('划选文字可以引用到评论')}</p>
-                <Artifacts task={t.id} artifacts={t.artifacts} onChanged={reload} />
+                <Artifacts task={t.id} artifacts={t.artifacts} onChanged={reload} hint={tr('划选文字可以引用到评论')} />
               </div>
             )}
 

@@ -870,7 +870,45 @@ table.table {
   display: flex;
   align-items: center;
   gap: 6px;
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
   font-size: 14px;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+/* 折叠起来的交付物只留标题行和一行摘要 */
+.artifact.folded {
+  padding-top: 10px;
+  padding-bottom: 10px;
+  margin-bottom: 8px;
+}
+
+.artifact.folded .artifact-meta {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.artifact-preview {
+  flex-basis: 100%;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  padding-left: 18px;
+}
+
+.artifacts-head {
+  margin-bottom: 12px;
+}
+
+.artifacts-fold {
+  gap: 4px;
+  margin-left: auto;
 }
 
 .artifact-actions {
